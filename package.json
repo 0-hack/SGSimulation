@@ -1,0 +1,25 @@
+{
+  "name": "sgsimulation",
+  "version": "1.0.0",
+  "description": "Singapore Nation Builder — a browser-based city/nation simulation game starting at independence (1965).",
+  "type": "module",
+  "main": "server/server.js",
+  "scripts": {
+    "start": "node server/server.js",
+    "dev": "node --watch server/server.js",
+    "test": "node server/test/smoke.test.js",
+    "test:e2e": "node server/test/browser.test.js && node server/test/visit.test.js",
+    "test:all": "npm test && npm run test:e2e"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.8.1",
+    "express": "^4.21.2"
+  },
+  "devDependencies": {
+    "puppeteer": "^25.1.0"
+  },
+  "license": "MIT"
+}

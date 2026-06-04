@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#0e1b2a" />
+  <title>Singapore Nation Builder</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🇸🇬</text></svg>" />
+  <link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+
+  <!-- ===================== START MENU ===================== -->
+  <div id="menu" class="screen menu">
+    <div class="menu-card">
+      <div class="flag">🇸🇬</div>
+      <h1>Singapore<br><span>Nation Builder</span></h1>
+      <p class="tagline">From independence in 1965 — build the little red dot into a thriving nation.</p>
+
+      <div class="menu-form">
+        <label>Nation name
+          <input id="m-nation" type="text" maxlength="40" placeholder="e.g. New Singapura" value="New Singapura" />
+        </label>
+        <label>Your name (Prime Minister)
+          <input id="m-owner" type="text" maxlength="40" placeholder="Your name" />
+        </label>
+      </div>
+
+      <button id="btn-new" class="btn btn-primary big">▶ Start New Nation</button>
+      <button id="btn-continue" class="btn big hidden">↻ Continue Saved Game</button>
+      <button id="btn-browse" class="btn big">🌏 Visit Other Nations</button>
+
+      <p class="version">A society simulation · save & share on the cloud</p>
+    </div>
+  </div>
+
+  <!-- ===================== GAME ===================== -->
+  <div id="game" class="screen hidden">
+
+    <!-- Top HUD -->
+    <header id="hud">
+      <div class="hud-left">
+        <button id="btn-menu" class="icon-btn" title="Menu">☰</button>
+        <div class="nation">
+          <div id="hud-nation" class="nation-name">New Singapura</div>
+          <div id="hud-date" class="hud-date">09 Aug 1965</div>
+        </div>
+      </div>
+      <div class="hud-stats">
+        <div class="stat" title="Treasury"><span class="s-ico">💵</span><span id="hud-treasury">$180M</span></div>
+        <div class="stat" title="Population"><span class="s-ico">👥</span><span id="hud-pop">120,000</span></div>
+        <div class="stat" title="Approval"><span class="s-ico">🙂</span><span id="hud-approval">58%</span></div>
+      </div>
+      <div class="speed">
+        <button class="spd" data-spd="0" title="Pause">⏸</button>
+        <button class="spd active" data-spd="1" title="Play">▶</button>
+        <button class="spd" data-spd="2" title="Fast">▶▶</button>
+        <button class="spd" data-spd="3" title="Hyper">▶▶▶</button>
+      </div>
+    </header>
+
+    <!-- Visiting banner -->
+    <div id="visit-banner" class="visit-banner hidden">
+      👁️ Viewing <b id="visit-name"></b> — read only
+      <button id="btn-leave-visit" class="btn tiny">Leave</button>
+    </div>
+
+    <!-- City canvas -->
+    <canvas id="city"></canvas>
+
+    <!-- Utility / alert strip -->
+    <div id="alerts" class="alerts"></div>
+
+    <!-- Utility / alert strip and toolbar live at body level (below) -->
+  </div>
+
+  <!-- Bottom toolbar — body-level fixed so it always sits above open sheets -->
+  <nav id="toolbar" class="hidden">
+    <button class="tool" data-panel="build">🏗️<span>Build</span></button>
+    <button class="tool" data-panel="policy">⚖️<span>Policy</span></button>
+    <button class="tool" data-panel="dash">📊<span>Stats</span></button>
+    <button class="tool" data-panel="events">📜<span>News</span></button>
+    <button class="tool" data-panel="cloud">☁️<span>Save</span></button>
+  </nav>
+
+  <!-- ===================== SHEETS / PANELS ===================== -->
+  <div id="sheet" class="sheet hidden">
+    <div class="sheet-backdrop"></div>
+    <div class="sheet-body">
+      <div class="sheet-handle"></div>
+      <div class="sheet-head">
+        <h2 id="sheet-title">Panel</h2>
+        <button id="sheet-close" class="icon-btn">✕</button>
+      </div>
+      <div id="sheet-content" class="sheet-content"></div>
+    </div>
+  </div>
+
+  <!-- ===================== EVENT MODAL ===================== -->
+  <div id="event-modal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-icon">📰</div>
+      <h2 id="event-title">Event</h2>
+      <p id="event-body"></p>
+      <div id="event-actions" class="modal-actions"></div>
+    </div>
+  </div>
+
+  <!-- ===================== TOAST ===================== -->
+  <div id="toast" class="toast hidden"></div>
+
+  <script type="module" src="/js/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,405 @@
+// Simulation engine: holds the game state and advances it day by day.
+// Pure-ish logic (no DOM) so it can be unit-tested in Node as well.
+import {
+  BUILDINGS, POLICIES, START_DATE, GRID_SIZE, POP_SCALE,
+  HISTORICAL_EVENTS, RANDOM_EVENTS,
+} from './data.js';
+
+const DAYS_IN_MONTH = 30;
+const STATE_VERSION = 1;
+
+// ---- date helpers ----------------------------------------------------------
+function addDay(date) {
+  let { y, m, d } = date;
+  d += 1;
+  if (d > DAYS_IN_MONTH) { d = 1; m += 1; }
+  if (m > 12) { m = 1; y += 1; }
+  return { y, m, d };
+}
+const MONTHS = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+export function formatDate(date) {
+  return `${String(date.d).padStart(2, '0')} ${MONTHS[date.m]} ${date.y}`;
+}
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+function approach(cur, target, rate) { return cur + (target - cur) * rate; }
+
+// ---------------------------------------------------------------------------
+// New game
+// ---------------------------------------------------------------------------
+export function newGame({ name = 'New Singapore', owner = 'Anonymous' } = {}) {
+  const grid = Array.from({ length: GRID_SIZE }, () => Array(GRID_SIZE).fill(null));
+
+  const policies = {};
+  for (const [key, p] of Object.entries(POLICIES)) {
+    policies[key] = p.type === 'toggle' ? false : (p.default ?? p.options[0].id);
+  }
+
+  const state = {
+    version: STATE_VERSION,
+    name, owner,
+    date: { ...START_DATE },
+    speed: 0,                 // 0 paused; set by UI
+    treasury: 180,            // $ millions
+    population: 12000,        // scaled citizens (×POP_SCALE for display)
+    approval: 58,
+    education: 20,
+    health: 25,
+    safety: 30,
+    pollution: 5,
+    grid,
+    policies,
+    flags: {},                // historical events fired
+    unlocked: {},             // buildings unlocked by choices
+    log: [{ d: { ...START_DATE }, text: 'Singapore gains independence. The journey begins.' }],
+    pendingEvent: null,       // event awaiting player choice
+    summary: {},
+    daysElapsed: 0,
+  };
+
+  // Seed a couple of starting kampongs so there are citizens to govern.
+  place(state, 10, 10, 'kampong');
+  place(state, 11, 10, 'kampong');
+  place(state, 10, 11, 'reservoir');
+  refreshSummary(state);
+  return state;
+}
+
+// ---------------------------------------------------------------------------
+// Building placement
+// ---------------------------------------------------------------------------
+export function canPlace(state, x, y, key) {
+  if (x < 0 || y < 0 || x >= GRID_SIZE || y >= GRID_SIZE) return false;
+  if (state.grid[y][x]) return false;
+  const b = BUILDINGS[key];
+  if (!b) return false;
+  if (!isUnlocked(state, key)) return false;
+  return state.treasury >= b.cost;
+}
+export function isUnlocked(state, key) {
+  const b = BUILDINGS[key];
+  if (!b) return false;
+  if (state.unlocked[key]) return true;
+  return state.date.y >= b.year;
+}
+function place(state, x, y, key) {
+  state.grid[y][x] = { k: key };
+}
+export function build(state, x, y, key) {
+  if (!canPlace(state, x, y, key)) return false;
+  state.treasury -= BUILDINGS[key].cost;
+  place(state, x, y, key);
+  return true;
+}
+export function demolish(state, x, y) {
+  const cell = state.grid?.[y]?.[x];
+  if (!cell) return false;
+  state.grid[y][x] = null;
+  state.treasury -= 2; // demolition cost
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// Policy modifiers — aggregate all active policy effects into one bag.
+// ---------------------------------------------------------------------------
+function policyMods(state) {
+  const m = {
+    taxMult: 1, approval: 0, growth: 0, migration: 0, birth: 1,
+    housingAfford: 0, eduMult: 1, healthMult: 1, productivity: 0,
+    incomeMult: 0, jobsBoost: 0, stability: 0, upkeep: 0,
+    gstRevenue: 0, pollutionMult: 0, waterDemandMult: 0,
+  };
+  const add = (fx) => {
+    if (!fx) return;
+    for (const [k, v] of Object.entries(fx)) {
+      if (k in m) m[k] += v;
+    }
+  };
+  for (const [key, p] of Object.entries(POLICIES)) {
+    if (state.date.y < p.year) continue;
+    const val = state.policies[key];
+    if (p.type === 'toggle') {
+      if (val) add(p.fx);
+    } else {
+      const opt = p.options.find((o) => o.id === val);
+      add(opt?.fx);
+    }
+  }
+  return m;
+}
+
+// ---------------------------------------------------------------------------
+// Derived statistics — recomputed each tick from the grid + policies.
+// ---------------------------------------------------------------------------
+export function derive(state) {
+  let homes = 0, jobs = 0, powerGen = 0, powerUse = 0, waterGen = 0, waterUse = 0;
+  let pollutionSrc = 0, happinessLocal = 0, directIncome = 0;
+  let eduCap = 0, healthCap = 0, safetyCap = 0;
+  let counts = {};
+
+  for (let y = 0; y < GRID_SIZE; y++) {
+    for (let x = 0; x < GRID_SIZE; x++) {
+      const cell = state.grid[y][x];
+      if (!cell) continue;
+      const b = BUILDINGS[cell.k];
+      if (!b) continue;
+      counts[cell.k] = (counts[cell.k] || 0) + 1;
+      homes += b.homes || 0;
+      jobs += b.jobs || 0;
+      if (b.power > 0) powerGen += b.power; else powerUse += -b.power;
+      if (b.water > 0) waterGen += b.water; else waterUse += -b.water;
+      pollutionSrc += b.pollution || 0;
+      happinessLocal += b.happiness || 0;
+      directIncome += b.income || 0;
+      eduCap += b.education || 0;
+      healthCap += b.health || 0;
+      safetyCap += b.safety || 0;
+    }
+  }
+
+  const mods = policyMods(state);
+  const pop = state.population;
+
+  // Residents consume extra power & water on top of building loads.
+  powerUse += pop * 0.0009;
+  waterUse += pop * 0.0016 * (1 + mods.waterDemandMult);
+
+  const mods_jobs = jobs * (1 + mods.jobsBoost);
+  const powerRatio = powerUse > 0 ? powerGen / powerUse : 2;
+  const waterRatio = waterUse > 0 ? waterGen / waterUse : 2;
+
+  const workforce = pop * 0.62;
+  const employed = Math.min(workforce, mods_jobs);
+  const unemployment = workforce > 0 ? clamp((workforce - employed) / workforce, 0, 1) : 0;
+
+  // Housing pressure: >1 means overcrowded.
+  const housingPressure = homes > 0 ? pop / homes : (pop > 0 ? 3 : 0);
+
+  return {
+    homes, jobs: mods_jobs, baseJobs: jobs, counts,
+    powerGen, powerUse, powerRatio,
+    waterGen, waterUse, waterRatio,
+    pollutionSrc, happinessLocal, directIncome,
+    eduCap, healthCap, safetyCap,
+    workforce, employed, unemployment, housingPressure,
+    mods,
+  };
+}
+
+// Approval is a smoothed stock driven toward a target from current conditions.
+function approvalTarget(state, d) {
+  const m = d.mods;
+  let t = 50;
+  // Housing
+  t += d.housingPressure <= 1 ? 8 : -clamp((d.housingPressure - 1) * 30, 0, 30);
+  // Jobs
+  t -= d.unemployment * 45;
+  // Utilities
+  t += d.powerRatio >= 1 ? 6 : -clamp((1 - d.powerRatio) * 40, 0, 40);
+  t += d.waterRatio >= 1 ? 6 : -clamp((1 - d.waterRatio) * 40, 0, 40);
+  // Environment & services
+  t -= clamp(state.pollution * 0.4, 0, 25);
+  t += (state.health - 50) * 0.18;
+  t += (state.education - 50) * 0.12;
+  t += (state.safety - 50) * 0.16;
+  // Amenities (parks, MRT, etc.) — scale by city size
+  t += clamp(d.happinessLocal / Math.max(1, d.homes / 4000), 0, 14);
+  // Policy approval
+  t += m.approval;
+  // Fiscal stress — debt is unpopular
+  if (state.treasury < 0) t -= clamp(-state.treasury / 20, 0, 20);
+  return clamp(t, 0, 100);
+}
+
+// ---------------------------------------------------------------------------
+// Events
+// ---------------------------------------------------------------------------
+function applyEffects(state, fx, d) {
+  if (!fx) return;
+  if (fx.treasury) state.treasury += fx.treasury;
+  if (fx.approval) state.approval = clamp(state.approval + fx.approval, 0, 100);
+  if (fx.pollutionSpike) state.pollution = clamp(state.pollution + fx.pollutionSpike, 0, 100);
+  if (fx.healthShock) state.health = clamp(state.health + fx.healthShock, 0, 100);
+  if (fx.unlock) state.unlocked[fx.unlock] = true;
+  // growthShock / growth modifiers are temporary; store as a decaying buffer.
+  if (fx.growthShock) state.growthBuf = (state.growthBuf || 0) + fx.growthShock;
+  if (fx.growth) state.growthBuf = (state.growthBuf || 0) + fx.growth;
+  if (fx.jobsBoost || fx.incomeMult) {
+    state.perks = state.perks || { jobsBoost: 0, incomeMult: 0 };
+    state.perks.jobsBoost += fx.jobsBoost || 0;
+    state.perks.incomeMult += fx.incomeMult || 0;
+  }
+}
+
+function checkHistorical(state) {
+  for (const ev of HISTORICAL_EVENTS) {
+    if (state.flags[ev.id]) continue;
+    if (state.date.y > ev.y || (state.date.y === ev.y && state.date.m >= ev.m)) {
+      state.flags[ev.id] = true;
+      fireEvent(state, ev);
+      return; // one per tick keeps it readable
+    }
+  }
+}
+
+function maybeRandomEvent(state) {
+  if (state.pendingEvent) return;
+  // ~ roughly one random event every ~14 months
+  if (Math.random() > 1 / (14 * DAYS_IN_MONTH)) return;
+  const pool = RANDOM_EVENTS.filter((e) => state.date.y >= (e.minYear || 0));
+  if (!pool.length) return;
+  const ev = pool[Math.floor(Math.random() * pool.length)];
+  fireEvent(state, ev);
+}
+
+function fireEvent(state, ev) {
+  const d = derive(state);
+  applyEffects(state, ev.effects, d);
+  logEvent(state, ev.title);
+  if (ev.choice) {
+    state.pendingEvent = { id: ev.id, title: ev.title, body: ev.body, choice: ev.choice };
+  } else {
+    state.lastEvent = { title: ev.title, body: ev.body };
+  }
+}
+
+export function resolveEvent(state, optionIndex) {
+  const ev = state.pendingEvent;
+  if (!ev) return;
+  const opt = ev.choice.options[optionIndex];
+  applyEffects(state, opt?.fx, derive(state));
+  logEvent(state, `${ev.title}: ${opt?.label || 'decided'}`);
+  state.pendingEvent = null;
+}
+
+function logEvent(state, text) {
+  state.log.unshift({ d: { ...state.date }, text });
+  if (state.log.length > 40) state.log.length = 40;
+}
+
+// ---------------------------------------------------------------------------
+// Monthly economy + population update
+// ---------------------------------------------------------------------------
+function monthlyUpdate(state, d) {
+  const m = d.mods;
+  const perks = state.perks || { jobsBoost: 0, incomeMult: 0 };
+
+  // --- Stocks move toward capacity-driven targets (per 10k pop saturates) ---
+  const denom = Math.max(1, d.homes / 6000);
+  const eduTarget = clamp(20 + (d.eduCap / denom) * m.eduMult, 0, 100);
+  const healthTarget = clamp(25 + (d.healthCap / denom) * m.healthMult, 0, 100);
+  const safetyTarget = clamp(25 + (d.safetyCap / denom), 0, 100);
+  state.education = approach(state.education, eduTarget, 0.15);
+  state.health = approach(state.health, healthTarget, 0.15);
+  state.safety = approach(state.safety, safetyTarget, 0.15);
+
+  // Pollution accumulates from sources, decays naturally + via green/MRT.
+  const pollTarget = clamp(d.pollutionSrc * 1.2 * (1 + m.pollutionMult), 0, 100);
+  state.pollution = clamp(approach(state.pollution, pollTarget, 0.2), 0, 100);
+
+  // --- Finances ($ millions / month) ---
+  const productivity = 1 + m.productivity + (state.education - 20) * 0.004;
+  const popReal = state.population;
+  // Income tax scales with employed workforce, productivity & policy multiplier.
+  const taxBase = (d.employed / 1000) * 0.9 * productivity;
+  const incomeTax = taxBase * m.taxMult;
+  const gst = m.gstRevenue > 0 ? (popReal / 1000) * 0.25 : 0;
+  const business = d.directIncome * (1 + m.incomeMult + perks.incomeMult);
+  const grossIncome = incomeTax + gst + business;
+
+  let upkeep = 0;
+  for (const [k, n] of Object.entries(d.counts)) upkeep += (BUILDINGS[k].upkeep || 0) * n;
+  upkeep += m.upkeep;                       // policy running costs
+  upkeep += popReal * 0.00012;              // general public-service cost
+
+  const net = grossIncome - upkeep;
+  state.treasury += net;
+  state.lastFinance = {
+    incomeTax, gst, business, grossIncome, upkeep, net,
+  };
+
+  // --- Population dynamics ---
+  // Birth/death
+  const birthRate = 0.011 * m.birth * (0.7 + state.health / 200);
+  const deathRate = 0.006 * (1.3 - state.health / 160);
+  let dPop = popReal * (birthRate - deathRate) / 12; // monthly slice
+
+  // Migration: attractiveness from jobs surplus, approval, housing room.
+  const housingRoom = d.homes - popReal;
+  const jobSurplus = d.jobs - d.employed;
+  const attract = (state.approval - 50) * 0.02
+    + (jobSurplus > 0 ? 0.04 : -0.08)
+    + m.migration * 0.05;
+  let migration = popReal * 0.004 * attract;
+  // Can't grow into nonexistent homes; overcrowding pushes people out.
+  if (housingRoom <= 0) migration = Math.min(migration, 0) - popReal * 0.003;
+  else migration = Math.min(migration, housingRoom * 0.25);
+
+  // Growth buffer (events/policies) decays over time.
+  const growthMod = (state.growthBuf || 0) + m.growth;
+  dPop += popReal * growthMod / 12;
+  state.growthBuf = (state.growthBuf || 0) * 0.85;
+
+  // Utility shortages cause real harm (health/emigration).
+  if (d.powerRatio < 1) { dPop -= popReal * (1 - d.powerRatio) * 0.01; }
+  if (d.waterRatio < 1) { dPop -= popReal * (1 - d.waterRatio) * 0.012; }
+
+  state.population = Math.max(0, Math.round(popReal + dPop + migration));
+
+  // Approval glides toward its target.
+  state.approval = clamp(approach(state.approval, approvalTarget(state, d), 0.25), 0, 100);
+}
+
+// ---------------------------------------------------------------------------
+// Main tick — advance one day. Returns derived stats for the UI.
+// ---------------------------------------------------------------------------
+export function tickDay(state) {
+  state.date = addDay(state.date);
+  state.daysElapsed = (state.daysElapsed || 0) + 1;
+
+  const d = derive(state);
+
+  // Smooth daily drift so meters visibly move between monthly settlements.
+  state.approval = clamp(approach(state.approval, approvalTarget(state, d), 0.02), 0, 100);
+
+  // Daily treasury trickle (1/30th of last month's net) for a live feel.
+  if (state.lastFinance) state.treasury += state.lastFinance.net / DAYS_IN_MONTH;
+
+  if (state.date.d === 1) {
+    monthlyUpdate(state, derive(state));
+    checkHistorical(state);
+    maybeRandomEvent(state);
+  }
+
+  refreshSummary(state);
+  return derive(state);
+}
+
+// Compact summary stored alongside the state for the server browse list.
+export function refreshSummary(state) {
+  state.summary = {
+    year: state.date.y,
+    population: state.population * POP_SCALE,
+    approval: Math.round(state.approval),
+    treasury: Math.round(state.treasury),
+  };
+}
+
+// Convenience snapshot for the HUD.
+export function snapshot(state) {
+  const d = derive(state);
+  return {
+    date: state.date,
+    dateStr: formatDate(state.date),
+    treasury: state.treasury,
+    population: state.population * POP_SCALE,
+    approval: state.approval,
+    education: state.education,
+    health: state.health,
+    safety: state.safety,
+    pollution: state.pollution,
+    derived: d,
+    finance: state.lastFinance,
+  };
+}
+
+export { STATE_VERSION };

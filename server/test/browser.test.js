@@ -1,0 +1,118 @@
+// End-to-end browser test: boots the real client in headless Chrome, plays the
+// game (new nation, build, tick time, change policy, cloud save, visit).
+import puppeteer from 'puppeteer';
+import { app } from '../server.js';
+
+const server = app.listen(0);
+const base = `http://localhost:${server.address().port}`;
+let pass = 0, fail = 0;
+const ok = (c, m) => { if (c) { pass++; console.log('  ✓', m); } else { fail++; console.log('  ✗', m); } };
+
+const browser = await puppeteer.launch({
+  headless: 'new',
+  args: ['--no-sandbox', '--disable-setuid-sandbox'],
+});
+
+let page;
+try {
+  page = await browser.newPage();
+  await page.setViewport({ width: 390, height: 780, isMobile: true, hasTouch: true });
+  const errors = [];
+  globalThis.__perr = errors;
+  page.on('pageerror', (e) => errors.push(e.message));
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+
+  await page.goto(base, { waitUntil: 'networkidle0' });
+  ok(await page.$('#menu'), 'menu screen renders');
+
+  // Start a new nation
+  await page.$eval('#m-nation', (e) => { e.value = ''; }); // clear prefilled text
+  await page.type('#m-nation', 'Testlandia');
+  await page.type('#m-owner', 'E2E Bot');
+  await page.click('#btn-new');
+  await page.waitForSelector('#game:not(.hidden)');
+  ok(true, 'new game starts and game screen shows');
+
+  const nation = await page.$eval('#hud-nation', (e) => e.textContent);
+  ok(nation === 'Testlandia', 'HUD shows the nation name');
+
+  // Open build panel and place a building by tapping the canvas centre.
+  await page.click('.tool[data-panel="build"]');
+  await page.waitForSelector('.bcard');
+  // select first building (kampong/hdb) then place
+  await page.evaluate(() => {
+    const cards = [...document.querySelectorAll('.bcard:not(.locked)')];
+    cards[1]?.click(); // hdb_flat typically
+  });
+  await new Promise((r) => setTimeout(r, 200));
+  const treasuryBefore = await page.$eval('#hud-treasury', (e) => e.textContent);
+  // tap centre of canvas to build
+  const canvas = await page.$('#city');
+  const box = await canvas.boundingBox();
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await new Promise((r) => setTimeout(r, 200));
+  const treasuryAfter = await page.$eval('#hud-treasury', (e) => e.textContent);
+  ok(treasuryBefore !== treasuryAfter, `building placed (treasury ${treasuryBefore} → ${treasuryAfter})`);
+
+  // Speed up and let time pass.
+  await page.click('.spd[data-spd="3"]');
+  const date0 = await page.$eval('#hud-date', (e) => e.textContent);
+  await new Promise((r) => setTimeout(r, 1500));
+  const date1 = await page.$eval('#hud-date', (e) => e.textContent);
+  ok(date0 !== date1, `time advances (${date0} → ${date1})`);
+
+  // A random event modal may have popped during the run — resolve it first.
+  const dismissModal = async () => {
+    const open = await page.$eval('#event-modal', (e) => !e.classList.contains('hidden')).catch(() => false);
+    if (open) { await page.click('#event-actions button'); await new Promise((r) => setTimeout(r, 150)); }
+  };
+  await page.click('.spd[data-spd="0"]');
+  await dismissModal();
+
+  // Change a policy.
+  await page.click('.tool[data-panel="policy"]');
+  await page.waitForSelector('.opt, .switch');
+  await page.evaluate(() => document.querySelector('.opt:not(.active), .switch')?.click());
+  await new Promise((r) => setTimeout(r, 150));
+  ok(true, 'policy panel interactive');
+
+  // Dashboard renders metrics.
+  await dismissModal();
+  await page.click('.tool[data-panel="dash"]');
+  await page.waitForSelector('.metric', { timeout: 8000 });
+  const metrics = await page.$$eval('.metric', (els) => els.length);
+  ok(metrics >= 8, `dashboard shows ${metrics} metrics`);
+
+  // Cloud save.
+  await page.click('.tool[data-panel="cloud"]');
+  await page.waitForSelector('.cloud-info');
+  await page.evaluate(() => [...document.querySelectorAll('button')].find((b) => /Save to Cloud/.test(b.textContent))?.click());
+  await page.waitForFunction(() => /\/world\//.test(document.querySelector('.share-row input')?.value || ''), { timeout: 5000 });
+  const shareLink = await page.$eval('.share-row input', (e) => e.value);
+  ok(/\/world\/[\w-]+/.test(shareLink), 'cloud save returns a shareable link');
+
+  // Visit browser lists the saved world.
+  await page.evaluate(() => [...document.querySelectorAll('button')].find((b) => /Visit Other Nations/.test(b.textContent))?.click());
+  await page.waitForSelector('.world-card', { timeout: 5000 });
+  const worldCards = await page.$$eval('.world-card', (els) => els.length);
+  ok(worldCards >= 1, `world browser lists ${worldCards} nation(s)`);
+
+  ok(errors.length === 0, `no console/page errors${errors.length ? ': ' + errors.slice(0, 3).join(' | ') : ''}`);
+} catch (err) {
+  fail++;
+  console.error('  ✗ browser test threw:', err.message);
+  try {
+    const pg = page;
+    console.error('     title:', await pg.$eval('#sheet-title', (e) => e.textContent).catch(() => 'n/a'));
+    console.error('     modalOpen:', await pg.$eval('#event-modal', (e) => !e.classList.contains('hidden')).catch(() => 'n/a'));
+    console.error('     sheetHidden:', await pg.$eval('#sheet', (e) => e.classList.contains('hidden')).catch(() => 'n/a'));
+    console.error('     content head:', await pg.$eval('#sheet-content', (e) => e.innerHTML.slice(0, 100)).catch(() => 'n/a'));
+    console.error('     pageErrors:', globalThis.__perr || []);
+  } catch {}
+} finally {
+  await browser.close();
+  server.close();
+}
+
+console.log(`\n${pass} passed, ${fail} failed.`);
+process.exit(fail ? 1 : 0);

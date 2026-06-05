@@ -1,0 +1,20 @@
+# Run the game as a Docker service:
+#   docker compose up -d --build      # build + start in the background
+#   docker compose logs -f            # follow logs
+#   docker compose down               # stop & remove the container (keeps saves)
+#   docker compose down -v            # stop & ALSO delete the saved-worlds volume
+services:
+  sgsimulation:
+    build: .
+    image: sgsimulation
+    container_name: sgsimulation
+    ports:
+      - "3000:3000"          # host:container — change the left number to remap
+    environment:
+      - PORT=3000
+    volumes:
+      - sgdata:/app/data     # persists data/worlds.db across restarts
+    restart: unless-stopped
+
+volumes:
+  sgdata:

@@ -50,16 +50,53 @@ npm start
 
 Set a custom port with `PORT=8080 npm start`.
 
+### 🐳 Run as a Docker service (easiest to clean up)
+
+If you have Docker, you can run the whole game as a self-contained service and
+remove every trace of it when you're done — no Node, npm or build tools needed on
+the host.
+
+```bash
+docker compose up -d --build     # build the image and start in the background
+# open http://localhost:3000
+docker compose logs -f           # follow the logs
+```
+
+Player nations are stored in a named Docker volume (`sgdata`) so they survive
+restarts and image rebuilds.
+
+**Stopping / uninstalling:**
+
+```bash
+docker compose down              # stop & remove the container (KEEPS saved worlds)
+docker compose down -v           # stop & ALSO delete the saved-worlds volume
+docker image rm sgsimulation     # remove the built image
+```
+
+After `docker compose down -v` and removing the image, nothing related to the game
+remains on the host except the source folder, which you can simply delete.
+
+To run without Compose:
+
+```bash
+docker build -t sgsimulation .
+docker run -d --name sgsimulation -p 3000:3000 -v sgdata:/app/data sgsimulation
+```
+
+Change the published port by editing the `ports:` mapping in `docker-compose.yml`
+(e.g. `"8080:3000"`) or the `-p 8080:3000` flag.
+
 ### Deploying as "your hosted server"
 
 The whole game (client + API + database) is one Node process, so any host that runs
-Node works (a VM, Render, Railway, Fly.io, a Raspberry Pi, etc.):
+Node (or Docker) works (a VM, Render, Railway, Fly.io, a Raspberry Pi, etc.):
 
-1. Copy the repo to the server and run `npm install --omit=dev`.
+1. Copy the repo to the server and run `npm install --omit=dev` — **or** just use the
+   Docker setup above.
 2. Start it with a process manager, e.g. `pm2 start server/server.js` or a systemd
-   unit, behind a reverse proxy (nginx/Caddy) terminating HTTPS.
-3. World saves persist in `data/worlds.db` (SQLite). Back up that file to keep player
-   nations. Mount it on a persistent volume if your host has ephemeral disks.
+   unit (or `docker compose up -d`), behind a reverse proxy (nginx/Caddy) for HTTPS.
+3. World saves persist in `data/worlds.db` (SQLite) — or the `sgdata` Docker volume.
+   Back that up to keep player nations.
 
 No external services or API keys are needed.
 

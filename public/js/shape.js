@@ -60,3 +60,14 @@ export function landMask(size) {
   }
   return mask;
 }
+
+// The Central Catchment reservoir (e.g. MacRitchie/Peirce/Seletar) — a protected
+// water body slightly north of the island centre. Shared by engine + renderer.
+export function reservoirArea(size) {
+  return { cx: size / 2, cy: size / 2 + size * 0.055, r: size * 0.085, forestR: size * 0.2 };
+}
+export function inReservoir(x, y, size) {
+  const { cx, cy, r } = reservoirArea(size);
+  return Math.hypot(x - cx, y - cy) < r && pointInPolygon((x + 0.5) / size, (y + 0.5) / size);
+}
+

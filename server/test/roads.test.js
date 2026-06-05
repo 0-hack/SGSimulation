@@ -24,12 +24,22 @@ try {
   await p.evaluate(()=>[...document.querySelectorAll('.road-tool')].find(b=>/Straight/.test(b.textContent)).click());
   await new Promise(r=>setTimeout(r,200));
 
-  // tap two points on the canvas to lay a road (note the pre-seeded 1965 roads)
+  // tap two land cells (away from the protected reservoir) to lay a road
   const before = await p.evaluate(()=>window.__sgview.state.roads.edges.length);
-  const box = await (await p.$('#city')).boundingBox();
-  await p.mouse.click(box.x + box.width*0.35, box.y + box.height*0.45);
+  const spots = await p.evaluate(()=>{
+    const v=window.__sgview, N=v.land.length, c=Math.floor(N/2), out=[];
+    // scan a column a little west of centre (avoids the seeded town) and pick
+    // buildable land cells that are on land and clear of the protected reservoir
+    const col = c - 6;
+    for (let y=2; y<N-2 && out.length<2; y++) {
+      const free = v.isLand(col, y) && !v.reserveMask?.[y]?.[col] && !(v.state?.grid?.[y]?.[col]);
+      if (free) { const s=v.cellToScreen(col, y); if (s.visible) { out.push({x:s.x,y:s.y}); y+=3; } }
+    }
+    return out;
+  });
+  await p.mouse.click(spots[0].x, spots[0].y);
   await new Promise(r=>setTimeout(r,150));
-  await p.mouse.click(box.x + box.width*0.65, box.y + box.height*0.55);
+  await p.mouse.click(spots[1].x, spots[1].y);
   await new Promise(r=>setTimeout(r,300));
   const after = await p.evaluate(()=>{ const e=window.__sgview.state.roads.edges; return { edges:e.length, type:e[e.length-1]?.type, edgePts:window.__sgview.edgePts.length }; });
   ok(after.edges > before, `tapping the map added a road edge (${before} → ${after.edges})`);
@@ -39,7 +49,17 @@ try {
   // a roundabout
   await p.click('.tool[data-panel="build"]');
   await p.evaluate(()=>[...document.querySelectorAll('.road-tool')].find(b=>/Roundabout/.test(b.textContent)).click());
-  await p.mouse.click(box.x + box.width*0.5, box.y + box.height*0.4);
+  const rspot = await p.evaluate(()=>{
+    const v=window.__sgview, N=v.land.length, c=Math.floor(N/2);
+    const col = c + 6;
+    for (let y=2; y<N-2; y++) {
+      if (v.isLand(col, y) && !v.reserveMask?.[y]?.[col] && !(v.state?.grid?.[y]?.[col])) {
+        const s=v.cellToScreen(col, y); if (s.visible) return { x:s.x, y:s.y };
+      }
+    }
+    return null;
+  });
+  await p.mouse.click(rspot.x, rspot.y);
   await new Promise(r=>setTimeout(r,300));
   const ra = await p.evaluate(()=>window.__sgview.state.roads.islands.length);
   ok(ra >= 1, 'roundabout placed (island created)');

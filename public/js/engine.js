@@ -4,11 +4,11 @@ import {
   BUILDINGS, POLICIES, START_DATE, GRID_SIZE, POP_SCALE,
   HISTORICAL_EVENTS, RANDOM_EVENTS,
 } from './data.js';
-import { pointInPolygon } from './shape.js';
+import { pointInPolygon, inReservoir } from './shape.js';
 
-// Is grid cell (x,y) on the island (land)?
+// Is grid cell (x,y) on the island (land) and not in the protected reservoir?
 function isLandCell(x, y) {
-  return pointInPolygon((x + 0.5) / GRID_SIZE, (y + 0.5) / GRID_SIZE);
+  return pointInPolygon((x + 0.5) / GRID_SIZE, (y + 0.5) / GRID_SIZE) && !inReservoir(x, y, GRID_SIZE);
 }
 
 const DAYS_IN_MONTH = 30;
@@ -79,9 +79,10 @@ function cellWorld(x, y) {
 // of kampongs dotted across an otherwise rural island. Players build out the rest.
 function seed1965(state) {
   const c = Math.floor(GRID_SIZE / 2);
-  // anchor the town on the southern part of the island (south = larger world-z)
-  let ty = c;
-  for (let dy = 2; dy < GRID_SIZE / 2; dy++) { if (isLandCell(c, c + dy) && isLandCell(c, c + dy + 1)) { ty = c + dy; break; } }
+  // the colonial city/port sat on the SOUTH coast (low y), by the Singapore River.
+  let south = c;
+  for (let y = 0; y < GRID_SIZE; y++) { if (isLandCell(c, y)) { south = y; break; } }
+  const ty = Math.min(c - 3, south + 4);   // a few cells inland from the south shore
 
   // a compact street grid of nodes over land cells around the anchor
   const roads = state.roads, nodeAt = new Map();
@@ -265,6 +266,7 @@ export function derive(state) {
 
   // Residents consume extra power & water on top of building loads.
   powerUse += pop * 0.0009;
+  waterGen += 45;   // the Central Catchment reservoirs (MacRitchie/Peirce/Seletar)
   waterUse += pop * 0.0016 * (1 + mods.waterDemandMult);
 
   const mods_jobs = jobs * (1 + mods.jobsBoost);

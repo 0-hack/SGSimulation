@@ -5,7 +5,7 @@
 // main.js expects from the old 2D view.
 import * as THREE from './vendor/three.module.js';
 import { BUILDINGS, GRID_SIZE, ROAD_TYPES } from './data.js';
-import { SG_OUTLINE, pointInPolygon, landMask } from './shape.js';
+import { SG_OUTLINE, pointInPolygon, landMask, inReservoir, reservoirArea } from './shape.js';
 
 const N = GRID_SIZE;
 const WORLD = N * 10;         // world units across the bounding box (TILE stays ~10)
@@ -108,6 +108,7 @@ export class Scene3D {
 
     this._buildIsland();
     this.roadEdges = [];     // 1965 Singapore had no dense road grid — players build roads
+    this._buildCatchment();  // Central Catchment reservoir + nature reserve (centre of island)
     this._buildNature();     // scatter rural greenery across the undeveloped island
     this._buildNavGraph();   // traffic graph (freeform roads only; added on setState)
     this._initBoats();
@@ -268,19 +269,51 @@ export class Scene3D {
     ];
   }
 
-  // Street furniture along the kerbs: lampposts (lit at night), trees, benches.
-  // Rural greenery scattered across the undeveloped island (the 1965 look).
-  // Hidden on any cell that later gets a building.
+  // The Central Catchment: a protected reservoir lake (no building) ringed by
+  // dense rainforest — the centre of 1965 Singapore.
+  _buildCatchment() {
+    this.reserveMask = Array.from({ length: N }, () => Array(N).fill(false));
+    if (this.catchGroup) this.scene.remove(this.catchGroup);
+    this.catchGroup = new THREE.Group(); this.scene.add(this.catchGroup);
+    const v = [], idx = [], sand = [], sIdx = [];
+    const quad = (buf, bi, cx, cz, h, yy) => {
+      const n = buf.length / 3;
+      buf.push(cx - h, yy, cz - h, cx + h, yy, cz - h, cx + h, yy, cz + h, cx - h, yy, cz + h);
+      bi.push(n, n + 1, n + 2, n, n + 2, n + 3);
+    };
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+      if (!this.land[y][x] || !inReservoir(x, y, N)) continue;
+      this.reserveMask[y][x] = true;
+      const c = cellToWorld(x, y);
+      quad(sand, sIdx, c.x, c.z, TILE / 2 + 1.2, 0.12);   // muddy/sandy shoreline ring
+      quad(v, idx, c.x, c.z, TILE / 2 + 0.4, 0.2);         // water surface
+    }
+    const mk = (buf, bi, mat) => {
+      if (!buf.length) return;
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(buf, 3)); g.setIndex(bi); g.computeVertexNormals();
+      const m = new THREE.Mesh(g, mat); m.receiveShadow = true; this.catchGroup.add(m);
+    };
+    mk(sand, sIdx, toon(0x8aa15a, { side: THREE.DoubleSide }));
+    mk(v, idx, new THREE.MeshToonMaterial({ color: 0x2f86c4, transparent: true, opacity: 0.93, side: THREE.DoubleSide, gradientMap: toonGradient() }));
+  }
+
+  // Rural greenery scattered across the undeveloped island (the 1965 look),
+  // denser in the Central Catchment forest ring. Hidden under any building.
   _buildNature() {
     if (this.natureGroup) this.scene.remove(this.natureGroup);
     this.natureGroup = new THREE.Group(); this.scene.add(this.natureGroup);
     this.natureCells = new Map();
+    const ca = reservoirArea(N);
     for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
-      if (!this.land[y][x] || Math.random() > 0.34) continue;
+      if (!this.land[y][x] || this.reserveMask?.[y]?.[x]) continue;   // not on the lake
+      const d = Math.hypot(x - ca.cx, y - ca.cy);
+      const forest = d < ca.forestR;                                  // the nature reserve ring
+      if (Math.random() > (forest ? 0.78 : 0.32)) continue;
       const c = cellToWorld(x, y);
       const g = new THREE.Group();
-      const n = 1 + (Math.random() < 0.4 ? 1 : 0);
-      for (let k = 0; k < n; k++) treeAt(g, (Math.random() - 0.5) * 6, (Math.random() - 0.5) * 6, 0.8 + Math.random() * 0.8);
+      const n = forest ? 2 + Math.floor(Math.random() * 2) : 1 + (Math.random() < 0.4 ? 1 : 0);
+      for (let k = 0; k < n; k++) treeAt(g, (Math.random() - 0.5) * 6, (Math.random() - 0.5) * 6, 0.8 + Math.random() * 0.9);
       g.position.set(c.x, 0, c.z); g.rotation.y = Math.random() * Math.PI;
       g.traverse((m) => { if (m.isMesh) m.castShadow = false; });
       this.natureGroup.add(g);
@@ -436,7 +469,12 @@ export class Scene3D {
     if (gx < 0 || gy < 0 || gx >= N || gy >= N) return null;
     return { x: gx, y: gy };
   }
-  isLand(x, y) { return !!(this.land[y] && this.land[y][x]); }
+  isLand(x, y) { return !!(this.land[y] && this.land[y][x] && !(this.reserveMask && this.reserveMask[y][x])); }
+  // Is a world point over the protected reservoir / catchment? (blocks road drawing)
+  isReserveAt(wx, wz) {
+    const gx = Math.floor((wx / WORLD + 0.5) * N), gy = Math.floor((0.5 - wz / WORLD) * N);
+    return !!(this.reserveMask && this.reserveMask[gy] && this.reserveMask[gy][gx]);
+  }
   // Walkable = on land and not occupied by a building (i.e. a street/open space).
   _walkable(x, y) { return this.isLand(x, y) && !(this.state?.grid?.[y]?.[x]); }
 

@@ -325,8 +325,9 @@ function eraseRoadAt(x, z) {
 function onGroundTap(x, z) {
   if (G.readOnly) { toast('Read-only while visiting.'); return; }
   const R = G.road;
-  if (R.tool === 'roundabout') { placeRoundabout(x, z); return; }
   if (R.tool === 'erase') { eraseRoadAt(x, z); return; }
+  if (G.view.isReserveAt(x, z)) { toast('Protected Central Catchment — no roads on the reservoir.'); return; }
+  if (R.tool === 'roundabout') { placeRoundabout(x, z); return; }
   const pt = { x, z };
   if (R.tool === 'straight') {
     R.pending.push(pt);

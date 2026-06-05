@@ -4,18 +4,28 @@
 // Traced from Singapore's real silhouette: a lozenge wider E–W than N–S, with a
 // pointed western end (Tuas/Jurong), a rounded eastern point (Changi), the city
 // bulging south (Marina) and the Johor-Strait coast to the north (the causeway
-// at Woodlands being the northernmost point).
+// at Woodlands being the northernmost point). The coast is notched by several
+// estuaries/inlets where the sea slips inland (Jurong, the river mouth, Kallang,
+// Serangoon, Sungei Seletar, Kranji) — narrow inward spikes in the polygon.
 export const SG_OUTLINE = [
-  // --- south coast, west → east (low y) ---
+  // --- south coast, west → east (low y); inland = higher y ---
   [0.030, 0.452], [0.052, 0.405], [0.088, 0.368], [0.132, 0.346],
+  [0.146, 0.352], [0.158, 0.404], [0.170, 0.356],   // Jurong inlet
   [0.182, 0.352], [0.232, 0.330], [0.292, 0.322], [0.352, 0.316],
-  [0.410, 0.300], [0.456, 0.288], [0.500, 0.282], [0.546, 0.290],
-  [0.602, 0.305], [0.662, 0.318], [0.722, 0.332], [0.786, 0.350],
+  [0.410, 0.300],
+  [0.414, 0.300], [0.423, 0.345], [0.432, 0.293],   // Singapore River mouth
+  [0.456, 0.288], [0.500, 0.282], [0.546, 0.290], [0.602, 0.305],
+  [0.616, 0.310], [0.628, 0.372], [0.640, 0.318],   // Kallang/Geylang inlet
+  [0.662, 0.318], [0.722, 0.332], [0.786, 0.350],
   [0.850, 0.378], [0.910, 0.420], [0.955, 0.470],
-  // --- north coast (Johor Strait), east → west (high y) ---
+  // --- north coast (Johor Strait), east → west (high y); inland = lower y ---
   [0.935, 0.520], [0.888, 0.560], [0.834, 0.586], [0.774, 0.602],
-  [0.714, 0.620], [0.656, 0.636], [0.600, 0.658], [0.540, 0.682],
-  [0.480, 0.700], [0.430, 0.690], [0.376, 0.668], [0.320, 0.648],
+  [0.760, 0.596], [0.748, 0.545], [0.736, 0.610],   // Serangoon/Punggol inlet
+  [0.714, 0.620], [0.656, 0.636],
+  [0.642, 0.628], [0.630, 0.558], [0.618, 0.642],   // Sungei Seletar inlet
+  [0.600, 0.658], [0.540, 0.682], [0.480, 0.700], [0.430, 0.690],
+  [0.376, 0.668], [0.320, 0.648],
+  [0.308, 0.640], [0.296, 0.585], [0.284, 0.628],   // Kranji inlet
   [0.255, 0.612], [0.190, 0.564], [0.110, 0.512],
 ];
 

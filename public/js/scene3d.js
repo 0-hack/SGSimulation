@@ -11,6 +11,7 @@ const N = GRID_SIZE;
 const WORLD = N * 10;         // world units across the bounding box (TILE stays ~10)
 const TILE = WORLD / N;
 const SEA_Y = -1.2;
+const SEA_COLOR = 0x3aa0d8;   // shared by the sea, river, reservoirs & coastal inlets
 const DAY_CYCLE = 16;         // in-game days per full day/night cycle
 const LIGHT_YEAR = 1970;      // traffic lights appear as the city modernises
 
@@ -105,7 +106,7 @@ export class Scene3D {
 
     // Sea
     const seaGeo = new THREE.PlaneGeometry(WORLD * 4, WORLD * 4, 1, 1);
-    const seaMat = new THREE.MeshToonMaterial({ color: 0x3aa0d8, transparent: true, opacity: 0.95, gradientMap: toonGradient() });
+    const seaMat = new THREE.MeshToonMaterial({ color: SEA_COLOR, transparent: true, opacity: 0.95, gradientMap: toonGradient() });
     const sea = new THREE.Mesh(seaGeo, seaMat);
     sea.rotation.x = -Math.PI / 2;
     sea.position.y = SEA_Y;
@@ -302,25 +303,30 @@ export class Scene3D {
     // shapes when seen from afar.
     if (this.catchGroup) this.scene.remove(this.catchGroup);
     this.catchGroup = new THREE.Group(); this.scene.add(this.catchGroup);
+    // One unified water colour so the river, reservoirs, coastal inlets and the
+    // open sea all read as the same body of water and merge seamlessly.
     const sMat = toon(0x8aa15a, { side: THREE.DoubleSide });            // muddy/grassy bank
-    const wMat = new THREE.MeshToonMaterial({ color: 0x2f86c4, transparent: true, opacity: 0.95, side: THREE.DoubleSide, gradientMap: toonGradient() });
+    const wMat = new THREE.MeshToonMaterial({ color: SEA_COLOR, transparent: true, opacity: 0.95, side: THREE.DoubleSide, gradientMap: toonGradient() });
     const branches = [...reservoirBranches(N), ...riverBranches(N)];
     for (const br of branches) this._waterRibbon(br, 2.0, 0.1, sMat);   // banks first (lower)
     for (const br of branches) this._waterRibbon(br, 0, 0.18, wMat);    // water on top
   }
 
   // Build one smooth water ribbon from a branch (polyline of {x,y,w} cell coords),
-  // swept along a Catmull-Rom curve. `extra` widens it (world units) for banks.
+  // swept along a Catmull-Rom curve. `extra` widens it (world units) for banks;
+  // the far END tapers to a sharp point (a dendritic tip).
   _waterRibbon(pts, extra, yy, mat) {
     if (!pts || pts.length < 2) return;
     const ctrl = pts.map((p) => { const c = cellToWorld(p.x, p.y); return new THREE.Vector3(c.x, 0, c.z); });
     const curve = new THREE.CatmullRomCurve3(ctrl, false, 'catmullrom', 0.5);
     const STEPS = Math.max(10, (pts.length - 1) * 14), samples = curve.getPoints(STEPS);
-    const pos = [], idx = [];
+    const pos = [], idx = [], tipFrac = 0.2;
     for (let i = 0; i <= STEPS; i++) {
       const f = (i / STEPS) * (pts.length - 1);
       const i0 = Math.min(pts.length - 1, Math.floor(f)), i1 = Math.min(pts.length - 1, i0 + 1), tt = f - i0;
-      const hw = (pts[i0].w * (1 - tt) + pts[i1].w * tt) * TILE + extra;
+      let hw = (pts[i0].w * (1 - tt) + pts[i1].w * tt) * TILE + extra;
+      const u = i / STEPS;                                   // sharpen the tip at the branch end
+      if (u > 1 - tipFrac) hw *= Math.max(0, (1 - u) / tipFrac);
       const p = samples[i], a = samples[Math.max(0, i - 1)], b = samples[Math.min(STEPS, i + 1)];
       let tx = b.x - a.x, tz = b.z - a.z; const tl = Math.hypot(tx, tz) || 1; tx /= tl; tz /= tl;
       const nx = -tz, nz = tx;

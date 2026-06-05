@@ -204,6 +204,12 @@ svg { display: block; width: 100%; height: 100%; }
 .cat-tab .ci { color: var(--muted); }
 .cat-tab.active { background: var(--ink); border-color: var(--ink); color: #fff; }
 .cat-tab.active .ci { color: #fff; }
+.road-types { display: flex; gap: 7px; flex-wrap: wrap; }
+.road-tools { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.road-tool { background: var(--surface-2); border: 1px solid var(--line-2); border-radius: 13px; padding: 12px 6px; display: flex; flex-direction: column; align-items: center; gap: 6px; color: var(--ink); font-size: 12px; font-weight: 700; }
+.road-tool .rt-ico { width: 26px; height: 26px; color: var(--muted); }
+.road-tool.active { background: var(--coral); border-color: var(--coral); color: #fff; }
+.road-tool.active .rt-ico { color: #fff; }
 .theme-picker { background: var(--surface-2); border: 1px solid var(--line-2); border-radius: 14px; padding: 10px 12px; margin-bottom: 12px; }
 .theme-label { font-size: 12px; font-weight: 700; color: var(--muted); }
 .swatches { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }

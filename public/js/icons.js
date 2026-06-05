@@ -41,6 +41,14 @@ export const ICONS = {
   bulldoze: svg('<path d="M3 18h7l2-4h6v4h3"/><circle cx="7" cy="20" r="1.6"/><circle cx="17" cy="20" r="1.6"/><path d="M5 14V9h4l2 4"/>'),
   pin: svg('<path d="M12 21s7-6.3 7-11a7 7 0 1 0-14 0c0 4.7 7 11 7 11z"/><circle cx="12" cy="10" r="2.4"/>'),
 
+  // roads
+  roads: svg('<path d="M5 21l3-18M19 21l-3-18"/><path d="M12 4v2M12 9v2M12 14v2M12 19v1"/>'),
+  straight: svg('<path d="M5 19L19 5"/><circle cx="5" cy="19" r="1.6"/><circle cx="19" cy="5" r="1.6"/>'),
+  curve: svg('<path d="M4 20c0-9 7-16 16-16"/><circle cx="4" cy="20" r="1.6"/><circle cx="20" cy="4" r="1.6"/>'),
+  roundabout: svg('<circle cx="12" cy="12" r="4"/><path d="M12 8V3M12 21v-5M16 12h5M3 12h5"/>'),
+  bridge: svg('<path d="M3 16c4 0 5-6 9-6s5 6 9 6"/><path d="M3 16v3M21 16v3M9 13v6M15 13v6"/>'),
+  erase: svg('<path d="M4 16l8-8 5 5-6 6H7z"/><path d="M9 21h11"/>'),
+
   // weather
   sunny: svg('<circle cx="12" cy="12" r="4.2"/><path d="M12 3v2.4M12 18.6V21M3 12h2.4M18.6 12H21M5.6 5.6l1.7 1.7M16.7 16.7l1.7 1.7M18.4 5.6l-1.7 1.7M7.3 16.7l-1.7 1.7"/>'),
   cloudy: svg('<path d="M7.5 18a4 4 0 0 1-.4-8 5.5 5.5 0 0 1 10.7-1.2A3.8 3.8 0 0 1 18.5 18z"/>'),

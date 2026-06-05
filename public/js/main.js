@@ -9,7 +9,7 @@ import {
   updateHud, renderBuild, renderPolicy, renderDash, renderNews,
   money, num, pct, el,
 } from './ui.js';
-import { BUILDINGS, POP_SCALE } from './data.js';
+import { BUILDINGS, POP_SCALE, ROAD_TYPES } from './data.js';
 import { injectIcons, ICONS, WEATHER } from './icons.js';
 
 const LS_SAVE = 'sg_save_v1';
@@ -31,6 +31,7 @@ const G = {
   lastFrame: 0,
   hudTimer: 0,
   build: { cat: 'residential', selected: null, bulldoze: false, theme: null },
+  road: { tool: null, type: 'street', elevated: false, pending: [] },
   currentPanel: null,
   dirty: false,          // unsaved changes since last cloud save
 };
@@ -91,7 +92,7 @@ function showGameShell(playing = true) {
   $('toolbar').classList.remove('hidden');
   if (!G.view) {
     try {
-      G.view = new Scene3D($('city'), { onTileTap: onTileTap });
+      G.view = new Scene3D($('city'), { onTileTap: onTileTap, onGroundTap: onGroundTap });
       window.__sgview = G.view; // exposed for debugging / disaster FX hooks
     } catch (err) {
       alert('This game needs a browser with WebGL/3D support.\n\n' + err.message);
@@ -137,6 +138,8 @@ function continueGame() {
 }
 
 function attachState() {
+  if (!G.state.roads) G.state.roads = { nodes: [], edges: [], islands: [] }; // migrate older saves
+  if (!G.state.roads.islands) G.state.roads.islands = [];
   refreshSummary(G.state);
   G.view.setState(G.state);
   G.view.centerCamera();
@@ -263,6 +266,100 @@ function afterEdit() {
 }
 
 // ===========================================================================
+// Freeform road drawing
+// ===========================================================================
+const SNAP = 4; // world units to snap onto an existing node
+function roadNodeAt(roads, x, z) {
+  for (let i = 0; i < roads.nodes.length; i++) {
+    const n = roads.nodes[i];
+    if (Math.hypot(n.x - x, n.z - z) < SNAP) return i;
+  }
+  roads.nodes.push({ x, z, y: 0 });
+  return roads.nodes.length - 1;
+}
+function addRoadEdge(a, b, ctrl) {
+  const t = G.road.type;
+  const T = ROAD_TYPES[t];
+  if (G.state.treasury < T.cost) { toast(`Need ${money(T.cost)} for this ${T.name.toLowerCase()}.`); return false; }
+  const roads = G.state.roads;
+  const ai = roadNodeAt(roads, a.x, a.z), bi = roadNodeAt(roads, b.x, b.z);
+  if (ai === bi) return false;
+  roads.edges.push({ a: ai, b: bi, ctrl: ctrl || null, type: t, lanes: T.lanes, elevated: G.road.elevated });
+  G.state.treasury -= T.cost;
+  G.view.rebuildRoadNet();
+  afterEdit();
+  return true;
+}
+function placeRoundabout(x, z) {
+  const T = ROAD_TYPES[G.road.type];
+  const cost = T.cost * 4;
+  if (G.state.treasury < cost) { toast(`Need ${money(cost)} for a roundabout.`); return; }
+  const roads = G.state.roads, r = 6, k = 8, base = roads.nodes.length;
+  for (let i = 0; i < k; i++) roads.nodes.push({ x: x + Math.cos(i / k * Math.PI * 2) * r, z: z + Math.sin(i / k * Math.PI * 2) * r, y: 0 });
+  for (let i = 0; i < k; i++) {
+    const a = base + i, b = base + (i + 1) % k;
+    const mx = (roads.nodes[a].x + roads.nodes[b].x) / 2, mz = (roads.nodes[a].z + roads.nodes[b].z) / 2;
+    const cx = x + (mx - x) * 1.25, cz = z + (mz - z) * 1.25;   // bulge outward for a round arc
+    roads.edges.push({ a, b, ctrl: { x: cx, z: cz }, type: G.road.type, lanes: T.lanes, elevated: false });
+  }
+  roads.islands.push({ x, z, r });
+  G.state.treasury -= cost;
+  G.view.rebuildRoadNet();
+  afterEdit();
+  toast('Roundabout built.');
+}
+function eraseRoadAt(x, z) {
+  const roads = G.state.roads;
+  let best = -1, bestD = 6;
+  roads.edges.forEach((e, i) => {
+    const a = roads.nodes[e.a], b = roads.nodes[e.b];
+    if (!a || !b) return;
+    const mx = e.ctrl ? e.ctrl.x : (a.x + b.x) / 2, mz = e.ctrl ? e.ctrl.z : (a.z + b.z) / 2;
+    for (const [px, pz] of [[a.x, a.z], [mx, mz], [b.x, b.z]]) {
+      const d = Math.hypot(px - x, pz - z); if (d < bestD) { bestD = d; best = i; }
+    }
+  });
+  if (best >= 0) { roads.edges.splice(best, 1); G.view.rebuildRoadNet(); afterEdit(); toast('Road removed.'); }
+  else toast('No road here to erase.');
+}
+
+function onGroundTap(x, z) {
+  if (G.readOnly) { toast('Read-only while visiting.'); return; }
+  const R = G.road;
+  if (R.tool === 'roundabout') { placeRoundabout(x, z); return; }
+  if (R.tool === 'erase') { eraseRoadAt(x, z); return; }
+  const pt = { x, z };
+  if (R.tool === 'straight') {
+    R.pending.push(pt);
+    if (R.pending.length >= 2) {
+      if (addRoadEdge(R.pending[0], pt)) R.pending = [pt]; else R.pending = [];
+    }
+  } else if (R.tool === 'curve') {
+    R.pending.push(pt);
+    if (R.pending.length >= 3) {
+      if (addRoadEdge(R.pending[0], pt, R.pending[1])) R.pending = [pt]; else R.pending = [];
+    }
+  }
+  G.view.showRoadPreview(R.pending, R.type, R.elevated);
+}
+function selectRoadTool(tool) {
+  G.road.tool = G.road.tool === tool ? null : tool;
+  G.road.pending = [];
+  G.build.selected = null; G.build.bulldoze = false;
+  G.view.setPreview(null); G.view.setBulldoze(false);
+  G.view.setRoadMode(!!G.road.tool);
+  G.view.showRoadPreview([]);
+  refreshPanel();
+  if (G.road.tool) {
+    closeSheet();
+    const msg = { straight: 'Tap two points to lay a straight road (keep tapping to chain).',
+      curve: 'Tap start, a curve point, then the end. Chains on.',
+      roundabout: 'Tap to place a roundabout.', erase: 'Tap a road to remove it.' }[G.road.tool];
+    toast(msg);
+  }
+}
+
+// ===========================================================================
 // Sheets / panels
 // ===========================================================================
 function openPanel(panel) {
@@ -289,11 +386,15 @@ function refreshPanel() {
   if (panel === 'build') {
     content.append(renderBuild(G.state, {
       cat: G.build.cat, selected: G.build.selected, bulldoze: G.build.bulldoze, theme: G.build.theme,
-      setCat: (c) => { G.build.cat = c; refreshPanel(); },
+      road: G.road,
+      selectRoadTool, setRoadType: (t) => { G.road.type = t; refreshPanel(); },
+      toggleBridge: () => { G.road.elevated = !G.road.elevated; refreshPanel(); },
+      setCat: (c) => { G.build.cat = c; if (c !== 'roads') { G.road.tool = null; G.view.setRoadMode(false); } refreshPanel(); },
       setTheme: (t) => { G.build.theme = t; if (G.build.selected) G.view.setPreview(G.build.selected, t); refreshPanel(); },
       selectBuilding: (k) => {
         G.build.selected = G.build.selected === k ? null : k;
         G.build.bulldoze = false;
+        G.road.tool = null; G.view.setRoadMode(false); G.view.showRoadPreview([]);
         G.view.setPreview(G.build.selected, G.build.theme);
         refreshPanel();
         if (G.build.selected) {
@@ -305,6 +406,7 @@ function refreshPanel() {
       toggleBulldoze: () => {
         G.build.bulldoze = !G.build.bulldoze;
         G.build.selected = null;
+        G.road.tool = null; G.view.setRoadMode(false); G.view.showRoadPreview([]);
         G.view.setBulldoze(G.build.bulldoze);
         refreshPanel();
         if (G.build.bulldoze) { closeSheet(); toast('Bulldoze mode: tap buildings to remove.'); }

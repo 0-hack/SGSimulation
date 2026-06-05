@@ -1,6 +1,6 @@
 // UI rendering helpers: builds the contents of each bottom sheet/panel.
 // Returns DOM and wires callbacks; keeps main.js focused on orchestration.
-import { BUILDINGS, CATEGORIES, POLICIES, POP_SCALE, THEMES } from './data.js';
+import { BUILDINGS, CATEGORIES, POLICIES, POP_SCALE, THEMES, ROAD_TYPES } from './data.js';
 import { derive, isUnlocked, formatDate } from './engine.js';
 import { ICONS, CAT_ICON } from './icons.js';
 
@@ -57,11 +57,14 @@ export function renderBuild(state, ctx) {
   const tabs = el('div', 'cat-tabs');
   for (const c of CATEGORIES) {
     const t = el('button', 'cat-tab' + (ctx.cat === c.id ? ' active' : ''),
-      `<span class="ci">${ICONS[CAT_ICON[c.id]] || ''}</span>${c.name}`);
+      `<span class="ci">${ICONS[c.id === 'roads' ? 'roads' : CAT_ICON[c.id]] || ''}</span>${c.name}`);
     t.onclick = () => ctx.setCat(c.id);
     tabs.append(t);
   }
   wrap.append(tabs);
+
+  // Roads category shows the road-drawing toolkit instead of buildings.
+  if (ctx.cat === 'roads') { wrap.append(renderRoads(ctx)); return wrap; }
 
   // Colour-theme picker — shown for categories that contain customizable builds.
   const hasCustom = Object.values(BUILDINGS).some((b) => b.cat === ctx.cat && b.customizable);
@@ -107,6 +110,44 @@ export function renderBuild(state, ctx) {
     grid.append(card);
   }
   wrap.append(grid);
+  return wrap;
+}
+
+// ---- road-drawing toolkit -------------------------------------------------
+function renderRoads(ctx) {
+  const r = ctx.road;
+  const wrap = el('div', 'roads-ui');
+  wrap.append(el('p', 'policy-desc', 'Draw your own roads — straight or curved, single street up to highway, with roundabouts and elevated flyovers. Traffic will use them.'));
+
+  // road type
+  const typeRow = el('div', 'road-types');
+  for (const [id, t] of Object.entries(ROAD_TYPES)) {
+    const btn = el('button', 'opt' + (r.type === id ? ' active' : ''), `${t.name} · ${t.lanes}-lane`);
+    btn.onclick = () => ctx.setRoadType(id);
+    typeRow.append(btn);
+  }
+  wrap.append(el('div', 'section-title', 'Road type'));
+  wrap.append(typeRow);
+
+  // bridge toggle
+  const bridge = el('div', 'checkbox');
+  bridge.innerHTML = `<span class="switch${r.elevated ? ' on' : ''}"></span> Elevated flyover / bridge`;
+  bridge.querySelector('.switch').onclick = () => ctx.toggleBridge();
+  wrap.append(bridge);
+
+  // tools
+  wrap.append(el('div', 'section-title', 'Tool'));
+  const tools = el('div', 'road-tools');
+  const defs = [
+    ['straight', 'Straight'], ['curve', 'Curve'], ['roundabout', 'Roundabout'], ['erase', 'Erase'],
+  ];
+  for (const [id, label] of defs) {
+    const b = el('button', 'road-tool' + (r.tool === id ? ' active' : ''),
+      `<span class="rt-ico">${ICONS[id] || ''}</span><span>${label}</span>`);
+    b.onclick = () => ctx.selectRoadTool(id);
+    tools.append(b);
+  }
+  wrap.append(tools);
   return wrap;
 }
 

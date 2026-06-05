@@ -8,7 +8,7 @@
     "start": "node server/server.js",
     "dev": "node --watch server/server.js",
     "test": "node server/test/smoke.test.js",
-    "test:e2e": "node server/test/browser.test.js && node server/test/visit.test.js",
+    "test:e2e": "node server/test/browser.test.js && node server/test/visit.test.js && node server/test/roads.test.js",
     "test:all": "npm test && npm run test:e2e"
   },
   "engines": {

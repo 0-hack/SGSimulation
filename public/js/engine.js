@@ -52,6 +52,7 @@ export function newGame({ name = 'New Singapore', owner = 'Anonymous' } = {}) {
     unlocked: {},             // buildings unlocked by choices
     log: [{ d: { ...START_DATE }, text: 'Singapore gains independence. The journey begins.' }],
     pendingEvent: null,       // event awaiting player choice
+    roads: { nodes: [], edges: [], islands: [] }, // player-drawn freeform road network
     summary: {},
     daysElapsed: 0,
   };

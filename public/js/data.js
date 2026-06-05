@@ -20,7 +20,15 @@ export const CATEGORIES = [
   { id: 'civic', name: 'Services', icon: '🏥' },
   { id: 'green', name: 'Environment', icon: '🌳' },
   { id: 'leisure', name: 'Coast & Leisure', icon: '⛱️' },
+  { id: 'roads', name: 'Roads', icon: '🛣️' },
 ];
+
+// Freeform road types the player can draw.
+export const ROAD_TYPES = {
+  street:  { name: 'Street',  lanes: 2, width: 3.2, speed: 9,  cost: 6,  asphalt: '#3a3e45' },
+  avenue:  { name: 'Avenue',  lanes: 4, width: 5.4, speed: 13, cost: 14, asphalt: '#34373d' },
+  highway: { name: 'Highway', lanes: 6, width: 7.6, speed: 20, cost: 26, asphalt: '#2e3137' },
+};
 
 // Colour themes players can pick to customise a building's look.
 export const THEMES = [

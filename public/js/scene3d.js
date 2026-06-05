@@ -4,7 +4,7 @@
 // disasters (floods, haze, storms) are animated. Mirrors the small API that
 // main.js expects from the old 2D view.
 import * as THREE from './vendor/three.module.js';
-import { BUILDINGS, GRID_SIZE } from './data.js';
+import { BUILDINGS, GRID_SIZE, ROAD_TYPES } from './data.js';
 import { SG_OUTLINE, pointInPolygon, landMask } from './shape.js';
 
 const N = GRID_SIZE;
@@ -24,9 +24,13 @@ function cornerToWorld(i, j) {
 }
 
 export class Scene3D {
-  constructor(canvas, { onTileTap } = {}) {
+  constructor(canvas, { onTileTap, onGroundTap } = {}) {
     this.canvas = canvas;
     this.onTileTap = onTileTap;
+    this.onGroundTap = onGroundTap;       // freeform road drawing taps
+    this.roadMode = false;
+    this.rVehicles = [];                  // traffic on the player's roads
+    this.edgePts = []; this.edgeLen = []; this.rNodeAdj = [];
     this.state = null;
     this.land = landMask(N);
     this.buildings = new Map();   // "x,y" -> { group, key }
@@ -352,8 +356,13 @@ export class Scene3D {
       const p = pos(e);
       const quick = performance.now() - this._downTime < 400;
       if (!this._moved && quick && this._pointers.size <= 1) {
-        const cell = this._raycastCell(p);
-        if (cell && this.onTileTap) this.onTileTap(cell.x, cell.y);
+        if (this.roadMode && this.onGroundTap) {
+          const g = this._raycastGround(p);
+          if (g) this.onGroundTap(g.x, g.z);
+        } else {
+          const cell = this._raycastCell(p);
+          if (cell && this.onTileTap) this.onTileTap(cell.x, cell.y);
+        }
       }
       this._pointers.delete(e.pointerId);
       if (this._pointers.size < 2) { this._lastPinch = 0; this._lastMid = null; }
@@ -404,6 +413,11 @@ export class Scene3D {
     const r = this.canvas.getBoundingClientRect();
     return new THREE.Vector2((p.x / r.width) * 2 - 1, -(p.y / r.height) * 2 + 1);
   }
+  _raycastGround(p) {
+    this.raycaster.setFromCamera(this._ndc(p), this.camera);
+    const hit = this.raycaster.intersectObject(this.pickPlane, false)[0];
+    return hit ? { x: hit.point.x, z: hit.point.z } : null;
+  }
   _raycastCell(p) {
     this.raycaster.setFromCamera(this._ndc(p), this.camera);
     const hit = this.raycaster.intersectObject(this.pickPlane, false)[0];
@@ -434,7 +448,7 @@ export class Scene3D {
   }
 
   // ---- external API (mirrors the 2D view) ----------------------------------
-  setState(state) { this.state = state; this.syncAll(); }
+  setState(state) { this.state = state; this.syncAll(); this.rebuildRoadNet(); }
   setShortages(s) { this.shortages = s; }
   setPreview(key, theme) {
     this.previewKey = key; this.previewTheme = theme; this.bulldoze = false;
@@ -861,6 +875,187 @@ export class Scene3D {
     }
   }
 
+  // ---- freeform road network (player-drawn) --------------------------------
+  setRoadMode(on) { this.roadMode = on; if (!on) this.clearRoadPreview(); }
+
+  // Sample an edge's centre-line into world points (with bridge elevation).
+  _sampleEdge(roads, e) {
+    const a = roads.nodes[e.a], b = roads.nodes[e.b];
+    if (!a || !b) return [];
+    const pts = [];
+    const segs = e.ctrl ? 14 : 1;
+    for (let i = 0; i <= segs; i++) {
+      const t = i / segs;
+      let x, z;
+      if (e.ctrl) { // quadratic Bézier
+        const it = 1 - t;
+        x = it * it * a.x + 2 * it * t * e.ctrl.x + t * t * b.x;
+        z = it * it * a.z + 2 * it * t * e.ctrl.z + t * t * b.z;
+      } else { x = a.x + (b.x - a.x) * t; z = a.z + (b.z - a.z) * t; }
+      let y = 0.16;
+      if (e.elevated) { const ramp = Math.min(1, Math.min(t, 1 - t) / 0.22); y = 0.16 + ramp * 4.2; }
+      pts.push({ x, y, z });
+    }
+    return pts;
+  }
+
+  // Rebuild all road meshes + the navigation graph from state.roads.
+  rebuildRoadNet() {
+    if (!this.roadGroup) { this.roadGroup = new THREE.Group(); this.scene.add(this.roadGroup); }
+    while (this.roadGroup.children.length) {
+      const c = this.roadGroup.children.pop();
+      c.geometry?.dispose?.(); this.roadGroup.remove(c);
+    }
+    this.edgePts = []; this.edgeLen = [];
+    this.rNodeAdj = (this.state?.roads?.nodes || []).map(() => []);
+    const roads = this.state?.roads;
+    if (!roads) return;
+
+    const pave = [[], []], road = [[], []], mark = [[], []];
+    const ribbon = (buf, pts, hw, yOff) => {
+      const [v, idx] = buf;
+      for (let i = 0; i < pts.length - 1; i++) {
+        const a = pts[i], b = pts[i + 1];
+        const dx = b.x - a.x, dz = b.z - a.z, l = Math.hypot(dx, dz) || 1;
+        const px = -dz / l * hw, pz = dx / l * hw;
+        const n = v.length / 3;
+        v.push(a.x + px, a.y + yOff, a.z + pz, a.x - px, a.y + yOff, a.z - pz,
+               b.x - px, b.y + yOff, b.z - pz, b.x + px, b.y + yOff, b.z + pz);
+        idx.push(n, n + 1, n + 2, n, n + 2, n + 3);
+      }
+    };
+    const dash = (pts, hw, yOff) => {
+      const [v, idx] = mark;
+      let acc = 0;
+      for (let i = 0; i < pts.length - 1; i++) {
+        const a = pts[i], b = pts[i + 1];
+        const dx = b.x - a.x, dz = b.z - a.z, l = Math.hypot(dx, dz) || 1;
+        const ux = dx / l, uz = dz / l, px = -uz * hw, pz = ux * hw;
+        for (let s = 0; s < l; s += 1.4) {
+          acc++; if (acc % 2) continue;            // skip = the gap in the dash
+          const m0 = s, m1 = Math.min(s + 0.7, l);
+          const n = v.length / 3;
+          v.push(a.x + ux * m0 + px, a.y + yOff, a.z + uz * m0 + pz, a.x + ux * m0 - px, a.y + yOff, a.z + uz * m0 - pz,
+                 a.x + ux * m1 - px, a.y + yOff, a.z + uz * m1 - pz, a.x + ux * m1 + px, a.y + yOff, a.z + uz * m1 + pz);
+          idx.push(n, n + 1, n + 2, n, n + 2, n + 3);
+        }
+      }
+    };
+
+    roads.edges.forEach((e) => {
+      const T = ROAD_TYPES[e.type] || ROAD_TYPES.street;
+      const pts = this._sampleEdge(roads, e);
+      // arc length
+      let len = 0; for (let i = 0; i < pts.length - 1; i++) len += Math.hypot(pts[i + 1].x - pts[i].x, pts[i + 1].z - pts[i].z);
+      this.edgePts.push(pts); this.edgeLen.push(len);
+      if (this.rNodeAdj[e.a]) this.rNodeAdj[e.a].push({ edge: this.edgePts.length - 1, to: e.b, fromStart: true });
+      if (this.rNodeAdj[e.b]) this.rNodeAdj[e.b].push({ edge: this.edgePts.length - 1, to: e.a, fromStart: false });
+      ribbon(pave, pts, T.width / 2 + 0.7, 0.0);
+      ribbon(road, pts, T.width / 2, 0.03);
+      dash(pts, e.lanes > 2 ? T.width / 4 : 0.06, 0.06);  // centre dash / lane line
+      // bridge pillars
+      if (e.elevated) {
+        for (let i = 2; i < pts.length - 1; i += 4) {
+          const pt = pts[i];
+          const pil = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.6, pt.y, 8), toon(0x9098a0));
+          pil.position.set(pt.x, pt.y / 2, pt.z); this.roadGroup.add(pil);
+        }
+      }
+    });
+
+    // roundabout islands (grass disc + tree)
+    (roads.islands || []).forEach((is) => {
+      const disc = new THREE.Mesh(new THREE.CircleGeometry(is.r - 1.4, 22), toon(0x66bd5a));
+      disc.rotation.x = -Math.PI / 2; disc.position.set(is.x, 0.17, is.z); this.roadGroup.add(disc);
+      treeAt(this.roadGroup, is.x, is.z, 1.4); this.roadGroup.children[this.roadGroup.children.length - 1].position.set(is.x, 0, is.z);
+    });
+
+    const mk = (buf, material) => {
+      if (!buf[0].length) return;
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(buf[0], 3));
+      g.setIndex(buf[1]); g.computeVertexNormals();
+      const m = new THREE.Mesh(g, material); m.receiveShadow = true; this.roadGroup.add(m);
+    };
+    const DS = THREE.DoubleSide;
+    mk(pave, toon(0xc4bda8, { side: DS }));
+    mk(road, toon(0x33363d, { side: DS }));
+    mk(mark, toon(0xfaf3d8, { side: DS }));
+  }
+
+  _ensureRoadVehicles(target) {
+    while (this.rVehicles.length < target) this._addRoadVehicle();
+    while (this.rVehicles.length > target) { const v = this.rVehicles.pop(); this.scene.remove(v.mesh); }
+  }
+  _addRoadVehicle() {
+    if (!this.edgePts.length) return;
+    const r = Math.random();
+    const kind = r < 0.5 ? 'car' : r < 0.62 ? 'taxi' : r < 0.78 ? 'bike' : r < 0.9 ? 'lorry' : 'bus';
+    const { mesh, len } = makeVehicle(kind);
+    this.scene.add(mesh);
+    const ei = Math.floor(Math.random() * this.edgePts.length);
+    const ag = { mesh, len, kind, edge: ei, dir: Math.random() < 0.5 ? 1 : -1, t: Math.random(),
+      speed: ({ car: 11, taxi: 11, bike: 14, lorry: 8, bus: 7.5 }[kind]) * (0.8 + Math.random() * 0.4),
+      lane: 0.5 };
+    this.rVehicles.push(ag);
+  }
+  _updateRoadTraffic(dt) {
+    if (!this.edgePts.length) { if (this.rVehicles.length) this._ensureRoadVehicles(0); return; }
+    const target = THREE.MathUtils.clamp(Math.floor(this.edgePts.length * 1.4), 2, 40);
+    this._ensureRoadVehicles(target);
+    // following per (edge,dir)
+    const grp = new Map();
+    for (const a of this.rVehicles) { const k = a.edge + ':' + a.dir; let g = grp.get(k); if (!g) grp.set(k, g = []); g.push(a); }
+    for (const g of grp.values()) { g.sort((p, q) => (p.dir > 0 ? p.t - q.t : q.t - p.t)); for (let i = 0; i < g.length; i++) g[i]._lead = g[i + 1] || null; }
+
+    for (const a of this.rVehicles) {
+      const pts = this.edgePts[a.edge], len = this.edgeLen[a.edge] || 1;
+      let adv = dt * a.speed / len;
+      if (a._lead) { const gap = (a.len + 2) / len; const adist = a.dir > 0 ? a._lead.t - a.t : a.t - a._lead.t; if (adist < gap) adv = Math.max(0, adv - (gap - adist)); }
+      a.t += adv * a.dir; a._lead = null;
+      if (a.t > 1 || a.t < 0) {
+        const node = a.t > 1 ? this._edgeEnd(a.edge) : this._edgeStart(a.edge);
+        const next = this._pickRoadEdge(node, a.edge);
+        if (!next) { a.dir *= -1; a.t = THREE.MathUtils.clamp(a.t, 0, 1); }
+        else { a.edge = next.edge; a.dir = next.fromStart ? 1 : -1; a.t = next.fromStart ? 0 : 1; }
+        continue;
+      }
+      this._placeRoadAgent(a);
+    }
+  }
+  _edgeStart(ei) { for (let n = 0; n < this.rNodeAdj.length; n++) for (const l of this.rNodeAdj[n]) if (l.edge === ei && l.fromStart) return n; return -1; }
+  _edgeEnd(ei) { for (let n = 0; n < this.rNodeAdj.length; n++) for (const l of this.rNodeAdj[n]) if (l.edge === ei && !l.fromStart) return n; return -1; }
+  _pickRoadEdge(node, fromEdge) {
+    const links = this.rNodeAdj[node] || [];
+    const opts = links.filter((l) => l.edge !== fromEdge);
+    const pool = opts.length ? opts : links;
+    return pool.length ? pool[Math.floor(Math.random() * pool.length)] : null;
+  }
+  _placeRoadAgent(a) {
+    const pts = this.edgePts[a.edge];
+    const f = THREE.MathUtils.clamp(a.t, 0, 1) * (pts.length - 1);
+    const i = Math.min(pts.length - 2, Math.floor(f)), fr = f - i;
+    const p0 = pts[i], p1 = pts[i + 1];
+    const x = p0.x + (p1.x - p0.x) * fr, y = p0.y + (p1.y - p0.y) * fr, z = p0.z + (p1.z - p0.z) * fr;
+    let dx = p1.x - p0.x, dz = p1.z - p0.z; if (a.dir < 0) { dx = -dx; dz = -dz; }
+    const l = Math.hypot(dx, dz) || 1; const ux = dx / l, uz = dz / l;
+    a.mesh.position.set(x + uz * a.lane, y + 0.35, z - ux * a.lane);
+    a.mesh.rotation.y = Math.atan2(ux, uz);
+  }
+
+  // ---- drawing preview ------------------------------------------------------
+  showRoadPreview(nodes, type, elevated) {
+    this.clearRoadPreview();
+    if (!nodes || nodes.length < 1) return;
+    this._roadPreview = new THREE.Group();
+    for (const nd of nodes) {
+      const m = new THREE.Mesh(new THREE.SphereGeometry(0.6, 10, 8), toon(0xffd24a));
+      m.position.set(nd.x, 0.6, nd.z); this._roadPreview.add(m);
+    }
+    this.scene.add(this._roadPreview);
+  }
+  clearRoadPreview() { if (this._roadPreview) { this.scene.remove(this._roadPreview); this._roadPreview = null; } }
+
   // ---- per-frame update + render -------------------------------------------
   render() {
     const dt = Math.min(this.clock.getDelta(), 0.05);
@@ -913,6 +1108,7 @@ export class Scene3D {
     this._updateWeather(dt);
     this._updateDevelopment(dt);
     this._updatePeople(dt);
+    this._updateRoadTraffic(dt);
     this._updateBoats(dt);
     this._updateDisaster(dt);
     this._updateCamera();

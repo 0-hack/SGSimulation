@@ -29,8 +29,7 @@ export class Scene3D {
     this.onTileTap = onTileTap;
     this.onGroundTap = onGroundTap;       // freeform road drawing taps
     this.roadMode = false;
-    this.rVehicles = [];                  // traffic on the player's roads
-    this.edgePts = []; this.edgeLen = []; this.rNodeAdj = [];
+    this.edgePts = []; this.edgeLen = []; this.edgeMeta = []; this.edgeN1 = []; this.edgeN2 = []; this.edgeMid = []; this.navAdj = []; this.navNodes = [];
     this.state = null;
     this.land = landMask(N);
     this.buildings = new Map();   // "x,y" -> { group, key }
@@ -110,6 +109,7 @@ export class Scene3D {
     this._buildRoadGraph();
     this._buildRoads();
     this._buildProps();
+    this._buildNavGraph();   // unified traffic graph (grid now; freeform added on setState)
     this._initBoats();
     this._initWeather();
 
@@ -555,85 +555,96 @@ export class Scene3D {
     this.dust.push({ pts, vel, t: 0, dur: 1.1 });
   }
 
-  // ---- road-graph navigation (shared by vehicles & pedestrians) ------------
-  _randomRoadNode() {
-    const n = this.roadNodes;
-    return n.length ? n[Math.floor(Math.random() * n.length)].slice() : [N / 2, N / 2];
-  }
-  _roadNodesNear(R) {
-    const out = [];
-    for (const nd of this.roadNodes) {
-      const w = cornerToWorld(nd[0], nd[1]);
-      if (Math.hypot(w.x - this.target.x, w.z - this.target.z) <= R) out.push(nd);
+  // ---- unified traffic (grid + freeform roads share ONE network) -----------
+  _assignLane(a) {
+    const meta = this.edgeMeta[a.edge] || { type: 'street', lanes: 2 };
+    const T = ROAD_TYPES[meta.type] || ROAD_TYPES.street;
+    const hw = T.width / 2;
+    if (a.group === 'veh') {
+      const lpd = Math.max(1, Math.round((meta.lanes || 2) / 2));
+      const li = (a.laneIdx || 0) % lpd;
+      a.lane = (li + 0.5) * (hw / lpd);          // keep-left; opposing dir auto-mirrors
+    } else {
+      a.lane = (hw + 0.7) * (a.side || 1);       // pedestrians on the pavement
     }
-    return out.length ? out : this.roadNodes;
   }
-  _pickEdge(ag) {
-    const nbrs = this.roadAdj.get(ag.node.join(',')) || [];
-    if (!nbrs.length) { ag.next = null; return; }
-    let opts = nbrs;
-    if (ag.prev) {
-      const f = opts.filter((n) => !(n[0] === ag.prev[0] && n[1] === ag.prev[1]));
-      if (f.length) opts = f;
+  _edgesNear(R, walkOnly) {
+    const out = []; const tx = this.target.x, tz = this.target.z;
+    for (let i = 0; i < this.edgeMid.length; i++) {
+      if (walkOnly && !this.edgeMeta[i].walk) continue;
+      const m = this.edgeMid[i];
+      if (Math.hypot(m.x - tx, m.z - tz) <= R) out.push(i);
     }
-    let pick;
-    if (ag.dir && Math.random() < 0.82) {
-      let best = -2;
-      for (const n of opts) {
-        const dot = (n[0] - ag.node[0]) * ag.dir[0] + (n[1] - ag.node[1]) * ag.dir[1];
-        if (dot > best) { best = dot; pick = n; }
+    return out;
+  }
+  _pickNetEdge(node, fromEdge, walkOnly, head) {
+    const all = this.navAdj[node] || [];
+    let pool = all.filter((l) => l.edge !== fromEdge && (!walkOnly || this.edgeMeta[l.edge].walk));
+    if (!pool.length) pool = all.filter((l) => !walkOnly || this.edgeMeta[l.edge].walk);
+    if (!pool.length) return null;
+    if (head && Math.random() < 0.82) {            // prefer continuing roughly straight
+      let best = -2, pick = null;
+      for (const l of pool) {
+        const pts = this.edgePts[l.edge];
+        const a = l.fwd ? pts[0] : pts[pts.length - 1], b = l.fwd ? pts[1] : pts[pts.length - 2];
+        const dx = b.x - a.x, dz = b.z - a.z, ln = Math.hypot(dx, dz) || 1;
+        const dot = (dx / ln) * head.x + (dz / ln) * head.z;
+        if (dot > best) { best = dot; pick = l; }
       }
-    } else pick = opts[Math.floor(Math.random() * opts.length)];
-    ag.prev = ag.node; ag.next = pick;
-    ag.dir = [pick[0] - ag.node[0], pick[1] - ag.node[1]]; ag.p = 0;
+      return pick;
+    }
+    return pool[Math.floor(Math.random() * pool.length)];
   }
-  // Advance a list of agents with lane discipline + car-following (no overlaps).
-  _advanceAgents(list, dt) {
-    const groups = new Map();
-    for (const ag of list) {
-      if (!ag.next || !ag.mesh.visible) continue;
-      const k = `${ag.node[0]}_${ag.node[1]}>${ag.next[0]}_${ag.next[1]}`;
-      let a = groups.get(k); if (!a) groups.set(k, a = []);
-      a.push(ag);
-    }
-    for (const arr of groups.values()) {
-      arr.sort((p, q) => p.p - q.p);
-      for (let i = 0; i < arr.length; i++) arr[i]._lead = arr[i + 1] || null;
-    }
-    for (const ag of list) {
-      if (!ag.mesh.visible) continue;
-      if (!ag.next) { this._pickEdge(ag); continue; }
-      let maxP = 1.2;
-      if (ag._lead) maxP = ag._lead.p - ((ag.len + ag._lead.len) * 0.5 + ag.margin) / TILE;
-      const prev = ag.p;
-      ag.p = Math.min(ag.p + dt * ag.speed / TILE, maxP);
-      if (ag.p < prev) ag.p = prev;          // blocked: hold position
-      const moving = ag.p > prev + 1e-4;
-      ag._lead = null;
-      if (ag.p >= 1) { ag.node = ag.next; this._pickEdge(ag); }
-      this._placeAgent(ag, dt, moving);
+  _advanceNet(list, dt) {
+    const grp = new Map();
+    for (const a of list) { if (!a.mesh.visible) continue; const k = a.edge + ':' + a.dir; let g = grp.get(k); if (!g) grp.set(k, g = []); g.push(a); }
+    for (const g of grp.values()) { g.sort((p, q) => (p.dir > 0 ? p.t - q.t : q.t - p.t)); for (let i = 0; i < g.length; i++) g[i]._lead = g[i + 1] || null; }
+    for (const a of list) {
+      if (!a.mesh.visible) continue;
+      if (!this.edgePts[a.edge]) continue;   // edge removed by a rebuild this frame
+      const len = this.edgeLen[a.edge] || 1;
+      let adv = dt * a.speed / len;
+      if (a._lead) {
+        const gap = (a.len * 0.5 + a._lead.len * 0.5 + (a.group === 'veh' ? 1.6 : 0.5)) / len;
+        const ad = a.dir > 0 ? a._lead.t - a.t : a.t - a._lead.t;
+        if (ad < gap) adv = Math.max(0, adv - (gap - ad) * 0.7);
+      }
+      const prevT = a.t; a.t += adv * a.dir; a._lead = null;
+      const moving = Math.abs(a.t - prevT) > 1e-5;
+      if (a.t >= 1 || a.t <= 0) {
+        const atEnd = a.t >= 1;
+        const node = atEnd ? this.edgeN2[a.edge] : this.edgeN1[a.edge];
+        const pts = this.edgePts[a.edge];
+        const p0 = atEnd ? pts[pts.length - 2] : pts[1], p1 = atEnd ? pts[pts.length - 1] : pts[0];
+        const head = { x: p1.x - p0.x, z: p1.z - p0.z };
+        const nx = this._pickNetEdge(node, a.edge, a.group === 'ped', head);
+        if (!nx) { a.dir *= -1; a.t = THREE.MathUtils.clamp(a.t, 0, 1); }
+        else { a.edge = nx.edge; a.dir = nx.fwd ? 1 : -1; a.t = nx.fwd ? 0.001 : 0.999; this._assignLane(a); }
+        continue;
+      }
+      this._placeNetAgent(a, dt, moving);
     }
   }
-  _placeAgent(ag, dt, moving) {
-    const A = cornerToWorld(ag.node[0], ag.node[1]);
-    const B = cornerToWorld(ag.next[0], ag.next[1]);
-    const dx = B.x - A.x, dz = B.z - A.z, len = Math.hypot(dx, dz) || 1;
-    const ux = dx / len, uz = dz / len;          // travel dir
-    const perpx = uz, perpz = -ux;               // lateral (lane offset)
-    ag.mesh.position.set(A.x + dx * ag.p + perpx * ag.lane, ag.yBase, A.z + dz * ag.p + perpz * ag.lane);
-    ag.mesh.rotation.y = Math.atan2(ux, uz);
-    if (moving) { ag.phase += dt * ag.speed * ag.animK; }
-    const ud = ag.mesh.userData;
-    if (ud.upperLegs) {
-      const ph = ag.phase, m = moving ? 1 : 0, sc = ag.mesh.scale.x;
+  _placeNetAgent(a, dt, moving) {
+    const pts = this.edgePts[a.edge]; const segs = pts.length - 1;
+    const f = THREE.MathUtils.clamp(a.t, 0, 1) * segs;
+    const i = Math.min(segs - 1, Math.floor(f)), fr = f - i;
+    const p0 = pts[i], p1 = pts[i + 1];
+    const x = p0.x + (p1.x - p0.x) * fr, y = p0.y + (p1.y - p0.y) * fr, z = p0.z + (p1.z - p0.z) * fr;
+    let dx = p1.x - p0.x, dz = p1.z - p0.z; if (a.dir < 0) { dx = -dx; dz = -dz; }
+    const ln = Math.hypot(dx, dz) || 1; const ux = dx / ln, uz = dz / ln;
+    const baseY = y + (a.group === 'veh' ? 0.0 : 0.02);
+    a.mesh.position.set(x + uz * a.lane, baseY, z - ux * a.lane);
+    a.mesh.rotation.y = Math.atan2(ux, uz);
+    if (moving) a.phase += dt * a.speed * a.animK;
+    const ud = a.mesh.userData;
+    if (ud.upperLegs) {                            // pedestrian walk cycle
+      const ph = a.phase, m = moving ? 1 : 0, sc = a.mesh.scale.x;
       const s = Math.sin(ph), amp = 0.5 * m + 0.02;
-      // legs: hips swing, knees bend on the back-swing
-      ud.upperLegs[0].rotation.x = s * amp;
-      ud.upperLegs[1].rotation.x = -s * amp;
+      ud.upperLegs[0].rotation.x = s * amp; ud.upperLegs[1].rotation.x = -s * amp;
       ud.lowerLegs[0].rotation.x = Math.max(0, Math.sin(ph - 1.1)) * 1.0 * m;
       ud.lowerLegs[1].rotation.x = Math.max(0, Math.sin(ph + Math.PI - 1.1)) * 1.0 * m;
       if (ud.umbrella.visible) {
-        // hold the umbrella up with the right arm
         ud.upperArms[1].rotation.set(-2.5, 0, 0); ud.lowerArms[1].rotation.x = 0.4;
         ud.upperArms[0].rotation.x = -s * amp * 0.7; ud.lowerArms[0].rotation.x = 0.2;
       } else {
@@ -641,29 +652,29 @@ export class Scene3D {
         ud.lowerArms[0].rotation.x = 0.15 + Math.max(0, -s) * 0.4 * m;
         ud.lowerArms[1].rotation.x = 0.15 + Math.max(0, s) * 0.4 * m;
       }
-      ud.torso.position.y = (0.95) + Math.abs(Math.sin(ph)) * 0.03 * m; // gentle bob (local)
-      ag.mesh.position.y = ag.yBase + Math.abs(Math.sin(ph)) * 0.04 * m * sc;
+      ud.torso.position.y = 0.95 + Math.abs(Math.sin(ph)) * 0.03 * m;
+      a.mesh.position.y = baseY + Math.abs(Math.sin(ph)) * 0.04 * m * sc;
     }
   }
 
-  // ---- vehicles (always present; density scales with population) ------------
+  // ---- vehicles (density scales with population) ----------------------------
   _ensureVehicles(target) {
     while (this.vehicles.length < target) this._addVehicle();
     while (this.vehicles.length > target) { const v = this.vehicles.pop(); this.scene.remove(v.mesh); }
   }
   _addVehicle() {
+    if (!this.edgePts.length) return;
     const r = Math.random();
     const kind = r < 0.46 ? 'car' : r < 0.6 ? 'taxi' : r < 0.76 ? 'bike' : r < 0.88 ? 'lorry' : 'bus';
     const { mesh, len } = makeVehicle(kind);
     this.scene.add(mesh);
     const speed = { car: 11, taxi: 11, bike: 14, lorry: 8, bus: 7.5 }[kind];
     const ag = {
-      mesh, len, group: 'veh', kind, yBase: 0,
-      node: this._randomRoadNode(), prev: null, next: null, dir: null,
-      p: 0, phase: 0, speed: speed * (0.85 + Math.random() * 0.3),
-      lane: 0.46, margin: 1.5, animK: 1,
+      mesh, len, group: 'veh', kind, edge: Math.floor(Math.random() * this.edgePts.length),
+      dir: Math.random() < 0.5 ? 1 : -1, t: Math.random(), phase: 0,
+      speed: speed * (0.85 + Math.random() * 0.3), animK: 1, laneIdx: Math.floor(Math.random() * 3),
     };
-    this._pickEdge(ag);
+    this._assignLane(ag);
     this.vehicles.push(ag);
   }
 
@@ -673,28 +684,23 @@ export class Scene3D {
     if (near && !this.peopleOn) this._spawnPeople();
     if (!near && this.peopleOn) this._clearPeople();
     if (this.peopleOn) {
-      // recycle anyone who wandered out of view back near the camera
-      const reach = Math.max(this.cam.radius * 1.3, 90);
+      const reach = Math.max(this.cam.radius * 1.4, 90);
       for (const ag of this.people) {
-        const w = cornerToWorld(ag.node[0], ag.node[1]);
-        if (Math.hypot(w.x - this.target.x, w.z - this.target.z) > reach) {
-          const nodes = this._roadNodesNear(this.cam.radius);
-          ag.node = nodes[Math.floor(Math.random() * nodes.length)].slice();
-          ag.prev = null; this._pickEdge(ag);
+        const m = this.edgeMid[ag.edge]; if (!m) continue;
+        if (Math.hypot(m.x - this.target.x, m.z - this.target.z) > reach) {
+          const list = this._edgesNear(this.cam.radius, true);
+          if (list.length) { ag.edge = list[Math.floor(Math.random() * list.length)]; ag.t = Math.random(); this._assignLane(ag); }
         }
       }
-      this._advanceAgents(this.people, dt);
-      // out come the umbrellas when it rains
+      this._advanceNet(this.people, dt);
       const rainy = (this.weather.rain || 0) > 0.35;
-      if (rainy !== this._umbrellasOut) {
-        this._umbrellasOut = rainy;
-        for (const ag of this.people) ag.mesh.userData.umbrella.visible = rainy;
-      }
+      if (rainy !== this._umbrellasOut) { this._umbrellasOut = rainy; for (const ag of this.people) ag.mesh.userData.umbrella.visible = rainy; }
     }
   }
   _spawnPeople() {
     this.peopleOn = true;
-    const nodes = this._roadNodesNear(this.cam.radius);
+    const list = this._edgesNear(this.cam.radius, true);
+    if (!list.length) return;
     const count = Math.min(42, Math.max(12, Math.floor((this.state?.population || 0) / 12000)));
     while (this.people.length < count) {
       const kinds = ['man', 'woman', 'man', 'woman', 'child', 'elderly'];
@@ -702,19 +708,13 @@ export class Scene3D {
       const { mesh, len } = makePerson(kind);
       this.scene.add(mesh);
       const speed = { man: 2.7, woman: 2.5, child: 2.4, elderly: 1.6 }[kind];
-      const ag = {
-        mesh, len, group: 'ped', kind, yBase: 0,
-        node: nodes[Math.floor(Math.random() * nodes.length)].slice(), prev: null, next: null, dir: null,
-        p: 0, phase: Math.random() * 6, speed, lane: (Math.random() < 0.5 ? 1 : -1) * 1.35,
-        margin: 0.5, animK: 5.5,
-      };
-      this._pickEdge(ag);
+      const ag = { mesh, len, group: 'ped', kind, edge: list[Math.floor(Math.random() * list.length)],
+        dir: Math.random() < 0.5 ? 1 : -1, t: Math.random(), phase: Math.random() * 6, speed,
+        animK: 5.5, side: Math.random() < 0.5 ? 1 : -1 };
+      this._assignLane(ag);
       this.people.push(ag);
     }
-    for (const ag of this.people) {
-      ag.mesh.visible = true;
-      ag.mesh.userData.umbrella.visible = !!this._umbrellasOut;
-    }
+    for (const ag of this.people) { ag.mesh.visible = true; ag.mesh.userData.umbrella.visible = !!this._umbrellasOut; }
   }
   _clearPeople() {
     this.peopleOn = false;
@@ -899,72 +899,74 @@ export class Scene3D {
     return pts;
   }
 
-  // Rebuild all road meshes + the navigation graph from state.roads.
+  // Render freeform road meshes (asphalt, pavement, lane markings, stop lines,
+  // bridge pillars, roundabout islands) then rebuild the unified nav graph.
   rebuildRoadNet() {
     if (!this.roadGroup) { this.roadGroup = new THREE.Group(); this.scene.add(this.roadGroup); }
-    while (this.roadGroup.children.length) {
-      const c = this.roadGroup.children.pop();
-      c.geometry?.dispose?.(); this.roadGroup.remove(c);
-    }
-    this.edgePts = []; this.edgeLen = [];
-    this.rNodeAdj = (this.state?.roads?.nodes || []).map(() => []);
+    while (this.roadGroup.children.length) { const c = this.roadGroup.children.pop(); c.geometry?.dispose?.(); this.roadGroup.remove(c); }
     const roads = this.state?.roads;
-    if (!roads) return;
-
     const pave = [[], []], road = [[], []], mark = [[], []];
     const ribbon = (buf, pts, hw, yOff) => {
       const [v, idx] = buf;
       for (let i = 0; i < pts.length - 1; i++) {
         const a = pts[i], b = pts[i + 1];
         const dx = b.x - a.x, dz = b.z - a.z, l = Math.hypot(dx, dz) || 1;
-        const px = -dz / l * hw, pz = dx / l * hw;
-        const n = v.length / 3;
-        v.push(a.x + px, a.y + yOff, a.z + pz, a.x - px, a.y + yOff, a.z - pz,
-               b.x - px, b.y + yOff, b.z - pz, b.x + px, b.y + yOff, b.z + pz);
+        const px = -dz / l * hw, pz = dx / l * hw, n = v.length / 3;
+        v.push(a.x + px, a.y + yOff, a.z + pz, a.x - px, a.y + yOff, a.z - pz, b.x - px, b.y + yOff, b.z - pz, b.x + px, b.y + yOff, b.z + pz);
         idx.push(n, n + 1, n + 2, n, n + 2, n + 3);
       }
     };
-    const dash = (pts, hw, yOff) => {
-      const [v, idx] = mark;
-      let acc = 0;
+    // a thin marking line running along the centre-line, shifted sideways by `off`
+    const markLine = (pts, off, dashed, hw = 0.09) => {
+      const [v, idx] = mark; let acc = 0;
       for (let i = 0; i < pts.length - 1; i++) {
         const a = pts[i], b = pts[i + 1];
         const dx = b.x - a.x, dz = b.z - a.z, l = Math.hypot(dx, dz) || 1;
-        const ux = dx / l, uz = dz / l, px = -uz * hw, pz = ux * hw;
-        for (let s = 0; s < l; s += 1.4) {
-          acc++; if (acc % 2) continue;            // skip = the gap in the dash
-          const m0 = s, m1 = Math.min(s + 0.7, l);
-          const n = v.length / 3;
-          v.push(a.x + ux * m0 + px, a.y + yOff, a.z + uz * m0 + pz, a.x + ux * m0 - px, a.y + yOff, a.z + uz * m0 - pz,
-                 a.x + ux * m1 - px, a.y + yOff, a.z + uz * m1 - pz, a.x + ux * m1 + px, a.y + yOff, a.z + uz * m1 + pz);
+        const ux = dx / l, uz = dz / l, ox = -uz * off, oz = ux * off, px = -uz * hw, pz = ux * hw;
+        const step = dashed ? 1.5 : l;
+        for (let s = 0; s < l - 0.01; s += step) {
+          acc++; if (dashed && acc % 2 === 0) continue;
+          const m0 = s, m1 = Math.min(s + (dashed ? 0.8 : l), l), n = v.length / 3;
+          v.push(a.x + ux * m0 + ox + px, a.y + 0.06, a.z + uz * m0 + oz + pz, a.x + ux * m0 + ox - px, a.y + 0.06, a.z + uz * m0 + oz - pz,
+                 a.x + ux * m1 + ox - px, a.y + 0.06, a.z + uz * m1 + oz - pz, a.x + ux * m1 + ox + px, a.y + 0.06, a.z + uz * m1 + oz + pz);
           idx.push(n, n + 1, n + 2, n, n + 2, n + 3);
         }
       }
     };
+    // a solid stop line across the approach half at one end of the road
+    const stopLine = (pts, hw, atEnd) => {
+      const [v, idx] = mark;
+      const i = atEnd ? pts.length - 1 : 0, j = atEnd ? pts.length - 2 : 1;
+      const a = pts[i], b = pts[j];
+      const dx = a.x - b.x, dz = a.z - b.z, l = Math.hypot(dx, dz) || 1; // outward
+      const ux = dx / l, uz = dz / l, px = -uz, pz = ux;
+      const cx = a.x - ux * 1.3, cz = a.z - uz * 1.3;                    // set back from the node
+      const s0 = 0.1, s1 = hw, d = 0.45, n = v.length / 3;              // span the keep-left half
+      v.push(cx + px * s0 + ux * d, a.y + 0.07, cz + pz * s0 + uz * d, cx + px * s1 + ux * d, a.y + 0.07, cz + pz * s1 + uz * d,
+             cx + px * s1 - ux * d, a.y + 0.07, cz + pz * s1 - uz * d, cx + px * s0 - ux * d, a.y + 0.07, cz + pz * s0 - uz * d);
+      idx.push(n, n + 1, n + 2, n, n + 2, n + 3);
+    };
 
-    roads.edges.forEach((e) => {
+    if (roads) roads.edges.forEach((e) => {
       const T = ROAD_TYPES[e.type] || ROAD_TYPES.street;
       const pts = this._sampleEdge(roads, e);
-      // arc length
-      let len = 0; for (let i = 0; i < pts.length - 1; i++) len += Math.hypot(pts[i + 1].x - pts[i].x, pts[i + 1].z - pts[i].z);
-      this.edgePts.push(pts); this.edgeLen.push(len);
-      if (this.rNodeAdj[e.a]) this.rNodeAdj[e.a].push({ edge: this.edgePts.length - 1, to: e.b, fromStart: true });
-      if (this.rNodeAdj[e.b]) this.rNodeAdj[e.b].push({ edge: this.edgePts.length - 1, to: e.a, fromStart: false });
-      ribbon(pave, pts, T.width / 2 + 0.7, 0.0);
-      ribbon(road, pts, T.width / 2, 0.03);
-      dash(pts, e.lanes > 2 ? T.width / 4 : 0.06, 0.06);  // centre dash / lane line
-      // bridge pillars
-      if (e.elevated) {
-        for (let i = 2; i < pts.length - 1; i += 4) {
-          const pt = pts[i];
-          const pil = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.6, pt.y, 8), toon(0x9098a0));
-          pil.position.set(pt.x, pt.y / 2, pt.z); this.roadGroup.add(pil);
-        }
+      if (pts.length < 2) return;
+      const hw = T.width / 2, L = e.lanes || T.lanes, lw = T.width / L;
+      ribbon(pave, pts, hw + 0.7, 0.0);
+      ribbon(road, pts, hw, 0.03);
+      for (let k = 1; k < L; k++) {                 // lane dividers
+        const off = -hw + k * lw;
+        markLine(pts, off, Math.abs(off) > 0.05);   // solid only on the centre (between directions)
+      }
+      stopLine(pts, hw, false); stopLine(pts, hw, true);
+      if (e.elevated) for (let i = 2; i < pts.length - 1; i += 4) {
+        const pt = pts[i];
+        const pil = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.6, pt.y, 8), toon(0x9098a0));
+        pil.position.set(pt.x, pt.y / 2, pt.z); this.roadGroup.add(pil);
       }
     });
 
-    // roundabout islands (grass disc + tree)
-    (roads.islands || []).forEach((is) => {
+    (roads?.islands || []).forEach((is) => {
       const disc = new THREE.Mesh(new THREE.CircleGeometry(is.r - 1.4, 22), toon(0x66bd5a));
       disc.rotation.x = -Math.PI / 2; disc.position.set(is.x, 0.17, is.z); this.roadGroup.add(disc);
       treeAt(this.roadGroup, is.x, is.z, 1.4); this.roadGroup.children[this.roadGroup.children.length - 1].position.set(is.x, 0, is.z);
@@ -978,69 +980,56 @@ export class Scene3D {
       const m = new THREE.Mesh(g, material); m.receiveShadow = true; this.roadGroup.add(m);
     };
     const DS = THREE.DoubleSide;
-    mk(pave, toon(0xc4bda8, { side: DS }));
-    mk(road, toon(0x33363d, { side: DS }));
-    mk(mark, toon(0xfaf3d8, { side: DS }));
+    mk(pave, toon(0xc4bda8, { side: DS })); mk(road, toon(0x33363d, { side: DS })); mk(mark, toon(0xfaf3d8, { side: DS }));
+
+    this._buildNavGraph();
   }
 
-  _ensureRoadVehicles(target) {
-    while (this.rVehicles.length < target) this._addRoadVehicle();
-    while (this.rVehicles.length > target) { const v = this.rVehicles.pop(); this.scene.remove(v.mesh); }
-  }
-  _addRoadVehicle() {
-    if (!this.edgePts.length) return;
-    const r = Math.random();
-    const kind = r < 0.5 ? 'car' : r < 0.62 ? 'taxi' : r < 0.78 ? 'bike' : r < 0.9 ? 'lorry' : 'bus';
-    const { mesh, len } = makeVehicle(kind);
-    this.scene.add(mesh);
-    const ei = Math.floor(Math.random() * this.edgePts.length);
-    const ag = { mesh, len, kind, edge: ei, dir: Math.random() < 0.5 ? 1 : -1, t: Math.random(),
-      speed: ({ car: 11, taxi: 11, bike: 14, lorry: 8, bus: 7.5 }[kind]) * (0.8 + Math.random() * 0.4),
-      lane: 0.5 };
-    this.rVehicles.push(ag);
-  }
-  _updateRoadTraffic(dt) {
-    if (!this.edgePts.length) { if (this.rVehicles.length) this._ensureRoadVehicles(0); return; }
-    const target = THREE.MathUtils.clamp(Math.floor(this.edgePts.length * 1.4), 2, 40);
-    this._ensureRoadVehicles(target);
-    // following per (edge,dir)
-    const grp = new Map();
-    for (const a of this.rVehicles) { const k = a.edge + ':' + a.dir; let g = grp.get(k); if (!g) grp.set(k, g = []); g.push(a); }
-    for (const g of grp.values()) { g.sort((p, q) => (p.dir > 0 ? p.t - q.t : q.t - p.t)); for (let i = 0; i < g.length; i++) g[i]._lead = g[i + 1] || null; }
-
-    for (const a of this.rVehicles) {
-      const pts = this.edgePts[a.edge], len = this.edgeLen[a.edge] || 1;
-      let adv = dt * a.speed / len;
-      if (a._lead) { const gap = (a.len + 2) / len; const adist = a.dir > 0 ? a._lead.t - a.t : a.t - a._lead.t; if (adist < gap) adv = Math.max(0, adv - (gap - adist)); }
-      a.t += adv * a.dir; a._lead = null;
-      if (a.t > 1 || a.t < 0) {
-        const node = a.t > 1 ? this._edgeEnd(a.edge) : this._edgeStart(a.edge);
-        const next = this._pickRoadEdge(node, a.edge);
-        if (!next) { a.dir *= -1; a.t = THREE.MathUtils.clamp(a.t, 0, 1); }
-        else { a.edge = next.edge; a.dir = next.fromStart ? 1 : -1; a.t = next.fromStart ? 0 : 1; }
-        continue;
-      }
-      this._placeRoadAgent(a);
+  // ONE navigation network shared by all traffic: the auto street grid PLUS the
+  // player's freeform roads, merged where their endpoints meet.
+  _buildNavGraph() {
+    this.edgePts = []; this.edgeLen = []; this.edgeMeta = []; this.edgeN1 = []; this.edgeN2 = []; this.edgeMid = [];
+    const nodes = [], adj = [], MERGE = 3.6;
+    const nodeAt = (x, z, y) => {
+      for (let i = 0; i < nodes.length; i++) { const n = nodes[i]; if (Math.abs(n.x - x) < MERGE && Math.abs(n.z - z) < MERGE && Math.abs(n.y - y) < 3) return i; }
+      nodes.push({ x, z, y }); adj.push([]); return nodes.length - 1;
+    };
+    const add = (pts, lanes, type, elevated, walk) => {
+      if (pts.length < 2) return;
+      let len = 0; for (let i = 0; i < pts.length - 1; i++) len += Math.hypot(pts[i + 1].x - pts[i].x, pts[i + 1].z - pts[i].z);
+      const n1 = nodeAt(pts[0].x, pts[0].z, pts[0].y), n2 = nodeAt(pts[pts.length - 1].x, pts[pts.length - 1].z, pts[pts.length - 1].y);
+      if (n1 === n2) return;
+      const ei = this.edgePts.length;
+      this.edgePts.push(pts); this.edgeLen.push(len); this.edgeMeta.push({ lanes, type, elevated, walk });
+      this.edgeN1.push(n1); this.edgeN2.push(n2);
+      const mid = pts[Math.floor(pts.length / 2)]; this.edgeMid.push({ x: mid.x, z: mid.z });
+      adj[n1].push({ edge: ei, to: n2, fwd: true }); adj[n2].push({ edge: ei, to: n1, fwd: false });
+    };
+    if (this.roadEdges) for (const [[ai, aj], [bi, bj]] of this.roadEdges) {
+      const a = cornerToWorld(ai, aj), b = cornerToWorld(bi, bj);
+      add([{ x: a.x, y: 0.16, z: a.z }, { x: b.x, y: 0.16, z: b.z }], 2, 'street', false, true);
     }
+    const roads = this.state?.roads;
+    if (roads) roads.edges.forEach((e) => {
+      const T = ROAD_TYPES[e.type] || ROAD_TYPES.street;
+      add(this._sampleEdge(roads, e), e.lanes || T.lanes, e.type, e.elevated, !e.elevated);
+    });
+    this.navNodes = nodes; this.navAdj = adj;
+    this._reseatAgents();   // edge indices changed — keep live agents valid
   }
-  _edgeStart(ei) { for (let n = 0; n < this.rNodeAdj.length; n++) for (const l of this.rNodeAdj[n]) if (l.edge === ei && l.fromStart) return n; return -1; }
-  _edgeEnd(ei) { for (let n = 0; n < this.rNodeAdj.length; n++) for (const l of this.rNodeAdj[n]) if (l.edge === ei && !l.fromStart) return n; return -1; }
-  _pickRoadEdge(node, fromEdge) {
-    const links = this.rNodeAdj[node] || [];
-    const opts = links.filter((l) => l.edge !== fromEdge);
-    const pool = opts.length ? opts : links;
-    return pool.length ? pool[Math.floor(Math.random() * pool.length)] : null;
-  }
-  _placeRoadAgent(a) {
-    const pts = this.edgePts[a.edge];
-    const f = THREE.MathUtils.clamp(a.t, 0, 1) * (pts.length - 1);
-    const i = Math.min(pts.length - 2, Math.floor(f)), fr = f - i;
-    const p0 = pts[i], p1 = pts[i + 1];
-    const x = p0.x + (p1.x - p0.x) * fr, y = p0.y + (p1.y - p0.y) * fr, z = p0.z + (p1.z - p0.z) * fr;
-    let dx = p1.x - p0.x, dz = p1.z - p0.z; if (a.dir < 0) { dx = -dx; dz = -dz; }
-    const l = Math.hypot(dx, dz) || 1; const ux = dx / l, uz = dz / l;
-    a.mesh.position.set(x + uz * a.lane, y + 0.35, z - ux * a.lane);
-    a.mesh.rotation.y = Math.atan2(ux, uz);
+
+  // Re-seat any agent whose edge no longer exists (after a road rebuild/erase).
+  _reseatAgents() {
+    const ne = this.edgePts.length;
+    const fix = (a, walkOnly) => {
+      if (a.edge < ne && this.edgePts[a.edge]) return;
+      if (!ne) { a.edge = 0; return; }
+      let e = Math.floor(Math.random() * ne);
+      if (walkOnly) { for (let i = 0; i < ne; i++) { if (this.edgeMeta[(e + i) % ne].walk) { e = (e + i) % ne; break; } } }
+      a.edge = e; a.t = Math.random(); a.dir = Math.random() < 0.5 ? 1 : -1; this._assignLane(a);
+    };
+    for (const a of this.vehicles) fix(a, false);
+    for (const a of this.people) fix(a, true);
   }
 
   // ---- drawing preview ------------------------------------------------------
@@ -1094,11 +1083,11 @@ export class Scene3D {
       if (d.t >= d.dur) { this.scene.remove(d.pts); this.dust.splice(i, 1); }
     }
 
-    // traffic — density scales with population
-    if (this.state) {
-      const target = THREE.MathUtils.clamp(Math.floor(this.state.population / 30000), 5, 55);
+    // unified traffic — density scales with population, drives grid + freeform roads
+    if (this.state && this.edgePts.length) {
+      const target = THREE.MathUtils.clamp(Math.floor(this.state.population / 30000), 5, 60);
       this._ensureVehicles(target);
-      this._advanceAgents(this.vehicles, dt);
+      this._advanceNet(this.vehicles, dt);
     }
 
     // sea shimmer
@@ -1108,7 +1097,6 @@ export class Scene3D {
     this._updateWeather(dt);
     this._updateDevelopment(dt);
     this._updatePeople(dt);
-    this._updateRoadTraffic(dt);
     this._updateBoats(dt);
     this._updateDisaster(dt);
     this._updateCamera();

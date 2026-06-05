@@ -45,8 +45,8 @@ try {
 
   // traffic drives the roads
   await p.click('.spd[data-spd="2"]'); await new Promise(r=>setTimeout(r,1200));
-  const veh = await p.evaluate(()=>window.__sgview.rVehicles.length);
-  ok(veh >= 1, `${veh} vehicles driving the drawn roads`);
+  const veh = await p.evaluate(()=>window.__sgview.vehicles.length);
+  ok(veh >= 1, `${veh} vehicles driving the unified road network`);
 
   // save to cloud + reload keeps the roads
   await p.click('.spd[data-spd="0"]');

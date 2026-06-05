@@ -1,24 +1,32 @@
 # 🇸🇬 Singapore Nation Builder
 
-A browser-based, mobile-first **society simulation** game. Start at independence
+A browser-based, mobile-first **3D society simulation** game. Start at independence
 in **1965** and grow the little red dot into a thriving nation — build housing,
 power, water and industry; pass laws and policies; weather historical crises; and
 watch your society react in real time as the days, months and decades roll by.
 
+The nation is rendered in **3D as Singapore's island** (Three.js/WebGL): buildings
+**rise as they're constructed** and **crumble in a cloud of dust** when demolished,
+**traffic** drives the streets, and **natural disasters** — floods with rain, haze,
+recession tremors — play out as animations.
+
 Save your nation to a **centralised server** and share a link so other players can
 **visit your Singapore** and watch how you built it.
 
-![Stack](https://img.shields.io/badge/stack-Node.js%20%2B%20vanilla%20JS-informational)
+![Stack](https://img.shields.io/badge/stack-Node.js%20%2B%20Three.js%20%2B%20vanilla%20JS-informational)
 
 ---
 
 ## ✨ Features
 
 - **Play as the Prime Minister** from National Day, 9 Aug 1965.
-- **Build a real city** on a pan/zoom tile map (touch + mouse): HDB flats, kampongs,
+- **A 3D island city** rendered as the shape of Singapore — orbit, pan and pinch-zoom
+  (touch + mouse). Construction, demolition (with dust), traffic and disasters are all
+  animated.
+- **Build a real city**: HDB flats, kampongs,
   condos, power & desalination/NEWater plants, reservoirs, factories, a container
   port, the CBD, schools, hospitals, the MRT, parks, Gardens by the Bay and more —
-  each unlocking in its historical era.
+  each modelled as a distinct 3D structure and unlocking in its historical era.
 - **A living society model.** Population grows from births and migration, constrained
   by housing, jobs, power and water. Approval responds to overcrowding, unemployment,
   utility shortages, pollution, health, education, safety, taxes and your policies.
@@ -128,7 +136,9 @@ public/
   js/
     data.js        all game content: buildings, policies, events (tuning lives here)
     engine.js      the simulation — pure logic, day-by-day tick, unit-testable
-    grid.js        canvas city renderer with pan/zoom & tap-to-build
+    shape.js       Singapore island outline + land/sea grid mask
+    scene3d.js     Three.js 3D renderer: island, buildings, traffic, disasters
+    vendor/three.module.js   bundled Three.js (served statically, no CDN/build step)
     ui.js          renders the bottom-sheet panels (build/policy/stats/news)
     api.js         client for the world server
     main.js        controller: game loop, input, cloud save, visiting

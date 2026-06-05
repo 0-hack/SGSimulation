@@ -3,7 +3,7 @@ import {
   newGame, tickDay, build, demolish, canPlace, derive,
   resolveEvent, snapshot, refreshSummary,
 } from './engine.js';
-import { CityView } from './grid.js';
+import { Scene3D } from './scene3d.js';
 import { api } from './api.js';
 import {
   updateHud, renderBuild, renderPolicy, renderDash, renderNews,
@@ -88,7 +88,14 @@ function showGameShell(playing = true) {
   $('game').classList.remove('hidden');
   $('toolbar').classList.remove('hidden');
   if (!G.view) {
-    G.view = new CityView($('city'), { onTileTap: onTileTap });
+    try {
+      G.view = new Scene3D($('city'), { onTileTap: onTileTap });
+      window.__sgview = G.view; // exposed for debugging / disaster FX hooks
+    } catch (err) {
+      alert('This game needs a browser with WebGL/3D support.\n\n' + err.message);
+      showMenu();
+      return;
+    }
   }
   G.view.resize();
   if (playing) setSpeed(1);
@@ -210,12 +217,14 @@ function onTileTap(x, y) {
   if (G.readOnly) { toast('You are visiting — building is disabled here.'); return; }
   const b = G.build;
   if (b.bulldoze) {
-    if (demolish(G.state, x, y)) { afterEdit(); toast('Demolished.'); }
+    if (demolish(G.state, x, y)) { G.view.onDemolished(x, y); afterEdit(); toast('Demolished.'); }
     return;
   }
   if (b.selected) {
+    if (!G.view.isLand(x, y)) { toast('You can only build on land. 🏝️'); return; }
     if (canPlace(G.state, x, y, b.selected)) {
       build(G.state, x, y, b.selected);
+      G.view.onBuilt(x, y, b.selected);
       afterEdit();
     } else {
       const bd = BUILDINGS[b.selected];
@@ -308,6 +317,7 @@ function closeSheet() {
 function showEvent() {
   const ev = G.state.pendingEvent;
   if (!ev) return;
+  disasterForPending();
   G.prevSpeed = G.speed || 1;
   setSpeed(0);
   $('event-title').textContent = ev.title;
@@ -327,12 +337,30 @@ function showEvent() {
   $('event-modal').classList.remove('hidden');
 }
 
-// Notify non-choice events via toast (engine stores lastEvent).
+// Map event ids to an animated disaster in the 3D scene.
+const DISASTER_FX = {
+  flood: 'flood', covid: 'haze', sars: 'haze', haze: 'haze',
+  oil_crisis: 'haze', recession_85: 'quake', afc: 'quake', gfc: 'quake',
+};
+
+// Notify non-choice events via toast (engine stores lastEvent) + play FX.
 function maybeAnnounce() {
   if (G.state?.lastEvent) {
-    toast(`📰 ${G.state.lastEvent.title}`);
+    const ev = G.state.lastEvent;
+    toast(`📰 ${ev.title}`);
+    const fx = DISASTER_FX[ev.id];
+    if (fx && G.view?.playDisaster) G.view.playDisaster(fx);
     G.state.lastEvent = null;
   }
+}
+
+// Also fire FX for events that carry a player choice (e.g. flood) as they appear.
+function disasterForPending() {
+  const ev = G.state?.pendingEvent;
+  if (!ev || ev._fxShown) return;
+  ev._fxShown = true;
+  const fx = DISASTER_FX[ev.id];
+  if (fx && G.view?.playDisaster) G.view.playDisaster(fx);
 }
 
 // ===========================================================================

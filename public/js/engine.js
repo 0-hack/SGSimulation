@@ -258,7 +258,7 @@ function fireEvent(state, ev) {
   if (ev.choice) {
     state.pendingEvent = { id: ev.id, title: ev.title, body: ev.body, choice: ev.choice };
   } else {
-    state.lastEvent = { title: ev.title, body: ev.body };
+    state.lastEvent = { id: ev.id, title: ev.title, body: ev.body };
   }
 }
 

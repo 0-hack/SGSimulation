@@ -10,7 +10,11 @@ const ok = (c, m) => { if (c) { pass++; console.log('  ✓', m); } else { fail++
 
 const browser = await puppeteer.launch({
   headless: 'new',
-  args: ['--no-sandbox', '--disable-setuid-sandbox'],
+  args: [
+    '--no-sandbox', '--disable-setuid-sandbox',
+    '--use-gl=angle', '--use-angle=swiftshader', '--enable-webgl',
+    '--ignore-gpu-blocklist', '--enable-unsafe-swiftshader',
+  ],
 });
 
 let page;
@@ -36,6 +40,15 @@ try {
   const nation = await page.$eval('#hud-nation', (e) => e.textContent);
   ok(nation === 'Testlandia', 'HUD shows the nation name');
 
+  // 3D scene initialised with a WebGL context.
+  const sceneInfo = await page.evaluate(() => {
+    const c = document.querySelector('#city');
+    const gl = c.getContext('webgl2') || c.getContext('webgl');
+    return { hasGL: !!gl, buildings: window.__sgview ? window.__sgview.buildings.size : -1 };
+  });
+  ok(sceneInfo.hasGL, '3D canvas has a WebGL context');
+  ok(sceneInfo.buildings >= 1, `3D scene rendered ${sceneInfo.buildings} seed building(s)`);
+
   // Open build panel and place a building by tapping the canvas centre.
   await page.click('.tool[data-panel="build"]');
   await page.waitForSelector('.bcard');
@@ -46,13 +59,28 @@ try {
   });
   await new Promise((r) => setTimeout(r, 200));
   const treasuryBefore = await page.$eval('#hud-treasury', (e) => e.textContent);
-  // tap centre of canvas to build
-  const canvas = await page.$('#city');
-  const box = await canvas.boundingBox();
-  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  // Find a free land cell, project it to screen, and tap there to build.
+  const spot = await page.evaluate(() => {
+    const v = window.__sgview;
+    for (let y = 7; y <= 14; y++) for (let x = 6; x <= 16; x++) {
+      if (v.isLand(x, y) && !v.state.grid[y][x]) { const s = v.cellToScreen(x, y); return { x, y, sx: s.x, sy: s.y }; }
+    }
+    return null;
+  });
+  await page.mouse.click(spot.sx, spot.sy);
   await new Promise((r) => setTimeout(r, 200));
   const treasuryAfter = await page.$eval('#hud-treasury', (e) => e.textContent);
   ok(treasuryBefore !== treasuryAfter, `building placed (treasury ${treasuryBefore} → ${treasuryAfter})`);
+
+  // The placed building appears as an animated mesh in the 3D scene.
+  const builtCount = await page.evaluate(() => window.__sgview.buildings.size);
+  ok(builtCount >= 2, `3D scene now has ${builtCount} building meshes`);
+
+  // A disaster animation runs without throwing.
+  await page.evaluate(() => window.__sgview.playDisaster('flood'));
+  await new Promise((r) => setTimeout(r, 400));
+  const floodOk = await page.evaluate(() => !!window.__sgview.disaster || window.__sgview.floodPlane.visible);
+  ok(floodOk, 'flood disaster animation triggered');
 
   // Speed up and let time pass.
   await page.click('.spd[data-spd="3"]');

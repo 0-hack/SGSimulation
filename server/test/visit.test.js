@@ -4,7 +4,7 @@ import { app } from '../server.js';
 const server = app.listen(0);
 const base = `http://localhost:${server.address().port}`;
 let pass=0, fail=0; const ok=(c,m)=>{c?(pass++,console.log('  ✓',m)):(fail++,console.log('  ✗',m));};
-const browser = await puppeteer.launch({ headless:'new', args:['--no-sandbox','--disable-setuid-sandbox'] });
+const browser = await puppeteer.launch({ headless:'new', args:['--no-sandbox','--disable-setuid-sandbox','--use-gl=angle','--use-angle=swiftshader','--enable-webgl','--ignore-gpu-blocklist','--enable-unsafe-swiftshader'] });
 try {
   // Player A creates and cloud-saves a nation.
   const a = await browser.newPage();

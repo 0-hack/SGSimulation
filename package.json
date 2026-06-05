@@ -19,7 +19,8 @@
     "express": "^4.21.2"
   },
   "devDependencies": {
-    "puppeteer": "^25.1.0"
+    "puppeteer": "^25.1.0",
+    "three": "^0.160.1"
   },
   "license": "MIT"
 }

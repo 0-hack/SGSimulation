@@ -19,6 +19,19 @@ export const CATEGORIES = [
   { id: 'industry', name: 'Economy', icon: '🏭' },
   { id: 'civic', name: 'Services', icon: '🏥' },
   { id: 'green', name: 'Environment', icon: '🌳' },
+  { id: 'leisure', name: 'Coast & Leisure', icon: '⛱️' },
+];
+
+// Colour themes players can pick to customise a building's look.
+export const THEMES = [
+  { id: 'default', name: 'Classic', color: '#d8a25a' },
+  { id: 'sky', name: 'Sky', color: '#6fb0d6' },
+  { id: 'mint', name: 'Mint', color: '#7fc7a0' },
+  { id: 'rose', name: 'Rose', color: '#e08aa0' },
+  { id: 'sand', name: 'Sand', color: '#e3c879' },
+  { id: 'lilac', name: 'Lilac', color: '#b3a6da' },
+  { id: 'coral', name: 'Coral', color: '#ef7d62' },
+  { id: 'slate', name: 'Slate', color: '#8a98a6' },
 ];
 
 export const BUILDINGS = {
@@ -30,22 +43,28 @@ export const BUILDINGS = {
     desc: 'Traditional village housing. Cheap, but cramped and prone to fire & flooding.',
   },
   hdb_flat: {
-    name: 'HDB Flat', cat: 'residential', icon: '🏢', color: '#cf9b5f',
+    name: 'HDB Flat', cat: 'residential', icon: '🏢', color: '#cf9b5f', customizable: true,
     cost: 30, upkeep: 1.2, year: 1965, homes: 5000, jobs: 0,
     power: -6, water: -8, pollution: 1, happiness: 5,
     desc: 'Public housing block from the Housing & Development Board. Affordable homes for the masses.',
   },
   hdb_newtown: {
-    name: 'HDB New Town', cat: 'residential', icon: '🏙️', color: '#e0a85e',
+    name: 'HDB New Town', cat: 'residential', icon: '🏙️', color: '#e0a85e', customizable: true,
     cost: 90, upkeep: 3.0, year: 1975, homes: 14000, jobs: 600,
     power: -16, water: -20, pollution: 2, happiness: 7,
     desc: 'A self-contained town with flats, shops and amenities. The backbone of the nation.',
   },
   condo: {
-    name: 'Private Condo', cat: 'residential', icon: '🏨', color: '#7fc2e6',
+    name: 'Private Condo', cat: 'residential', icon: '🏨', color: '#7fc2e6', customizable: true,
     cost: 140, upkeep: 2.0, year: 1980, homes: 4000, jobs: 200,
     power: -10, water: -14, pollution: 1, happiness: 9, income: 1.5,
     desc: 'Premium private housing. Raises land value and tax revenue but houses fewer people.',
+  },
+  condo_estate: {
+    name: 'Condo Estate', cat: 'residential', icon: '🏬', color: '#86c8e0', customizable: true,
+    cost: 360, upkeep: 6.0, year: 1995, homes: 16000, jobs: 800,
+    power: -34, water: -44, pollution: 2, happiness: 12, income: 6,
+    desc: 'A gated condominium estate: several towers around a pool and clubhouse. High land value.',
   },
 
   // ---- Power ----
@@ -140,6 +159,13 @@ export const BUILDINGS = {
     desc: 'Mass Rapid Transit. Cuts congestion and pollution, and boosts happiness citywide.',
   },
 
+  mall: {
+    name: 'Shopping Mall', cat: 'industry', icon: '🛍️', color: '#d98fc0', customizable: true,
+    cost: 240, upkeep: 4.5, year: 1980, homes: 0, jobs: 5000,
+    power: -38, water: -20, pollution: 2, happiness: 10, income: 20,
+    desc: 'A landmark retail mall. Jobs, tax revenue and a big happiness boost for shoppers.',
+  },
+
   // ---- Environment ----
   park: {
     name: 'Park', cat: 'green', icon: '🌳', color: '#5bbf6a',
@@ -152,6 +178,32 @@ export const BUILDINGS = {
     cost: 260, upkeep: 3.5, year: 2012, homes: 0, jobs: 400,
     power: -30, water: -18, pollution: -12, happiness: 14, income: 4,
     desc: 'An iconic green landmark. Huge happiness and tourism draw with a power cost.',
+  },
+  forest: {
+    name: 'Nature Reserve', cat: 'green', icon: '🌲', color: '#2f7d3f',
+    cost: 60, upkeep: 0.6, year: 1965, homes: 0, jobs: 30,
+    power: 0, water: -2, pollution: -14, happiness: 8,
+    desc: 'Dense secondary rainforest. Cleans the air, cools the city and shelters wildlife.',
+  },
+
+  // ---- Coast & Leisure ----
+  beach: {
+    name: 'Beach', cat: 'leisure', icon: '🏖️', color: '#ecd9a0',
+    cost: 40, upkeep: 0.8, year: 1965, homes: 0, jobs: 120,
+    power: -2, water: -2, pollution: -2, happiness: 10, income: 2,
+    desc: 'A sandy public beach with palms and parasols. Best placed along the coast.',
+  },
+  ferry_terminal: {
+    name: 'Ferry Terminal', cat: 'leisure', icon: '⛴️', color: '#5a8aa6',
+    cost: 130, upkeep: 3.0, year: 1970, homes: 0, jobs: 1400,
+    power: -16, water: -8, pollution: 2, happiness: 5, income: 10,
+    desc: 'Passenger ferries to the islands and the region. Place on the coast for the boats to dock.',
+  },
+  marina: {
+    name: 'Marina & Yachts', cat: 'leisure', icon: '⛵', color: '#7fb6d6',
+    cost: 200, upkeep: 4.0, year: 1985, homes: 0, jobs: 900,
+    power: -18, water: -10, pollution: 1, happiness: 12, income: 14,
+    desc: 'A luxury marina full of yachts and sailing boats. Big tourism and land-value boost.',
   },
 };
 

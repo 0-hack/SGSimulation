@@ -81,13 +81,13 @@ export function isUnlocked(state, key) {
   if (state.unlocked[key]) return true;
   return state.date.y >= b.year;
 }
-function place(state, x, y, key) {
-  state.grid[y][x] = { k: key };
+function place(state, x, y, key, theme) {
+  state.grid[y][x] = theme ? { k: key, c: theme } : { k: key };
 }
-export function build(state, x, y, key) {
+export function build(state, x, y, key, theme) {
   if (!canPlace(state, x, y, key)) return false;
   state.treasury -= BUILDINGS[key].cost;
-  place(state, x, y, key);
+  place(state, x, y, key, theme);
   return true;
 }
 export function demolish(state, x, y) {

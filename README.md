@@ -46,10 +46,13 @@ Save your nation to a **centralised server** and share a link so other players c
   a city that lights up warmly after dark.
 - **A skyline that grows** — towers get taller and the city denser as your population
   and education rise over the decades.
-- **Build a real city**: HDB flats, kampongs,
-  condos, power & desalination/NEWater plants, reservoirs, factories, a container
-  port, the CBD, schools, hospitals, the MRT, parks, Gardens by the Bay and more —
-  each modelled as a distinct 3D structure and unlocking in its historical era.
+- **Build a real city**: HDB flats & estates, kampongs, condos & condo estates, power &
+  desalination/NEWater plants, reservoirs, factories, a container port, the CBD, shopping
+  malls, schools, hospitals, the MRT, parks, Nature Reserves, Gardens by the Bay, and a
+  whole **Coast & Leisure** set — **beaches, ferry terminals, marinas with yachts** — each
+  modelled as a distinct 3D structure and unlocking in its historical era.
+- **Customise your estates** — pick from a palette of colour themes when placing HDB,
+  condo, estate or mall buildings, so your town looks the way you want.
 - **A living society model.** Population grows from births and migration, constrained
   by housing, jobs, power and water. Approval responds to overcrowding, unemployment,
   utility shortages, pollution, health, education, safety, taxes and your policies.

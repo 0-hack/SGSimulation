@@ -1,6 +1,6 @@
 // UI rendering helpers: builds the contents of each bottom sheet/panel.
 // Returns DOM and wires callbacks; keeps main.js focused on orchestration.
-import { BUILDINGS, CATEGORIES, POLICIES, POP_SCALE } from './data.js';
+import { BUILDINGS, CATEGORIES, POLICIES, POP_SCALE, THEMES } from './data.js';
 import { derive, isUnlocked, formatDate } from './engine.js';
 import { ICONS, CAT_ICON } from './icons.js';
 
@@ -62,6 +62,23 @@ export function renderBuild(state, ctx) {
     tabs.append(t);
   }
   wrap.append(tabs);
+
+  // Colour-theme picker — shown for categories that contain customizable builds.
+  const hasCustom = Object.values(BUILDINGS).some((b) => b.cat === ctx.cat && b.customizable);
+  if (hasCustom) {
+    const picker = el('div', 'theme-picker');
+    picker.append(el('span', 'theme-label', '🎨 Estate colour (for customisable builds)'));
+    const sw = el('div', 'swatches');
+    for (const t of THEMES) {
+      const active = (ctx.theme || THEMES[0].color) === t.color;
+      const s = el('button', 'swatch' + (active ? ' active' : ''));
+      s.style.background = t.color; s.title = t.name;
+      s.onclick = () => ctx.setTheme(t.color);
+      sw.append(s);
+    }
+    picker.append(sw);
+    wrap.append(picker);
+  }
 
   // Buildings in category
   const grid = el('div', 'build-grid');

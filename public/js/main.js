@@ -30,7 +30,7 @@ const G = {
   acc: 0,
   lastFrame: 0,
   hudTimer: 0,
-  build: { cat: 'residential', selected: null, bulldoze: false },
+  build: { cat: 'residential', selected: null, bulldoze: false, theme: null },
   currentPanel: null,
   dirty: false,          // unsaved changes since last cloud save
 };
@@ -237,8 +237,9 @@ function onTileTap(x, y) {
   if (b.selected) {
     if (!G.view.isLand(x, y)) { toast('You can only build on land. 🏝️'); return; }
     if (canPlace(G.state, x, y, b.selected)) {
-      build(G.state, x, y, b.selected);
-      G.view.onBuilt(x, y, b.selected);
+      const theme = BUILDINGS[b.selected].customizable ? b.theme : null;
+      build(G.state, x, y, b.selected, theme);
+      G.view.onBuilt(x, y, b.selected, theme);
       afterEdit();
     } else {
       const bd = BUILDINGS[b.selected];
@@ -287,14 +288,19 @@ function refreshPanel() {
 
   if (panel === 'build') {
     content.append(renderBuild(G.state, {
-      cat: G.build.cat, selected: G.build.selected, bulldoze: G.build.bulldoze,
+      cat: G.build.cat, selected: G.build.selected, bulldoze: G.build.bulldoze, theme: G.build.theme,
       setCat: (c) => { G.build.cat = c; refreshPanel(); },
+      setTheme: (t) => { G.build.theme = t; if (G.build.selected) G.view.setPreview(G.build.selected, t); refreshPanel(); },
       selectBuilding: (k) => {
         G.build.selected = G.build.selected === k ? null : k;
         G.build.bulldoze = false;
-        G.view.setPreview(G.build.selected);
+        G.view.setPreview(G.build.selected, G.build.theme);
         refreshPanel();
-        if (G.build.selected) { closeSheet(); toast(`Tap the map to place ${BUILDINGS[k].name}.`); }
+        if (G.build.selected) {
+          closeSheet();
+          const custom = BUILDINGS[k].customizable ? ' (colour applied)' : '';
+          toast(`Tap the map to place ${BUILDINGS[k].name}${custom}.`);
+        }
       },
       toggleBulldoze: () => {
         G.build.bulldoze = !G.build.bulldoze;

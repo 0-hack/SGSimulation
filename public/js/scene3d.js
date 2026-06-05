@@ -331,8 +331,9 @@ export class Scene3D {
   // A few boats drifting on the sea around the island.
   _initBoats() {
     this.boats = [];
-    for (let i = 0; i < 6; i++) {
-      const b = makeBoat(i % 3 === 0);
+    const types = ['bumboat', 'bumboat', 'cargo', 'sampan', 'bumboat', 'cargo', 'sampan', 'bumboat'];
+    for (let i = 0; i < types.length; i++) {
+      const b = makeBoat(types[i]);
       const ang = Math.random() * Math.PI * 2;
       const rad = WORLD * (0.42 + Math.random() * 0.12);
       this.scene.add(b);
@@ -725,11 +726,15 @@ export class Scene3D {
   }
   _addVehicle() {
     if (!this.edgePts.length) return;
+    const year = this.state?.date?.y ?? 1965;
+    const vintage = year < 1980;             // trishaws, vintage cars & old buses in the early decades
     const r = Math.random();
-    const kind = r < 0.46 ? 'car' : r < 0.6 ? 'taxi' : r < 0.76 ? 'bike' : r < 0.88 ? 'lorry' : 'bus';
-    const { mesh, len } = makeVehicle(kind);
+    const kind = vintage
+      ? (r < 0.32 ? 'car' : r < 0.44 ? 'taxi' : r < 0.64 ? 'trishaw' : r < 0.8 ? 'bike' : r < 0.92 ? 'lorry' : 'bus')
+      : (r < 0.46 ? 'car' : r < 0.6 ? 'taxi' : r < 0.76 ? 'bike' : r < 0.88 ? 'lorry' : 'bus');
+    const { mesh, len } = makeVehicle(kind, vintage);
     this.scene.add(mesh);
-    const speed = { car: 11, taxi: 11, bike: 14, lorry: 8, bus: 7.5 }[kind];
+    const speed = { car: 11, taxi: 11, bike: 14, trishaw: 5, lorry: 8, bus: 7.5 }[kind];
     const ag = {
       mesh, len, group: 'veh', kind, edge: Math.floor(Math.random() * this.edgePts.length),
       dir: Math.random() < 0.5 ? 1 : -1, t: Math.random(), phase: 0,
@@ -1406,13 +1411,50 @@ export function makeBuilding(key, theme) {
 
   if (cat === 'residential') {
     if (key === 'kampong') {
-      lawn(g, 9, 9, 0x8aa15a);
-      for (const [dx, dz] of [[-2.2, -1.5], [1.8, -2], [0, 1.8], [2.4, 1.6]]) {
-        g.add(partBox(2.4, 1.8, 2.8, mat(0xb89b6a), dx, 0.9, dz));
-        const roof = new THREE.Mesh(new THREE.ConeGeometry(2.2, 1.3, 4), mat(0x7a5a36));
-        roof.position.set(dx, 2.4, dz); roof.rotation.y = Math.PI / 4; roof.castShadow = true; g.add(roof);
+      lawn(g, 9, 9, 0x9c8a5a);                               // packed-earth clearing
+      for (const [dx, dz, rot] of [[-2.4, -1.6, 0.2], [1.9, -2.1, -0.3], [-0.2, 1.9, 0.1], [2.5, 1.7, 0.5]]) {
+        const hut = new THREE.Group(); hut.position.set(dx, 0, dz); hut.rotation.y = rot;
+        for (const [px, pz] of [[-0.9, -0.9], [0.9, -0.9], [-0.9, 0.9], [0.9, 0.9]])
+          hut.add(cyl(0.1, 0.12, 1.0, 0x6b4f33, px, 0.5, pz));          // stilts
+        hut.add(partBox(2.3, 1.3, 2.5, mat(0xb89b6a), 0, 1.65, 0));     // raised timber house
+        for (const s of [-1, 1]) {                                       // steep attap (thatch) gable
+          const r = new THREE.Mesh(new THREE.BoxGeometry(2.7, 0.12, 1.75), mat(0x6e5128));
+          r.position.set(0, 2.55, s * 0.62); r.rotation.x = s * 0.72; r.castShadow = true; hut.add(r);
+        }
+        hut.add(partBox(0.5, 0.7, 0.05, mat(0x4a3a2a), 0, 1.6, 1.27)); // doorway
+        g.add(hut);
       }
-      treeAt(g, -3, 2.6, 1.1); treeAt(g, 3, -3, 0.9);
+      for (const [dx, dz] of [[-3.2, 2.6], [3.2, -3], [3.1, 3.2]]) {     // coconut palms
+        g.add(cyl(0.12, 0.18, 3.0, 0x8a6b43, dx, 1.5, dz));
+        const fr = new THREE.Mesh(new THREE.SphereGeometry(0.9, 8, 6), mat(0x3fae57));
+        fr.position.set(dx, 3.1, dz); fr.scale.y = 0.5; fr.castShadow = true; g.add(fr);
+      }
+    } else if (key === 'shophouse') {
+      lawn(g, 9, 9, 0x9a9078);                                // packed-earth lane out front
+      const pastels = [0xe8b04b, 0xd9694f, 0x6fae9e, 0xe2cd7a, 0xc97f9c, 0x7fa8c9, 0xe7e0cf];
+      const units = 4, uw = 2.0, depth = 4.2, x0 = -((units - 1) * uw) / 2;
+      for (let i = 0; i < units; i++) {
+        const ux = x0 + i * uw;
+        const wallc = tint != null ? tint : pastels[(i * 3 + 1) % pastels.length];
+        g.add(partBox(uw - 0.08, 4.4, depth, mat(wallc), ux, 2.2, 0));                       // two-storey body
+        g.add(partBox(uw - 0.5, 1.9, 0.2, mat(0x4a3b30), ux, 0.95, depth / 2 + 0.02));       // dark shopfront
+        const aw = new THREE.Mesh(new THREE.BoxGeometry(uw - 0.12, 0.1, 1.0), mat(i % 2 ? 0xb5402f : 0x35613f));
+        aw.position.set(ux, 1.98, depth / 2 + 0.45); aw.rotation.x = 0.2; aw.castShadow = true; g.add(aw); // awning over five-foot-way
+        g.add(cyl(0.1, 0.1, 1.95, 0xe8e2d2, ux - (uw - 0.6) / 2, 0.97, depth / 2 + 0.74));   // verandah columns
+        g.add(cyl(0.1, 0.1, 1.95, 0xe8e2d2, ux + (uw - 0.6) / 2, 0.97, depth / 2 + 0.74));
+        for (const sx of [-0.42, 0.42]) {                                                     // upper shuttered windows
+          g.add(partBox(0.34, 0.95, 0.06, mat(0x355a4a), ux + sx, 2.95, depth / 2 + 0.02));   // window
+          g.add(partBox(0.12, 0.95, 0.1, mat(0xede6d2), ux + sx - 0.24, 2.95, depth / 2 + 0.03)); // shutter
+          g.add(partBox(0.12, 0.95, 0.1, mat(0xede6d2), ux + sx + 0.24, 2.95, depth / 2 + 0.03));
+        }
+        if (i % 2 === 0)                                                                       // hanging vertical signboard
+          g.add(partBox(0.16, 1.4, 0.5, mat([0xc0392b, 0x2c3e8f, 0x2f7d3a][i % 3]), ux + (uw / 2 - 0.12), 2.4, depth / 2 + 0.22));
+      }
+      const rw = units * uw + 0.2;                                                             // continuous clay-tile gable
+      for (const s of [-1, 1]) {
+        const slope = new THREE.Mesh(new THREE.BoxGeometry(rw, 0.12, depth * 0.62), mat(0xb15a3c));
+        slope.position.set(0, 4.86, s * depth * 0.16); slope.rotation.x = s * 0.5; slope.castShadow = true; g.add(slope);
+      }
     } else {
       lawn(g, 9, 9);
       const topt = tint != null ? { tint } : undefined;
@@ -1511,7 +1553,23 @@ export function makeBuilding(key, theme) {
       g.add(cyl(1.4, 1.4, 3, 0xc9cfd2, -3, 1.5, 2.6));
     }
   } else if (cat === 'civic') {
-    if (key === 'hospital') {
+    if (key === 'colonial') {
+      lawn(g, 9, 9, 0x6fb15a);
+      const cream = 0xefe7d4, roofc = 0xa6553a;
+      g.add(partBox(8.2, 4.6, 4.4, mat(cream), 0, 2.3, -0.7));                    // two-storey symmetric body
+      const band = tower(8.0, 2.0, 4.3, 'hotel', 0, -0.7); band.position.y = 1.4; g.add(band); // arched window band
+      const roof = new THREE.Mesh(new THREE.ConeGeometry(5.7, 1.4, 4), mat(roofc));
+      roof.position.set(0, 5.3, -0.7); roof.rotation.y = Math.PI / 4; roof.scale.z = 0.62; roof.castShadow = true; g.add(roof);
+      for (let i = -3; i <= 3; i += 1.2) g.add(cyl(0.2, 0.22, 3.4, 0xf4efe2, i, 1.7, 2.5)); // portico columns
+      g.add(partBox(7.2, 0.5, 1.2, mat(0xe6ddc8), 0, 3.65, 2.5));                 // entablature
+      g.add(partBox(1.8, 3.2, 1.8, mat(cream), 0, 6.7, -0.7));                    // clock tower
+      g.add(partBox(1.4, 1.0, 0.08, mat(0x2b2b2b), 0, 7.5, 0.24));               // clock face
+      g.add(partBox(0.9, 0.1, 0.1, mat(0xe6ddc8), 0, 7.5, 0.3));                 // clock hands
+      g.add(partBox(0.1, 0.6, 0.1, mat(0xe6ddc8), 0, 7.5, 0.3));
+      const dome = new THREE.Mesh(new THREE.SphereGeometry(1.1, 14, 10, 0, Math.PI * 2, 0, Math.PI / 2), mat(0x5a7d4a));
+      dome.position.set(0, 8.2, -0.7); dome.castShadow = true; g.add(dome);
+      g.add(cyl(0.04, 0.04, 1.0, 0xd8c98a, 0, 9.0, -0.7));                        // flagpole
+    } else if (key === 'hospital') {
       lawn(g, 9, 9, 0x86a6a0);
       g.add(tower(6.5, 9, 4, 'glass', 0, -0.6, { color: 0xf4f6f7 }));
       g.add(partBox(3, 5, 3, mat(0xeef1f3), -3.4, 2.5, 1.6));
@@ -1616,7 +1674,7 @@ export function makeBuilding(key, theme) {
 // ===========================================================================
 // Vehicles — distinct, recognisable types (car, taxi, motorbike, lorry, bus).
 // ===========================================================================
-function makeVehicle(kind) {
+function makeVehicle(kind, vintage = false) {
   const g = new THREE.Group();
   const pick = (a) => a[Math.floor(Math.random() * a.length)];
   const glass = 0x2b3b48, dark = 0x15171c;
@@ -1624,7 +1682,31 @@ function makeVehicle(kind) {
     const w = new THREE.Mesh(new THREE.CylinderGeometry(r, r, 0.28, 10), mat(dark));
     w.rotation.z = Math.PI / 2; w.position.set(x, r, z); w.castShadow = true; return w;
   };
+  if (kind === 'trishaw') {
+    // a cycle-rickshaw: passenger sidecar with a folding hood + a cyclist alongside
+    const cc = pick([0x2f7d3a, 0xc0392b, 0x2c3e8f, 0x9c6b1f]);
+    g.add(partBox(0.78, 0.9, 1.5, mat(cc), -0.45, 0.62, 0.15));          // passenger cab
+    const hood = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 0.78, 10, 1, false, 0, Math.PI), mat(0x1b1b1b));
+    hood.rotation.z = Math.PI / 2; hood.position.set(-0.45, 1.1, -0.25); hood.castShadow = true; g.add(hood); // folding hood
+    g.add(partBox(0.16, 0.45, 1.4, mat(0x333a44), 0.42, 0.62, -0.1));    // bicycle frame
+    g.add(partBox(0.3, 0.55, 0.3, mat(0x2b2f36), 0.42, 1.2, -0.55));     // rider
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.16, 8, 6), mat(0xcaa07a)); head.position.set(0.42, 1.6, -0.55); g.add(head);
+    g.add(wheel(0.42, -0.85, 0.32));                                     // front wheel
+    g.add(wheel(-0.45, 0.7, 0.32)); g.add(wheel(0.42, 0.7, 0.32));       // rear axle
+    g.traverse((m) => { if (m.isMesh) m.castShadow = true; });
+    return { mesh: g, len: 1.9 };
+  }
   if (kind === 'bus') {
+    if (vintage) {
+      // 1960s single-deck bus: cream body with a coloured waistline stripe, rounded
+      g.add(partBox(2.0, 1.9, 6.2, mat(0xe9e2cf), 0, 1.15, 0));
+      g.add(partBox(2.04, 0.34, 6.2, mat(pick([0x2f7d3a, 0xc0392b, 0x2c5aa0])), 0, 1.62, 0)); // stripe
+      g.add(partBox(2.06, 0.5, 4.8, mat(glass), 0, 1.55, -0.3));
+      g.add(partBox(0.3, 0.2, 0.08, mat(0xfff6cf, {}, 1.6), 0.7, 0.7, 3.12));
+      g.add(partBox(0.3, 0.2, 0.08, mat(0xfff6cf, {}, 1.6), -0.7, 0.7, 3.12));
+      for (const z of [-2.2, 2.2]) { g.add(wheel(-0.96, z, 0.46)); g.add(wheel(0.96, z, 0.46)); }
+      return { mesh: g, len: 6.2 };
+    }
     const col = pick([0xd23b3b, 0xffffff, 0x2f9e54, 0xf0a93b]);
     g.add(partBox(2.0, 1.7, 6.6, mat(col), 0, 1.05, 0));
     g.add(partBox(2.04, 0.55, 5.4, mat(glass), 0, 1.45, 0));
@@ -1652,6 +1734,23 @@ function makeVehicle(kind) {
     return { mesh: g, len: 1.7 };
   }
   // car / taxi
+  if (vintage) {
+    // 1950s/60s sedan: domed cabin, running boards, rounded nose, two-tone for taxis
+    const body = kind === 'taxi' ? 0x111317 : pick([0x3a3f45, 0x6b3a2f, 0x2e4636, 0x7a6f55, 0x4a4e57, 0x6e2e2e]);
+    g.add(partBox(1.5, 0.62, 3.3, mat(body), 0, 0.6, 0));                              // body
+    g.add(partBox(1.32, 0.66, 1.5, mat(kind === 'taxi' ? 0xe8e2d2 : body), 0, 1.14, -0.15)); // domed cabin (cream roof for taxis)
+    g.add(partBox(1.35, 0.42, 1.25, mat(glass), 0, 1.2, -0.15));
+    for (const sx of [-0.82, 0.82]) g.add(partBox(0.18, 0.12, 2.6, mat(0x14161a), sx, 0.4, 0)); // running boards
+    g.add(partBox(0.7, 0.4, 0.5, mat(body), 0, 0.55, 1.62));                           // rounded nose
+    g.add(partBox(0.5, 0.32, 0.12, mat(0x20242b), 0, 0.6, 1.86));                       // grille
+    g.add(partBox(0.22, 0.2, 0.1, mat(0xfff6cf, {}, 1.8), 0.56, 0.62, 1.78));           // round headlights
+    g.add(partBox(0.22, 0.2, 0.1, mat(0xfff6cf, {}, 1.8), -0.56, 0.62, 1.78));
+    g.add(partBox(0.22, 0.16, 0.08, mat(0xe23b2e, {}, 1.6), 0.5, 0.6, -1.66));          // taillights
+    g.add(partBox(0.22, 0.16, 0.08, mat(0xe23b2e, {}, 1.6), -0.5, 0.6, -1.66));
+    for (const z of [1.15, -1.15]) { g.add(wheel(-0.78, z, 0.38)); g.add(wheel(0.78, z, 0.38)); }
+    if (kind === 'taxi') g.add(partBox(0.4, 0.22, 0.28, mat(0x1d2733), 0, 1.5, -0.15));  // roof sign
+    return { mesh: g, len: 3.3 };
+  }
   const col = kind === 'taxi' ? 0xf4c20a : pick([0xd94f4f, 0xffffff, 0x3f7fd8, 0x2e8b57, 0x6b7280, 0x8e44ad]);
   g.add(partBox(1.55, 0.55, 3.2, mat(col), 0, 0.55, 0));
   g.add(partBox(1.4, 0.5, 1.7, mat(col), 0, 1.0, -0.1));
@@ -1682,17 +1781,27 @@ function makeBench(rot) {
   g.rotation.y = rot;
   return g;
 }
-function makeBoat(cargo) {
+function makeBoat(type) {
   const g = new THREE.Group();
-  if (cargo) {
+  if (type === 'cargo') {
     g.add(partBox(3.0, 1.4, 9.0, mat(0x37424d), 0, 0, 0));          // hull
     g.add(partBox(2.4, 1.0, 2.0, mat(0xeceff1), 0, 1.1, -3.0));     // bridge
     const cc = [0xd84141, 0x3f7fd8, 0x4caf50, 0xf2b134];
     for (let i = 0; i < 6; i++) g.add(partBox(0.9, 0.8, 1.6, mat(cc[i % 4]), (i % 2 ? 0.7 : -0.7), 1.0, 1.6 - (i >> 1) * 1.7));
-  } else {
-    g.add(partBox(1.6, 0.8, 4.2, mat(0xfafafa), 0, 0, 0));
-    g.add(partBox(1.2, 0.7, 1.6, mat(0x4a6fa5), 0, 0.7, -0.4));
-    g.add(cyl(0.05, 0.05, 1.4, mat(0xcfd3d6), 0, 1.4, 0.2));
+  } else if (type === 'bumboat') {
+    // tongkang / bumboat: low wooden hull, a cargo-house cabin, painted "eyes" on the bow
+    g.add(partBox(1.8, 0.9, 5.4, mat(0x6e4a2c), 0, 0, 0));          // wooden hull
+    g.add(partBox(1.92, 0.22, 5.6, mat(0x8a6240), 0, 0.5, 0));      // gunwale rim
+    g.add(partBox(1.5, 1.0, 2.2, mat(0xcf6a3a), 0, 0.95, -0.7));    // cabin / cargo house
+    g.add(partBox(1.7, 0.12, 2.4, mat(0x35613f), 0, 1.5, -0.7));    // cabin roof
+    for (const sx of [0.94, -0.94]) {                              // oculi (painted eyes) on the bow
+      g.add(partBox(0.05, 0.34, 0.34, mat(0xffffff), sx, 0.36, 2.2));
+      g.add(partBox(0.07, 0.17, 0.17, mat(0x1a1a1a), sx * 1.02, 0.36, 2.2));
+    }
+  } else { // sampan — a small open boat with a rattan canopy
+    g.add(partBox(1.1, 0.6, 3.6, mat(0x8a6b43), 0, 0, 0));
+    g.add(partBox(0.98, 0.62, 1.3, mat(0xb5402f), 0, 0.55, -0.3));  // canopy
+    g.add(cyl(0.04, 0.04, 1.2, mat(0xcfd3d6), 0, 1.05, 0.4));       // pole
   }
   g.traverse((m) => { if (m.isMesh) m.castShadow = true; });
   return g;

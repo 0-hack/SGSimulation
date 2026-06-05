@@ -48,7 +48,13 @@ export const BUILDINGS = {
     name: 'Kampong', cat: 'residential', icon: '🛖', color: '#8d6e4f',
     cost: 5, upkeep: 0.2, year: 1965, homes: 1200, jobs: 0,
     power: -1, water: -2, pollution: 1, happiness: 2,
-    desc: 'Traditional village housing. Cheap, but cramped and prone to fire & flooding.',
+    desc: 'A cluster of attap-roofed village huts on stilts. Cheap, but cramped and prone to fire & flooding.',
+  },
+  shophouse: {
+    name: 'Shophouse Row', cat: 'residential', icon: '🏚️', color: '#d98f5a', customizable: true,
+    cost: 14, upkeep: 0.5, year: 1965, homes: 2200, jobs: 350,
+    power: -3, water: -4, pollution: 1, happiness: 4, income: 2,
+    desc: 'A terrace of colourful two-storey shophouses — shops and hawker stalls below, families living above. The face of old Singapore.',
   },
   hdb_flat: {
     name: 'HDB Flat', cat: 'residential', icon: '🏢', color: '#cf9b5f', customizable: true,
@@ -159,6 +165,12 @@ export const BUILDINGS = {
     cost: 35, upkeep: 1.8, year: 1965, homes: 0, jobs: 300,
     power: -5, water: -4, pollution: 0, happiness: 2, safety: 22,
     desc: 'Law and order. Low crime keeps investors and citizens confident.',
+  },
+  colonial: {
+    name: 'Municipal Building', cat: 'civic', icon: '🏛️', color: '#efe7d4',
+    cost: 60, upkeep: 2.0, year: 1965, homes: 0, jobs: 500,
+    power: -6, water: -6, pollution: 0, happiness: 6, safety: 6, income: 2,
+    desc: 'A grand British colonial civic hall with columns and a clock tower — the administrative seat inherited from the empire.',
   },
   mrt: {
     name: 'MRT Station', cat: 'civic', icon: '🚇', color: '#5db85d',

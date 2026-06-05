@@ -102,9 +102,13 @@ function seed1965(state) {
     }
   }
 
-  // a few kampongs in the town + a reservoir, plus rural kampongs further out
+  // the colonial city core: rows of shophouses along the streets, a British
+  // municipal building by the waterfront, with kampongs on the fringes.
   const placeAt = (x, y, k) => { if (x >= 0 && y >= 0 && x < GRID_SIZE && y < GRID_SIZE && isLandCell(x, y) && !state.grid[y][x]) place(state, x, y, k); };
-  placeAt(c, ty, 'kampong'); placeAt(c + 1, ty, 'kampong'); placeAt(c - 1, ty + 1, 'kampong');
+  placeAt(c, ty, 'colonial');                                   // seat of administration
+  placeAt(c - 1, ty, 'shophouse'); placeAt(c + 1, ty, 'shophouse');
+  placeAt(c - 1, ty + 1, 'shophouse'); placeAt(c + 1, ty + 1, 'shophouse');
+  placeAt(c, ty + 1, 'kampong'); placeAt(c - 2, ty, 'kampong');
   placeAt(c + 2, ty - 1, 'reservoir');
   // scatter rural kampongs around the island
   let placed = 0;

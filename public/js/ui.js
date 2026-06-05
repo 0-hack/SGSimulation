@@ -1,7 +1,7 @@
 // UI rendering helpers: builds the contents of each bottom sheet/panel.
 // Returns DOM and wires callbacks; keeps main.js focused on orchestration.
 import { BUILDINGS, CATEGORIES, POLICIES, POP_SCALE, THEMES, ROAD_TYPES } from './data.js';
-import { derive, isUnlocked, formatDate } from './engine.js';
+import { derive, isUnlocked, formatDate, debtCeiling, bondRate } from './engine.js';
 import { ICONS, CAT_ICON } from './icons.js';
 
 // ---- formatting ----
@@ -83,15 +83,15 @@ export function renderBuild(state, ctx) {
     wrap.append(picker);
   }
 
-  // Buildings in category
+  // Buildings in category — only those whose technology is available yet are
+  // shown; more surface automatically as the decades pass. Anything shown can
+  // be built (borrow from the dashboard if the treasury is short).
   const grid = el('div', 'build-grid');
   for (const [key, b] of Object.entries(BUILDINGS)) {
     if (b.cat !== ctx.cat) continue;
-    const unlocked = isUnlocked(state, key);
+    if (!isUnlocked(state, key)) continue;       // not invented yet — hidden, not locked
     const affordable = state.treasury >= b.cost;
-    const card = el('button', 'bcard'
-      + (unlocked ? '' : ' locked')
-      + (ctx.selected === key ? ' selected' : ''));
+    const card = el('button', 'bcard' + (ctx.selected === key ? ' selected' : ''));
 
     const tags = buildingTags(b);
     card.innerHTML = `
@@ -103,10 +103,9 @@ export function renderBuild(state, ctx) {
         </div>
       </div>
       <div class="b-desc">${b.desc}</div>
-      <div class="b-tags">${tags}</div>
-      ${unlocked ? '' : `<span class="b-lock">🔒 ${b.year}</span>`}`;
-    if (!affordable && unlocked) card.style.opacity = '0.6';
-    if (unlocked) card.onclick = () => ctx.selectBuilding(key);
+      <div class="b-tags">${tags}</div>`;
+    if (!affordable) card.style.opacity = '0.6';
+    card.onclick = () => ctx.selectBuilding(key);
     grid.append(card);
   }
   wrap.append(grid);
@@ -206,7 +205,7 @@ export function renderPolicy(state, ctx) {
 // ===========================================================================
 // DASHBOARD
 // ===========================================================================
-export function renderDash(state) {
+export function renderDash(state, ctx = {}) {
   const d = derive(state);
   const wrap = el('div');
   const popReal = state.population * POP_SCALE;
@@ -247,13 +246,48 @@ export function renderDash(state) {
     ledger.append(row('Income tax', f.incomeTax, 'pos'));
     if (f.gst > 0) ledger.append(row('GST', f.gst, 'pos'));
     ledger.append(row('Business & trade', f.business, 'pos'));
-    ledger.append(row('Upkeep & services', -f.upkeep, 'neg'));
+    const svc = f.upkeep - (f.interest || 0);
+    ledger.append(row('Upkeep & services', -svc, 'neg'));
+    if (f.interest > 0.005) ledger.append(row('Bond interest', -f.interest, 'neg'));
     const net = el('div', 'row');
     net.style.cssText = 'border-top:1px solid var(--line);padding-top:5px;font-weight:800';
     net.innerHTML = `<span>Net / month</span><span class="${f.net >= 0 ? 'pos' : 'neg'}">${money(f.net)}</span>`;
     ledger.append(net);
     led.append(ledger);
     wrap.append(led);
+  }
+
+  // ---- Borrowing: government bonds ----
+  if (ctx.borrow) {
+    wrap.append(el('div', 'section-title', 'Treasury & Borrowing'));
+    const ceil = debtCeiling(state), debt = state.debt || 0, room = Math.max(0, ceil - debt);
+    const fin = el('div', 'metric span2');
+    fin.innerHTML = `
+      <div class="ledger">
+        <div class="row"><span>National debt</span><span class="${debt > 0 ? 'neg' : ''}">${money(debt)}</span></div>
+        <div class="row"><span>Borrowing limit</span><span>${money(ceil)}</span></div>
+        <div class="row"><span>Coupon rate</span><span>${(bondRate(state) * 100).toFixed(1)}% / yr</span></div>
+      </div>`;
+    const bar = el('div', 'bar'); bar.style.marginTop = '8px';
+    bar.innerHTML = `<i style="width:${Math.min(100, ceil ? debt / ceil * 100 : 0)}%;background:${debt / ceil > 0.8 ? 'var(--bad)' : 'var(--warn)'}"></i>`;
+    fin.append(bar);
+    const frow = el('div', 'fin-actions');
+    for (const amt of [100, 250, 500]) {
+      const b = el('button', 'btn tiny', `Issue ${money(amt)}`);
+      if (amt > room + 0.5) { b.disabled = true; b.style.opacity = '0.4'; }
+      b.onclick = () => ctx.borrow(amt);
+      frow.append(b);
+    }
+    fin.append(el('div', 'section-title', 'Issue bonds (borrow)'));
+    fin.append(frow);
+    if (debt > 0) {
+      const rrow = el('div', 'fin-actions');
+      const r1 = el('button', 'btn tiny', `Repay ${money(Math.min(100, debt))}`); r1.onclick = () => ctx.repay(100); rrow.append(r1);
+      const rAll = el('button', 'btn tiny', 'Repay all'); rAll.onclick = () => ctx.repay(debt); rrow.append(rAll);
+      fin.append(el('div', 'section-title', 'Repay debt'));
+      fin.append(rrow);
+    }
+    wrap.append(fin);
   }
   return wrap;
 }

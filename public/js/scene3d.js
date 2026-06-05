@@ -12,6 +12,7 @@ const WORLD = N * 10;         // world units across the bounding box (TILE stays
 const TILE = WORLD / N;
 const SEA_Y = -1.2;
 const DAY_CYCLE = 16;         // in-game days per full day/night cycle
+const LIGHT_YEAR = 1970;      // traffic lights appear as the city modernises
 
 // grid cell (gx,gy) -> world centre
 function cellToWorld(gx, gy) {
@@ -1038,7 +1039,56 @@ export class Scene3D {
     });
     this.navNodes = nodes; this.navAdj = adj;
     this._buildLights();
+    this._buildTurnArrows();
     this._reseatAgents();   // edge indices changed — keep live agents valid
+  }
+
+  // Painted turn-lane arrows on each approach to a junction (left / ahead / right).
+  _buildTurnArrows() {
+    if (this.arrowMesh) { this.scene.remove(this.arrowMesh); this.arrowMesh.geometry.dispose(); this.arrowMesh = null; }
+    const v = [], idx = [];
+    const tri = (x, z, hx, hz, s) => {
+      const l = Math.hypot(hx, hz) || 1, ux = hx / l, uz = hz / l, px = -uz, pz = ux, n = v.length / 3, y = 0.085;
+      v.push(x + ux * s, y, z + uz * s, x - ux * s * 0.5 + px * s * 0.6, y, z - uz * s * 0.5 + pz * s * 0.6, x - ux * s * 0.5 - px * s * 0.6, y, z - uz * s * 0.5 - pz * s * 0.6);
+      idx.push(n, n + 1, n + 2);
+    };
+    const rot = (hx, hz, a) => ({ x: hx * Math.cos(a) - hz * Math.sin(a), z: hx * Math.sin(a) + hz * Math.cos(a) });
+    for (let n = 0; n < this.navAdj.length; n++) {
+      const links = this.navAdj[n];
+      if (links.length < 3) continue;
+      const node = this.navNodes[n];
+      for (const L of links) {
+        const pts = this.edgePts[L.edge]; if (!pts || pts.length < 2) continue;
+        // a point ~5u back from the node along this approach, and heading toward the node
+        const endNear = !L.fwd; // L.fwd: node is at edge start; so node side is start when fwd
+        const a = endNear ? pts[pts.length - 1] : pts[0];
+        const b = endNear ? pts[pts.length - 2] : pts[1];
+        let hx = a.x - b.x, hz = a.z - b.z; const hl = Math.hypot(hx, hz) || 1; hx /= hl; hz /= hl; // toward node
+        const T = ROAD_TYPES[this.edgeMeta[L.edge].type] || ROAD_TYPES.street;
+        const lane = T.width / 4;
+        const px = node.x - hx * 6 + hz * lane, pz = node.z - hz * 6 - hx * lane;
+        // which turns exist among the other roads?
+        let left = false, right = false, ahead = false;
+        for (const M of links) {
+          if (M.edge === L.edge) continue;
+          const mp = this.edgePts[M.edge]; const ms = M.fwd ? mp[0] : mp[mp.length - 1], mt = M.fwd ? mp[1] : mp[mp.length - 2];
+          let ox = mt.x - ms.x, oz = mt.z - ms.z; const ol = Math.hypot(ox, oz) || 1; ox /= ol; oz /= ol; // leaving node
+          const dot = ox * hx + oz * hz, cross = hx * oz - hz * ox;
+          if (dot > 0.6) ahead = true; else if (cross > 0.25) left = true; else if (cross < -0.25) right = true;
+        }
+        if (!(left || right || ahead)) continue;
+        let slot = 0; const dirs = [];
+        if (left) dirs.push(rot(hx, hz, -0.6));
+        if (ahead) dirs.push({ x: hx, z: hz });
+        if (right) dirs.push(rot(hx, hz, 0.6));
+        for (const d of dirs) { const off = (slot - (dirs.length - 1) / 2) * 0.9; tri(px - hz * off, pz + hx * off, d.x, d.z, 1.1); slot++; }
+      }
+    }
+    if (!v.length) return;
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(v, 3)); g.setIndex(idx); g.computeVertexNormals();
+    this.arrowMesh = new THREE.Mesh(g, toon(0xf2ead0, { side: THREE.DoubleSide }));
+    this.scene.add(this.arrowMesh);
   }
 
   // Traffic lights at real junctions (3+ roads): incident roads are split into
@@ -1047,6 +1097,8 @@ export class Scene3D {
     if (this.lightGroup) this.scene.remove(this.lightGroup);
     this.lightGroup = new THREE.Group(); this.scene.add(this.lightGroup);
     this.lights = []; this.lightByNode = new Map();
+    this._lightsActive = (this.state?.date?.y || 1965) >= LIGHT_YEAR;
+    if (!this._lightsActive) return;   // none at independence — they modernise in later
     for (let n = 0; n < this.navAdj.length; n++) {
       const links = this.navAdj[n];
       if (links.length < 3) continue;
@@ -1154,6 +1206,9 @@ export class Scene3D {
     // unified traffic — density scales with population, drives grid + freeform roads
     if (this.state && this.edgePts.length) {
       const target = THREE.MathUtils.clamp(Math.floor(this.state.population / 30000), 5, 60);
+      // traffic lights appear once the city has modernised past LIGHT_YEAR
+      const wantLights = (this.state.date?.y || 1965) >= LIGHT_YEAR;
+      if (wantLights !== this._lightsActive) this._buildLights();
       this._updateLights(dt);
       this._ensureVehicles(target);
       this._advanceNet(this.vehicles, dt);

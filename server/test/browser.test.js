@@ -134,6 +134,21 @@ try {
   const metrics = await page.$$eval('.metric', (els) => els.length);
   ok(metrics >= 8, `dashboard shows ${metrics} metrics`);
 
+  // Government bonds: issuing a bond raises cash and adds debt.
+  const bond = await page.evaluate(async () => {
+    const v = window.__sgview, t0 = v.state.treasury;
+    const btn = [...document.querySelectorAll('.fin-actions .btn')].find((b) => /Issue/.test(b.textContent));
+    btn?.click(); await new Promise((r) => setTimeout(r, 150));
+    return { raised: v.state.treasury - t0, debt: v.state.debt };
+  });
+  ok(bond.raised > 0 && bond.debt > 0, `issuing a bond raised ${Math.round(bond.raised)}M (debt ${Math.round(bond.debt)}M)`);
+
+  // Build palette shows only available tech — no locked entries in 1965.
+  await page.click('.tool[data-panel="build"]');
+  await page.waitForSelector('.bcard');
+  const noLocks = await page.$$eval('.b-lock', (els) => els.length);
+  ok(noLocks === 0, 'no locked buildings shown — only available tech');
+
   // Cloud save.
   await page.click('.tool[data-panel="cloud"]');
   await page.waitForSelector('.cloud-info');

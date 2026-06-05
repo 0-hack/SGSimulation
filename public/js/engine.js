@@ -52,6 +52,7 @@ export function newGame({ name = 'New Singapore', owner = 'Anonymous' } = {}) {
     health: 25,
     safety: 30,
     pollution: 5,
+    debt: 0,                  // outstanding government bonds ($M)
     grid,
     policies,
     flags: {},                // historical events fired
@@ -116,6 +117,7 @@ function seed1965(state) {
 // re-centre the existing layout onto a fresh GRID_SIZE×GRID_SIZE grid.
 export function ensureGrid(state) {
   if (!state) return state;
+  if (typeof state.debt !== 'number') state.debt = 0;
   if (!state.roads) state.roads = { nodes: [], edges: [], islands: [] };
   if (!state.roads.islands) state.roads.islands = [];
   const g = state.grid;
@@ -165,6 +167,39 @@ export function demolish(state, x, y) {
   state.grid[y][x] = null;
   state.treasury -= 2; // demolition cost
   return true;
+}
+
+// ---------------------------------------------------------------------------
+// Public finance — government bonds (borrowing).
+// ---------------------------------------------------------------------------
+// Annual coupon rate rises with how much of the borrowing limit is used (credit risk).
+export function bondRate(state) {
+  const ceil = debtCeiling(state);
+  const util = ceil > 0 ? Math.min(1, (state.debt || 0) / ceil) : 1;
+  return 0.045 + util * 0.06;               // 4.5% .. ~10.5%
+}
+// How much the government can owe — scales with the economy (annual revenue) & population.
+export function debtCeiling(state) {
+  const annualRev = (state.lastFinance?.grossIncome || 0) * 12;
+  const pop = (state.population || 0) * POP_SCALE;
+  return Math.round(Math.max(400, annualRev * 3 + pop * 0.002));
+}
+// Issue bonds to raise cash now (capped by the ceiling). Returns the amount raised.
+export function issueBond(state, amount) {
+  const room = Math.max(0, debtCeiling(state) - (state.debt || 0));
+  const amt = Math.max(0, Math.min(Math.round(amount), room));
+  if (!amt) return 0;
+  state.debt = (state.debt || 0) + amt;
+  state.treasury += amt;
+  return amt;
+}
+// Repay outstanding debt from the treasury. Returns the amount repaid.
+export function repayDebt(state, amount) {
+  const amt = Math.max(0, Math.min(Math.round(amount), state.debt || 0, Math.floor(state.treasury)));
+  if (!amt) return 0;
+  state.debt -= amt;
+  state.treasury -= amt;
+  return amt;
 }
 
 // ---------------------------------------------------------------------------
@@ -274,8 +309,9 @@ function approvalTarget(state, d) {
   t += clamp(d.happinessLocal / Math.max(1, d.homes / 4000), 0, 14);
   // Policy approval
   t += m.approval;
-  // Fiscal stress — debt is unpopular
+  // Fiscal stress — deficits and heavy national debt are unpopular
   if (state.treasury < 0) t -= clamp(-state.treasury / 20, 0, 20);
+  if (state.debt > 0) t -= clamp((state.debt / Math.max(1, debtCeiling(state))) * 12, 0, 12);
   return clamp(t, 0, 100);
 }
 
@@ -380,10 +416,14 @@ function monthlyUpdate(state, d) {
   upkeep += m.upkeep;                       // policy running costs
   upkeep += popReal * 0.00012;              // general public-service cost
 
+  // Debt servicing — interest on outstanding government bonds.
+  const interest = (state.debt || 0) * bondRate(state) / 12;
+  upkeep += interest;
+
   const net = grossIncome - upkeep;
   state.treasury += net;
   state.lastFinance = {
-    incomeTax, gst, business, grossIncome, upkeep, net,
+    incomeTax, gst, business, grossIncome, upkeep, interest, net,
   };
 
   // --- Population dynamics ---

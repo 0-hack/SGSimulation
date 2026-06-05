@@ -1,7 +1,7 @@
 // Main controller: boots the menu, runs the game loop, wires the UI & cloud.
 import {
   newGame, tickDay, build, demolish, canPlace, derive,
-  resolveEvent, snapshot, refreshSummary, ensureGrid,
+  resolveEvent, snapshot, refreshSummary, ensureGrid, issueBond, repayDebt,
 } from './engine.js';
 import { Scene3D } from './scene3d.js';
 import { api } from './api.js';
@@ -261,7 +261,7 @@ function afterEdit() {
   refreshSummary(G.state);
   updateHud(G.state, G.readOnly);
   updateShortages();
-  if (G.currentPanel === 'build') refreshPanel(); // affordability may change
+  if (G.currentPanel === 'build' || G.currentPanel === 'dash') refreshPanel(); // affordability/finances may change
 }
 
 // ===========================================================================
@@ -418,7 +418,18 @@ function refreshPanel() {
       togglePolicy: (k) => { G.state.policies[k] = !G.state.policies[k]; G.dirty = true; refreshPanel(); },
     }));
   } else if (panel === 'dash') {
-    content.append(renderDash(G.state));
+    content.append(renderDash(G.state, {
+      borrow: (amt) => {
+        if (G.readOnly) return;
+        const got = issueBond(G.state, amt);
+        if (got > 0) { afterEdit(); toast(`Issued ${money(got)} in bonds.`); } else toast('Borrowing limit reached.');
+      },
+      repay: (amt) => {
+        if (G.readOnly) return;
+        const paid = repayDebt(G.state, amt);
+        if (paid > 0) { afterEdit(); toast(`Repaid ${money(paid)} of debt.`); } else toast('Not enough in the treasury to repay.');
+      },
+    }));
   } else if (panel === 'events') {
     content.append(renderNews(G.state));
   } else if (panel === 'cloud') {

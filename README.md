@@ -49,8 +49,15 @@ Save your nation to a **centralised server** and share a link so other players c
 - **Start in 1965** on a large, mostly-rural island — kampongs dotted across the
   countryside and one small colonial town with a street grid in the south. You build out
   the roads and the nation from there, just like the real Singapore story.
-- **Traffic rules** — junctions have working **traffic lights**; cars stop on red at the
-  stop line and go on green.
+- **Build whatever is available** — nothing is artificially locked: the build menu shows
+  every technology available in the current era, and **new options appear as the decades
+  pass** (NEWater, the MRT, solar, integrated resorts…).
+- **Public finance** — short of cash? **Issue government bonds** to borrow against a
+  ceiling that scales with the economy; you pay interest each month (higher when you're
+  more leveraged) and can repay any time. Heavy debt dents approval.
+- **Traffic rules** — junctions gain **traffic lights** as the city modernises (from the
+  1970s, not at independence); cars stop on red at the stop line, and **turn-lane arrows**
+  mark left / ahead / right at each approach.
 - **Build a real city**: HDB flats & estates, kampongs, condos & condo estates, power &
   desalination/NEWater plants, reservoirs, factories, a container port, the CBD, shopping
   malls, schools, hospitals, the MRT, parks, Nature Reserves, Gardens by the Bay, and a

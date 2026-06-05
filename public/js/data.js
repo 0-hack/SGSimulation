@@ -58,19 +58,19 @@ export const BUILDINGS = {
   },
   hdb_newtown: {
     name: 'HDB New Town', cat: 'residential', icon: '🏙️', color: '#e0a85e', customizable: true,
-    cost: 90, upkeep: 3.0, year: 1975, homes: 14000, jobs: 600,
+    cost: 90, upkeep: 3.0, year: 1968, homes: 14000, jobs: 600,
     power: -16, water: -20, pollution: 2, happiness: 7,
     desc: 'A self-contained town with flats, shops and amenities. The backbone of the nation.',
   },
   condo: {
     name: 'Private Condo', cat: 'residential', icon: '🏨', color: '#7fc2e6', customizable: true,
-    cost: 140, upkeep: 2.0, year: 1980, homes: 4000, jobs: 200,
+    cost: 140, upkeep: 2.0, year: 1970, homes: 4000, jobs: 200,
     power: -10, water: -14, pollution: 1, happiness: 9, income: 1.5,
     desc: 'Premium private housing. Raises land value and tax revenue but houses fewer people.',
   },
   condo_estate: {
     name: 'Condo Estate', cat: 'residential', icon: '🏬', color: '#86c8e0', customizable: true,
-    cost: 360, upkeep: 6.0, year: 1995, homes: 16000, jobs: 800,
+    cost: 360, upkeep: 6.0, year: 1980, homes: 16000, jobs: 800,
     power: -34, water: -44, pollution: 2, happiness: 12, income: 6,
     desc: 'A gated condominium estate: several towers around a pool and clubhouse. High land value.',
   },
@@ -84,7 +84,7 @@ export const BUILDINGS = {
   },
   power_station: {
     name: 'Power Station', cat: 'power', icon: '🏭', color: '#616161',
-    cost: 120, upkeep: 4.0, year: 1970, homes: 0, jobs: 150,
+    cost: 120, upkeep: 4.0, year: 1967, homes: 0, jobs: 150,
     power: 400, water: -8, pollution: 18, happiness: -5,
     desc: 'A large gas/oil power station. Powers a whole region, but pollutes heavily.',
   },
@@ -124,13 +124,13 @@ export const BUILDINGS = {
   },
   port: {
     name: 'Container Port', cat: 'industry', icon: '🚢', color: '#5a7a8c',
-    cost: 220, upkeep: 5.0, year: 1972, homes: 0, jobs: 5000,
+    cost: 220, upkeep: 5.0, year: 1965, homes: 0, jobs: 5000,
     power: -40, water: -10, pollution: 8, happiness: -1, income: 22,
     desc: 'A world-class transhipment hub. Enormous revenue and jobs — Singapore\'s lifeline.',
   },
   office: {
     name: 'Business District', cat: 'industry', icon: '🏦', color: '#4a6fa5',
-    cost: 200, upkeep: 4.0, year: 1985, homes: 0, jobs: 8000,
+    cost: 200, upkeep: 4.0, year: 1968, homes: 0, jobs: 8000,
     power: -35, water: -12, pollution: 2, happiness: 1, income: 18,
     desc: 'Finance and services in the CBD. High-value jobs and tax revenue.',
   },
@@ -169,7 +169,7 @@ export const BUILDINGS = {
 
   mall: {
     name: 'Shopping Mall', cat: 'industry', icon: '🛍️', color: '#d98fc0', customizable: true,
-    cost: 240, upkeep: 4.5, year: 1980, homes: 0, jobs: 5000,
+    cost: 240, upkeep: 4.5, year: 1971, homes: 0, jobs: 5000,
     power: -38, water: -20, pollution: 2, happiness: 10, income: 20,
     desc: 'A landmark retail mall. Jobs, tax revenue and a big happiness boost for shoppers.',
   },
@@ -203,13 +203,13 @@ export const BUILDINGS = {
   },
   ferry_terminal: {
     name: 'Ferry Terminal', cat: 'leisure', icon: '⛴️', color: '#5a8aa6',
-    cost: 130, upkeep: 3.0, year: 1970, homes: 0, jobs: 1400,
+    cost: 130, upkeep: 3.0, year: 1965, homes: 0, jobs: 1400,
     power: -16, water: -8, pollution: 2, happiness: 5, income: 10,
     desc: 'Passenger ferries to the islands and the region. Place on the coast for the boats to dock.',
   },
   marina: {
     name: 'Marina & Yachts', cat: 'leisure', icon: '⛵', color: '#7fb6d6',
-    cost: 200, upkeep: 4.0, year: 1985, homes: 0, jobs: 900,
+    cost: 200, upkeep: 4.0, year: 1972, homes: 0, jobs: 900,
     power: -18, water: -10, pollution: 1, happiness: 12, income: 14,
     desc: 'A luxury marina full of yachts and sailing boats. Big tourism and land-value boost.',
   },

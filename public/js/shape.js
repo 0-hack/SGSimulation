@@ -110,11 +110,11 @@ export function inReservoir(x, y, size) {
 export function riverPath(size) {
   const c = size / 2, k = size / 48;
   return [
-    { x: c - 4.0 * k, y: 12.0 * k, w: 2.0 * k },   // mouth / boat quay basin (opens to the sea)
-    { x: c - 4.5 * k, y: 15.0 * k, w: 1.3 * k },
-    { x: c - 5.5 * k, y: 18.0 * k, w: 1.1 * k },
-    { x: c - 7.0 * k, y: 20.0 * k, w: 1.0 * k },
-    { x: c - 9.0 * k, y: 21.0 * k, w: 0.9 * k },    // narrow inland reach (Robertson Quay)
+    { x: c - 4.0 * k, y: 12.2 * k, w: 0.85 * k },  // mouth / boat quay basin (opens to the sea)
+    { x: c - 4.4 * k, y: 15.0 * k, w: 0.52 * k },
+    { x: c - 5.3 * k, y: 18.0 * k, w: 0.40 * k },
+    { x: c - 6.8 * k, y: 20.0 * k, w: 0.34 * k },
+    { x: c - 9.0 * k, y: 21.0 * k, w: 0.28 * k },   // narrow inland reach (Robertson Quay)
   ];
 }
 export function inRiver(x, y, size) {
@@ -125,7 +125,8 @@ export function inRiver(x, y, size) {
     let t = ((x - a.x) * dx + (y - a.y) * dy) / len2;
     t = Math.max(0, Math.min(1, t));
     const px = a.x + t * dx, py = a.y + t * dy, w = a.w + (b.w - a.w) * t;
-    if (Math.hypot(x - px, y - py) < w) return true;
+    // small margin so the thin channel's cells are still protected from building
+    if (Math.hypot(x - px, y - py) < w + 0.4) return true;
   }
   return false;
 }

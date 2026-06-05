@@ -5,7 +5,7 @@
 // main.js expects from the old 2D view.
 import * as THREE from './vendor/three.module.js';
 import { BUILDINGS, GRID_SIZE, ROAD_TYPES } from './data.js';
-import { SG_OUTLINE, SG_ISLANDS, pointInPolygon, landMask, inReservoir, reservoirArea, inRiver } from './shape.js';
+import { SG_OUTLINE, SG_ISLANDS, pointInPolygon, landMask, inReservoir, reservoirArea, inRiver, riverPath } from './shape.js';
 
 const N = GRID_SIZE;
 const WORLD = N * 10;         // world units across the bounding box (TILE stays ~10)
@@ -289,34 +289,53 @@ export class Scene3D {
   // The Central Catchment: a protected reservoir lake (no building) ringed by
   // dense rainforest — the centre of 1965 Singapore.
   _buildCatchment() {
+    // Cell masks (grid-resolution) drive game logic — buildability, nature, etc.
     this.reserveMask = Array.from({ length: N }, () => Array(N).fill(false));
     this.riverMask = Array.from({ length: N }, () => Array(N).fill(false));
-    if (this.catchGroup) this.scene.remove(this.catchGroup);
-    this.catchGroup = new THREE.Group(); this.scene.add(this.catchGroup);
-    const v = [], idx = [], sand = [], sIdx = [];
-    const quad = (buf, bi, cx, cz, h, yy) => {
-      const n = buf.length / 3;
-      buf.push(cx - h, yy, cz - h, cx + h, yy, cz - h, cx + h, yy, cz + h, cx - h, yy, cz + h);
-      bi.push(n, n + 1, n + 2, n, n + 2, n + 3);
-    };
     for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
       if (!this.land[y][x]) continue;
-      const res = inReservoir(x, y, N), riv = inRiver(x, y, N);
-      if (!res && !riv) continue;
-      if (res) this.reserveMask[y][x] = true;
-      if (riv) this.riverMask[y][x] = true;
-      const c = cellToWorld(x, y);
-      quad(sand, sIdx, c.x, c.z, TILE / 2 + 1.2, 0.12);   // muddy/sandy shoreline ring
-      quad(v, idx, c.x, c.z, TILE / 2 + 0.4, 0.2);         // water surface
+      if (inReservoir(x, y, N)) this.reserveMask[y][x] = true;
+      if (inRiver(x, y, N)) this.riverMask[y][x] = true;
     }
-    const mk = (buf, bi, mat) => {
-      if (!buf.length) return;
+    // The water itself is drawn as SMOOTH shapes (independent of the cell grid)
+    // so reservoir lobes and the river read as real curves when seen from afar.
+    if (this.catchGroup) this.scene.remove(this.catchGroup);
+    this.catchGroup = new THREE.Group(); this.scene.add(this.catchGroup);
+    const sMat = toon(0x8aa15a, { side: THREE.DoubleSide });            // muddy/grassy bank
+    const wMat = new THREE.MeshToonMaterial({ color: 0x2f86c4, transparent: true, opacity: 0.95, side: THREE.DoubleSide, gradientMap: toonGradient() });
+
+    // Reservoir: overlapping discs (one per lobe) merge into a branching lake.
+    for (const l of reservoirArea(N).lobes) {
+      const c = cellToWorld(l.x, l.y), r = l.r * TILE;
+      const bank = new THREE.Mesh(new THREE.CircleGeometry(r + 3, 30), sMat);
+      bank.rotation.x = -Math.PI / 2; bank.position.set(c.x, 0.1, c.z); this.catchGroup.add(bank);
+      const water = new THREE.Mesh(new THREE.CircleGeometry(r, 30), wMat);
+      water.rotation.x = -Math.PI / 2; water.position.set(c.x, 0.18, c.z); this.catchGroup.add(water);
+    }
+
+    // River: a smooth ribbon swept along a Catmull-Rom curve through the path.
+    const rp = riverPath(N);
+    const ctrl = rp.map((p) => { const c = cellToWorld(p.x, p.y); return new THREE.Vector3(c.x, 0, c.z); });
+    const curve = new THREE.CatmullRomCurve3(ctrl, false, 'catmullrom', 0.5);
+    const STEPS = 64, samples = curve.getPoints(STEPS);
+    const ribbon = (extra, yy, mat) => {
+      const pos = [], idx = [];
+      for (let i = 0; i <= STEPS; i++) {
+        const f = (i / STEPS) * (rp.length - 1);
+        const i0 = Math.min(rp.length - 1, Math.floor(f)), i1 = Math.min(rp.length - 1, i0 + 1), tt = f - i0;
+        const hw = (rp[i0].w * (1 - tt) + rp[i1].w * tt) * TILE + extra;
+        const p = samples[i], a = samples[Math.max(0, i - 1)], b = samples[Math.min(STEPS, i + 1)];
+        let tx = b.x - a.x, tz = b.z - a.z; const tl = Math.hypot(tx, tz) || 1; tx /= tl; tz /= tl;
+        const nx = -tz, nz = tx;
+        pos.push(p.x + nx * hw, yy, p.z + nz * hw, p.x - nx * hw, yy, p.z - nz * hw);
+      }
+      for (let i = 0; i < STEPS; i++) { const a = i * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
       const g = new THREE.BufferGeometry();
-      g.setAttribute('position', new THREE.Float32BufferAttribute(buf, 3)); g.setIndex(bi); g.computeVertexNormals();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setIndex(idx); g.computeVertexNormals();
       const m = new THREE.Mesh(g, mat); m.receiveShadow = true; this.catchGroup.add(m);
     };
-    mk(sand, sIdx, toon(0x8aa15a, { side: THREE.DoubleSide }));
-    mk(v, idx, new THREE.MeshToonMaterial({ color: 0x2f86c4, transparent: true, opacity: 0.93, side: THREE.DoubleSide, gradientMap: toonGradient() }));
+    ribbon(2.4, 0.1, sMat);     // sandy/muddy bank
+    ribbon(0, 0.18, wMat);      // water surface
   }
 
   // Rural greenery scattered across the undeveloped island (the 1965 look),

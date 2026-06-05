@@ -5,10 +5,11 @@ in **1965** and grow the little red dot into a thriving nation — build housing
 power, water and industry; pass laws and policies; weather historical crises; and
 watch your society react in real time as the days, months and decades roll by.
 
-The nation is rendered in **3D as Singapore's island** (Three.js/WebGL): buildings
-**rise as they're constructed** and **crumble in a cloud of dust** when demolished,
-**traffic** drives the streets, and **natural disasters** — floods with rain, haze,
-recession tremors — play out as animations.
+The nation is rendered in **3D as Singapore's island** with a clean **cel-shaded /
+cartoon** look (Three.js/WebGL): buildings **rise as they're constructed** and
+**crumble in a cloud of dust** when demolished, **traffic** drives a clearly marked
+street grid (lane lines, zebra crossings, pavements & grass), and **natural disasters** —
+floods with rain, haze, recession tremors — play out as animations.
 
 Save your nation to a **centralised server** and share a link so other players can
 **visit your Singapore** and watch how you built it.

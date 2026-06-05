@@ -94,9 +94,7 @@ export class Scene3D {
 
     // Sea
     const seaGeo = new THREE.PlaneGeometry(WORLD * 4, WORLD * 4, 1, 1);
-    const seaMat = new THREE.MeshStandardMaterial({
-      color: 0x1e6fa0, transparent: true, opacity: 0.92, roughness: 0.25, metalness: 0.1,
-    });
+    const seaMat = new THREE.MeshToonMaterial({ color: 0x3aa0d8, transparent: true, opacity: 0.95, gradientMap: toonGradient() });
     const sea = new THREE.Mesh(seaGeo, seaMat);
     sea.rotation.x = -Math.PI / 2;
     sea.position.y = SEA_Y;
@@ -114,7 +112,7 @@ export class Scene3D {
     // Flood plane (hidden until a flood event)
     const flood = new THREE.Mesh(
       new THREE.PlaneGeometry(WORLD * 1.4, WORLD * 1.4),
-      new THREE.MeshStandardMaterial({ color: 0x2a86c4, transparent: true, opacity: 0.55, roughness: 0.2 }),
+      new THREE.MeshToonMaterial({ color: 0x2a86c4, transparent: true, opacity: 0.55, gradientMap: toonGradient() }),
     );
     flood.rotation.x = -Math.PI / 2;
     flood.position.y = SEA_Y;
@@ -136,7 +134,7 @@ export class Scene3D {
     geo.rotateX(-Math.PI / 2);   // lay flat; +Y(north) -> -Z
     geo.computeBoundingBox();
     geo.translate(0, -geo.boundingBox.max.y, 0); // align the (beveled) top surface to y = 0
-    const mat = new THREE.MeshStandardMaterial({ color: 0x6ab04c, roughness: 0.95, metalness: 0 });
+    const mat = new THREE.MeshToonMaterial({ color: 0x77c25a, gradientMap: toonGradient() }); // cartoon grass
     const land = new THREE.Mesh(geo, mat);
     land.receiveShadow = true;
     this.scene.add(land);
@@ -150,9 +148,11 @@ export class Scene3D {
     });
     const beachGeo = new THREE.ExtrudeGeometry(beachShape, { depth: 0.6, bevelEnabled: false });
     beachGeo.rotateX(-Math.PI / 2);
-    beachGeo.translate(0, -0.4, 0);
-    const beach = new THREE.Mesh(beachGeo, new THREE.MeshStandardMaterial({ color: 0xdcc89a, roughness: 1 }));
-    beach.scale.set(1.04, 1, 1.04);
+    beachGeo.computeBoundingBox();
+    // keep the sandy rim just BELOW the grass so roads/grass aren't covered
+    beachGeo.translate(0, -beachGeo.boundingBox.max.y - 0.12, 0);
+    const beach = new THREE.Mesh(beachGeo, new THREE.MeshToonMaterial({ color: 0xe6d6a6, gradientMap: toonGradient() }));
+    beach.scale.set(1.05, 1, 1.05);
     beach.receiveShadow = true;
     this.scene.add(beach);
 
@@ -196,29 +196,72 @@ export class Scene3D {
     this.roadNodes = [...adj.keys()].map((k) => k.split(',').map(Number));
   }
 
-  // Render asphalt + kerb strips along every road edge.
+  // Build a clearly-legible street surface: wide light PAVEMENT (footpath),
+  // a darker ROAD on top with dashed lane markings, and zebra crossings at
+  // intersections. Grass shows through wherever there's no road or building.
   _buildRoads() {
-    const kerb = [], kIdx = [], road = [], rIdx = [];
-    const strip = (verts, idx, ax, az, bx, bz, hw, y) => {
-      const dx = bx - ax, dz = bz - az, len = Math.hypot(dx, dz) || 1;
-      const px = (-dz / len) * hw, pz = (dx / len) * hw; // perpendicular * halfwidth
+    const buf = { pave: [[], []], road: [[], []], mark: [[], []] };
+    // push a flat quad (centre c, along dir u of length 2*hl, half-width hw)
+    const quad = (key, cx, cz, ux, uz, hl, hw, y) => {
+      const px = -uz * hw, pz = ux * hw;       // perpendicular
+      const ex = ux * hl, ez = uz * hl;        // along
+      const [verts, idx] = buf[key];
       const n = verts.length / 3;
-      verts.push(ax + px, y, az + pz, ax - px, y, az - pz, bx - px, y, bz - pz, bx + px, y, bz + pz);
+      verts.push(cx - ex + px, y, cz - ez + pz, cx - ex - px, y, cz - ez - pz,
+                 cx + ex - px, y, cz + ez - pz, cx + ex + px, y, cz + ez + pz);
       idx.push(n, n + 1, n + 2, n, n + 2, n + 3);
     };
+    const strip = (key, ax, az, bx, bz, hw, y) => {
+      const dx = bx - ax, dz = bz - az, len = Math.hypot(dx, dz) || 1;
+      quad(key, (ax + bx) / 2, (az + bz) / 2, dx / len, dz / len, len / 2, hw, y);
+    };
+
     for (const [[ai, aj], [bi, bj]] of this.roadEdges) {
       const a = cornerToWorld(ai, aj), b = cornerToWorld(bi, bj);
-      strip(kerb, kIdx, a.x, a.z, b.x, b.z, 1.6, 0.05);   // pavement
-      strip(road, rIdx, a.x, a.z, b.x, b.z, 1.0, 0.07);   // asphalt
+      const dx = b.x - a.x, dz = b.z - a.z, len = Math.hypot(dx, dz) || 1;
+      const ux = dx / len, uz = dz / len;
+      strip('pave', a.x, a.z, b.x, b.z, 1.5, 0.10);   // thin footpath kerb each side
+      strip('road', a.x, a.z, b.x, b.z, 1.15, 0.14);  // wide carriageway
+      // dashed centre line (bright)
+      const dashes = 4, span = len * 0.78, step = span / dashes;
+      for (let d = 0; d < dashes; d++) {
+        const t = -span / 2 + step * (d + 0.5);
+        quad('mark', a.x + ux * (len / 2) + ux * t, a.z + uz * (len / 2) + uz * t, ux, uz, 0.7, 0.08, 0.18);
+      }
     }
-    const mk = (verts, idx, color) => {
+
+    // zebra crossings on the road approaches at real intersections
+    for (const node of this.roadNodes) {
+      const key = node.join(',');
+      const nbrs = this.roadAdj.get(key) || [];
+      if (nbrs.length < 3) continue;            // only at junctions
+      const c = cornerToWorld(node[0], node[1]);
+      for (const nb of nbrs) {
+        const w = cornerToWorld(nb[0], nb[1]);
+        const dx = w.x - c.x, dz = w.z - c.z, len = Math.hypot(dx, dz) || 1;
+        const ux = dx / len, uz = dz / len;
+        const base = 1.9;                        // how far from the junction
+        for (let s = -2; s <= 2; s++) {          // 5 white stripes across the road
+          const cx = c.x + ux * base, cz = c.z + uz * base;
+          const ox = -uz * s * 0.42, oz = ux * s * 0.42;
+          quad('mark', cx + ox, cz + oz, ux, uz, 0.55, 0.16, 0.18);
+        }
+      }
+    }
+
+    const mk = (key, material) => {
+      const [verts, idx] = buf[key];
       const g = new THREE.BufferGeometry();
       g.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
       g.setIndex(idx); g.computeVertexNormals();
-      const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ color, roughness: 0.95 }));
-      m.receiveShadow = true; this.scene.add(m); return m;
+      const m = new THREE.Mesh(g, material); m.receiveShadow = true; this.scene.add(m); return m;
     };
-    this.roadMeshes = [mk(kerb, kIdx, 0xc9c3b4), mk(road, rIdx, 0x52575e)];
+    const DS = THREE.DoubleSide;
+    this.roadMeshes = [
+      mk('pave', toon(0xc4bda8, { side: DS })),   // pavement (light warm grey)
+      mk('road', toon(0x34373d, { side: DS })),   // asphalt (clearly dark)
+      mk('mark', toon(0xfaf3d8, { side: DS })),   // lane dashes + crossings (off-white)
+    ];
   }
 
   // Street furniture along the kerbs: lampposts (lit at night), trees, benches.
@@ -666,7 +709,7 @@ export class Scene3D {
 
   // ---- weather --------------------------------------------------------------
   _initWeather() {
-    this.cloudMat = new THREE.MeshStandardMaterial({ color: 0xffffff, transparent: true, opacity: 0, roughness: 1, depthWrite: false });
+    this.cloudMat = new THREE.MeshToonMaterial({ color: 0xffffff, transparent: true, opacity: 0, depthWrite: false, gradientMap: toonGradient() });
     for (let i = 0; i < 16; i++) {
       const cl = new THREE.Group();
       const n = 2 + Math.floor(Math.random() * 3);
@@ -889,6 +932,32 @@ function easeOutBack(t) {
 // Each returned Group sits on the ground (y=0) and grows upward.
 // ===========================================================================
 export const ALL_MATS = []; // every building material, for the night-glow pass
+
+// Cel-shading gradient ramp: a few hard luminance bands give the cartoon look
+// (and MeshToonMaterial is cheaper than PBR).
+let GRAD = null;
+export function toonGradient() {
+  if (!GRAD) {
+    const d = new Uint8Array([95, 160, 215, 255]);
+    GRAD = new THREE.DataTexture(d, d.length, 1, THREE.RedFormat);
+    GRAD.minFilter = GRAD.magFilter = THREE.NearestFilter; GRAD.needsUpdate = true;
+  }
+  return GRAD;
+}
+// Only pass options MeshToonMaterial understands (avoids console warnings).
+function toonOpts(opts = {}) {
+  const o = { gradientMap: toonGradient() };
+  if (opts.transparent) o.transparent = true;
+  if (opts.opacity != null) o.opacity = opts.opacity;
+  if (opts.side) o.side = opts.side;
+  if (opts.map) o.map = opts.map;
+  if (opts.emissiveMap) o.emissiveMap = opts.emissiveMap;
+  if (opts.depthWrite != null) o.depthWrite = opts.depthWrite;
+  return o;
+}
+// Un-registered toon material (ground/sea/markings — should not glow at night).
+function toon(color, opts = {}) { return new THREE.MeshToonMaterial({ color, ...toonOpts(opts) }); }
+
 function reg(m, glowK = 0.22) {
   m.emissive = new THREE.Color(0xffd9a0); m.emissiveIntensity = 0; m.userData.glowK = glowK;
   ALL_MATS.push(m); return m;
@@ -896,7 +965,7 @@ function reg(m, glowK = 0.22) {
 const MAT = new Map();
 function mat(color, opts = {}, glowK = 0.18) {
   const key = color + JSON.stringify(opts) + glowK;
-  if (!MAT.has(key)) MAT.set(key, reg(new THREE.MeshStandardMaterial({ color, roughness: 0.85, metalness: 0.04, ...opts }), glowK));
+  if (!MAT.has(key)) MAT.set(key, reg(new THREE.MeshToonMaterial({ color, ...toonOpts(opts) }), glowK));
   return MAT.get(key);
 }
 
@@ -943,9 +1012,8 @@ function facadeMat(style, repX, repY, opts = {}) {
     const { map, emap } = facadeTextures(style);
     const cm = map.clone(); cm.repeat.set(repX, repY); cm.needsUpdate = true;
     const ce = emap.clone(); ce.repeat.set(repX, repY); ce.needsUpdate = true;
-    FMAT.set(key, reg(new THREE.MeshStandardMaterial({
-      map: cm, emissiveMap: ce, emissive: 0xffe2a8, emissiveIntensity: 0,
-      roughness: style === 'glass' ? 0.25 : 0.7, metalness: style === 'glass' ? 0.5 : 0.1, ...opts,
+    FMAT.set(key, reg(new THREE.MeshToonMaterial({
+      map: cm, emissiveMap: ce, emissive: 0xffe2a8, emissiveIntensity: 0, gradientMap: toonGradient(),
     }), 1.0));
   }
   return FMAT.get(key);

@@ -29,9 +29,13 @@ Save your nation to a **centralised server** and share a link so other players c
   blocks, with lit windows at night.
 - **A clean, minimalist UI** with custom hand-drawn line icons and a warm light theme.
 - **A living, physically-sensible city.** A real street network runs *between* the
-  building plots; **distinct vehicles** (cars, taxis, motorbikes, lorries, buses) keep
-  to their lanes with car-following so they don't drive through each other, while
-  **distinct pedestrians** (men, women, children, the elderly) walk the footpaths.
+  building plots; **distinct vehicles** (cars, taxis, motorbikes, lorries, buses with
+  headlights/taillights) keep to their lanes with car-following so they don't drive
+  through each other, while **detailed pedestrians** (men, women, children, the elderly
+  with canes) walk the footpaths with swinging arms and legs — and pull out **umbrellas
+  when it rains**.
+- **Street furniture & harbour life** — lampposts that light up at night, roadside
+  trees and benches, and cargo ships & boats drifting on the sea.
 - **Zoom into any neighbourhood** down to street level and watch it live in real time;
   the world fades into a hazy horizon so you never see its edge.
 - **Weather** — sunny, cloudy, rain, windy and storms roll through with drifting clouds,

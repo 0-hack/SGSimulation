@@ -31,9 +31,9 @@ Save your nation to a **centralised server** and share a link so other players c
 - **A living, physically-sensible city.** A real street network runs *between* the
   building plots; **distinct vehicles** (cars, taxis, motorbikes, lorries, buses with
   headlights/taillights) keep to their lanes with car-following so they don't drive
-  through each other, while **detailed pedestrians** (men, women, children, the elderly
-  with canes) walk the footpaths with swinging arms and legs — and pull out **umbrellas
-  when it rains**.
+  through each other, while **detailed, jointed pedestrians** (men, women, children, the
+  elderly with canes) walk the footpaths with a proper bending-knee/elbow walk cycle,
+  faces, varied hairstyles and outfits — and pull out **umbrellas when it rains**.
 - **Street furniture & harbour life** — lampposts that light up at night, roadside
   trees and benches, and cargo ships & boats drifting on the sea.
 - **Zoom into any neighbourhood** down to street level and watch it live in real time;

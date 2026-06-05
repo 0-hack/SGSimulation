@@ -567,11 +567,25 @@ export class Scene3D {
     ag.mesh.rotation.y = Math.atan2(ux, uz);
     if (moving) { ag.phase += dt * ag.speed * ag.animK; }
     const ud = ag.mesh.userData;
-    if (ud.legs) {
-      const sw = Math.sin(ag.phase) * (moving ? 0.55 : 0.04);
-      ud.legs[0].rotation.x = sw; ud.legs[1].rotation.x = -sw;
-      if (ud.arms) { ud.arms[0].rotation.x = -sw * 0.8; ud.arms[1].rotation.x = sw * 0.8; }
-      ag.mesh.position.y = ag.yBase + Math.abs(Math.sin(ag.phase)) * 0.05 * (moving ? 1 : 0);
+    if (ud.upperLegs) {
+      const ph = ag.phase, m = moving ? 1 : 0, sc = ag.mesh.scale.x;
+      const s = Math.sin(ph), amp = 0.5 * m + 0.02;
+      // legs: hips swing, knees bend on the back-swing
+      ud.upperLegs[0].rotation.x = s * amp;
+      ud.upperLegs[1].rotation.x = -s * amp;
+      ud.lowerLegs[0].rotation.x = Math.max(0, Math.sin(ph - 1.1)) * 1.0 * m;
+      ud.lowerLegs[1].rotation.x = Math.max(0, Math.sin(ph + Math.PI - 1.1)) * 1.0 * m;
+      if (ud.umbrella.visible) {
+        // hold the umbrella up with the right arm
+        ud.upperArms[1].rotation.set(-2.5, 0, 0); ud.lowerArms[1].rotation.x = 0.4;
+        ud.upperArms[0].rotation.x = -s * amp * 0.7; ud.lowerArms[0].rotation.x = 0.2;
+      } else {
+        ud.upperArms[0].rotation.x = -s * amp * 0.75; ud.upperArms[1].rotation.x = s * amp * 0.75;
+        ud.lowerArms[0].rotation.x = 0.15 + Math.max(0, -s) * 0.4 * m;
+        ud.lowerArms[1].rotation.x = 0.15 + Math.max(0, s) * 0.4 * m;
+      }
+      ud.torso.position.y = (0.95) + Math.abs(Math.sin(ph)) * 0.03 * m; // gentle bob (local)
+      ag.mesh.position.y = ag.yBase + Math.abs(Math.sin(ph)) * 0.04 * m * sc;
     }
   }
 
@@ -624,7 +638,7 @@ export class Scene3D {
   _spawnPeople() {
     this.peopleOn = true;
     const nodes = this._roadNodesNear(this.cam.radius);
-    const count = Math.min(70, Math.max(14, Math.floor((this.state?.population || 0) / 8000)));
+    const count = Math.min(42, Math.max(12, Math.floor((this.state?.population || 0) / 12000)));
     while (this.people.length < count) {
       const kinds = ['man', 'woman', 'man', 'woman', 'child', 'elderly'];
       const kind = kinds[Math.floor(Math.random() * kinds.length)];
@@ -1198,73 +1212,125 @@ function makeBoat(cargo) {
 // People — distinct silhouettes: man, woman, child, elderly.
 // userData.legs are swung while walking.
 // ===========================================================================
-function capsule(r, len, material) { return new THREE.Mesh(new THREE.CapsuleGeometry(r, len, 4, 10), material); }
-function humanoid(o) {
+// Shared geometry (built once, reused by every person) so detail is cheap.
+let PGEO = null;
+function pgeo() {
+  if (PGEO) return PGEO;
+  const C = (r, l, rs = 8) => new THREE.CapsuleGeometry(r, l, 4, rs);
+  PGEO = {
+    hips: C(0.19, 0.14, 12), chest: C(0.205, 0.3, 12),
+    thigh: C(0.115, 0.4), shin: C(0.095, 0.38),
+    upperArm: C(0.082, 0.3), foreArm: C(0.072, 0.28),
+    hand: new THREE.SphereGeometry(0.085, 8, 6),
+    foot: new THREE.BoxGeometry(0.16, 0.11, 0.34),
+    neck: C(0.066, 0.05, 8),
+    head: new THREE.SphereGeometry(0.175, 18, 14),
+    eye: new THREE.SphereGeometry(0.026, 6, 5),
+    brow: new THREE.BoxGeometry(0.07, 0.018, 0.03),
+    hairCap: new THREE.SphereGeometry(0.19, 16, 13, 0, Math.PI * 2, 0, Math.PI * 0.62),
+    hairLong: new THREE.BoxGeometry(0.27, 0.36, 0.14),
+    bun: new THREE.SphereGeometry(0.1, 10, 8),
+    cap: new THREE.SphereGeometry(0.2, 14, 10, 0, Math.PI * 2, 0, Math.PI * 0.5),
+    capPeak: new THREE.BoxGeometry(0.26, 0.04, 0.18),
+    skirt: new THREE.ConeGeometry(0.4, 0.66, 16),
+    canopy: new THREE.ConeGeometry(0.55, 0.3, 14),
+    stick: new THREE.CylinderGeometry(0.02, 0.02, 0.82, 6),
+    cane: new THREE.CylinderGeometry(0.024, 0.024, 1.0, 6),
+  };
+  return PGEO;
+}
+function M(geo, material, x = 0, y = 0, z = 0) { const m = new THREE.Mesh(geo, material); m.position.set(x, y, z); return m; }
+
+// A jointed, stylised human: torso → head/arms, hips → legs; limbs bend at
+// knee/elbow during the walk cycle. Built at nominal size; scaled per person.
+function buildPerson(o) {
+  const G = pgeo();
   const g = new THREE.Group();
-  const sc = o.scale, hipY = 0.82 * sc;
-  const skin = mat(o.skin), shirt = mat(o.shirt), pants = mat(o.legColor), hairM = mat(o.hair);
-  const legs = [], arms = [];
-  // legs (pivot at the hip) with shoes
-  for (const sx of [-0.12, 0.12]) {
-    const grp = new THREE.Group(); grp.position.set(sx * sc, hipY, 0);
-    const L = capsule(0.105 * sc, 0.5 * sc, pants); L.position.y = -0.37 * sc; grp.add(L);
-    grp.add(partBox(0.17 * sc, 0.11 * sc, 0.32 * sc, mat(0x2e3238), 0, -0.66 * sc, 0.06 * sc));
-    g.add(grp); legs.push(grp);
+  const skin = mat(o.skin), shirt = mat(o.shirt), pantsM = mat(o.pants), hairM = mat(o.hairColor), shoe = mat(0x2c2f34);
+  const sleeveM = o.shortSleeve ? skin : shirt;
+  const hipY = 0.9;
+
+  g.add(M(G.hips, o.dress ? mat(o.dress) : pantsM, 0, hipY, 0));
+
+  const torso = new THREE.Group(); torso.position.y = hipY + 0.05; g.add(torso);
+  const chest = M(G.chest, shirt, 0, 0.28, 0); chest.scale.set(1.04, 1, 0.74); torso.add(chest);
+
+  // head
+  const headG = new THREE.Group(); headG.position.y = 0.6; torso.add(headG);
+  headG.add(M(G.neck, skin, 0, -0.02, 0));
+  headG.add(M(G.head, skin, 0, 0.2, 0));
+  headG.add(M(G.eye, mat(0x23272e), -0.07, 0.22, 0.155));
+  headG.add(M(G.eye, mat(0x23272e), 0.07, 0.22, 0.155));
+  headG.add(M(G.brow, hairM, -0.07, 0.27, 0.16));
+  headG.add(M(G.brow, hairM, 0.07, 0.27, 0.16));
+  if (o.hairStyle !== 'bald') {
+    if (o.hairStyle === 'cap') {
+      headG.add(M(G.cap, mat(o.capColor || 0xe74c3c), 0, 0.21, 0));
+      headG.add(M(G.capPeak, mat(o.capColor || 0xe74c3c), 0, 0.2, 0.18));
+    } else {
+      headG.add(M(G.hairCap, hairM, 0, 0.22, 0));
+      if (o.hairStyle === 'long') headG.add(M(G.hairLong, hairM, 0, 0.1, -0.13));
+      if (o.hairStyle === 'bun') headG.add(M(G.bun, hairM, 0, 0.4, -0.04));
+    }
   }
-  g.add(partBox(0.4 * sc, 0.2 * sc, 0.26 * sc, pants, 0, hipY + 0.02 * sc, 0)); // pelvis
-  if (o.dressColor) {
-    const sk = new THREE.Mesh(new THREE.ConeGeometry(0.36 * sc, 0.66 * sc, 14), mat(o.dressColor));
-    sk.position.y = hipY + 0.02 * sc; g.add(sk);
+
+  // arms (upper pivots at shoulder, lower at elbow)
+  const upperArms = [], lowerArms = [];
+  for (const sx of [-1, 1]) {
+    const up = new THREE.Group(); up.position.set(sx * 0.27, 0.48, 0); torso.add(up); upperArms.push(up);
+    up.add(M(G.upperArm, sleeveM, 0, -0.16, 0));
+    const low = new THREE.Group(); low.position.y = -0.32; up.add(low); lowerArms.push(low);
+    low.add(M(G.foreArm, skin, 0, -0.15, 0));
+    low.add(M(G.hand, skin, 0, -0.31, 0));
   }
-  // torso
-  const torso = capsule(0.2 * sc, 0.4 * sc, shirt); torso.position.y = hipY + 0.42 * sc; g.add(torso);
-  // arms (pivot at shoulder) with hands
-  const shoulderY = hipY + 0.74 * sc;
-  for (const sx of [-0.27, 0.27]) {
-    const grp = new THREE.Group(); grp.position.set(sx * sc, shoulderY, 0);
-    const A = capsule(0.072 * sc, 0.38 * sc, shirt); A.position.y = -0.27 * sc; grp.add(A);
-    const hand = new THREE.Mesh(new THREE.SphereGeometry(0.082 * sc, 8, 6), skin); hand.position.y = -0.5 * sc; grp.add(hand);
-    g.add(grp); arms.push(grp);
+
+  // legs (upper pivots at hip, lower at knee) with shoes
+  const upperLegs = [], lowerLegs = [];
+  for (const sx of [-1, 1]) {
+    const up = new THREE.Group(); up.position.set(sx * 0.12, hipY - 0.04, 0); g.add(up); upperLegs.push(up);
+    up.add(M(G.thigh, o.shorts ? skin : pantsM, 0, -0.21, 0));
+    const low = new THREE.Group(); low.position.y = -0.42; up.add(low); lowerLegs.push(low);
+    low.add(M(G.shin, o.shorts ? skin : pantsM, 0, -0.19, 0));
+    low.add(M(G.foot, shoe, 0, -0.36, 0.08));
   }
-  // neck + head + hair
-  const neck = capsule(0.07 * sc, 0.05 * sc, skin); neck.position.y = shoulderY + 0.08 * sc; g.add(neck);
-  const headY = shoulderY + 0.3 * sc;
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.17 * sc, 14, 12), skin); head.position.y = headY; g.add(head);
-  const hair = new THREE.Mesh(new THREE.SphereGeometry(0.182 * sc, 12, 10, 0, Math.PI * 2, 0, Math.PI * 0.6), hairM);
-  hair.position.y = headY + 0.02 * sc; g.add(hair);
-  if (o.longHair) g.add(partBox(0.27 * sc, 0.36 * sc, 0.14 * sc, hairM, 0, headY - 0.16 * sc, -0.13 * sc));
-  if (o.cane) g.add(cyl(0.028 * sc, 0.028 * sc, 0.95 * sc, mat(0x6b4f2a), 0.34 * sc, 0.47 * sc, 0.16 * sc));
-  // umbrella, hidden until it rains
+
+  if (o.dress) { const sk = M(G.skirt, mat(o.dress), 0, hipY - 0.1, 0); sk.scale.set(0.86, 1, 0.86); g.add(sk); }
+  if (o.cane) g.add(M(G.cane, mat(0x6b4f2a), 0.34, hipY - 0.5, 0.16));
+  if (o.lean) torso.rotation.x = o.lean;
+
   const umb = new THREE.Group();
-  const canopy = new THREE.Mesh(new THREE.ConeGeometry(0.52 * sc, 0.3 * sc, 12), mat(o.umb || 0x34495e));
-  canopy.position.y = shoulderY + 0.62 * sc; umb.add(canopy);
-  umb.add(cyl(0.022 * sc, 0.022 * sc, 0.78 * sc, mat(0x3a3a3a), 0.12 * sc, shoulderY + 0.2 * sc, 0.04 * sc));
+  umb.add(M(G.canopy, mat(o.umb), 0, hipY + 1.04, 0));
+  umb.add(M(G.stick, mat(0x33373d), 0.1, hipY + 0.66, 0.04));
   umb.visible = false; g.add(umb);
-  if (o.lean) g.rotation.x = o.lean;
+
+  g.scale.setScalar(o.scale);
   g.traverse((m) => { if (m.isMesh) { m.castShadow = false; m.receiveShadow = false; } });
-  g.userData = { legs, arms, umbrella: umb };
+  g.userData = { upperLegs, lowerLegs, upperArms, lowerArms, torso, umbrella: umb };
   return g;
 }
 function makePerson(kind) {
   const pick = (a) => a[Math.floor(Math.random() * a.length)];
-  const skins = [0xf3d0a8, 0xe6b487, 0xc68642, 0x9c6b3f, 0x7a4a24];
-  const shirts = [0xe74c3c, 0x2980d9, 0xf1c40f, 0x27ae60, 0x9b59b6, 0xecf0f1, 0xe67e22, 0x16a085, 0x34495e];
-  const pants = [0x2b3a55, 0x394b59, 0x6b4f3a, 0x555e66, 0x222831];
-  const umbs = [0x2c3e50, 0xe74c3c, 0x2980d9, 0x111317, 0x16a085];
-  let g;
+  const skins = [0xf6d3ab, 0xecb98c, 0xd29c6f, 0xb07a4a, 0x8a5a30, 0x6b431f];
+  const shirts = [0xe74c3c, 0x2980d9, 0xf1c40f, 0x27ae60, 0x9b59b6, 0xecf0f1, 0xe67e22, 0x16a085, 0x34495e, 0xe84393, 0x00bcd4];
+  const pants = [0x2b3a55, 0x394b59, 0x6b4f3a, 0x4a5560, 0x222831, 0x5d4037];
+  const hairs = [0x1b1410, 0x2a1d14, 0x4a3526, 0x6b5536, 0x8d6a3f];
+  const umbs = [0x2c3e50, 0xe74c3c, 0x2980d9, 0x111317, 0x16a085, 0xf1c40f];
+  const o = { skin: pick(skins), umb: pick(umbs), hairColor: pick(hairs), capColor: pick(shirts) };
   if (kind === 'woman') {
-    g = humanoid({ legColor: pick([0x7a5a52, 0x394b59]), shirt: pick([0xe84393, 0x9b59b6, 0xff7675, 0x00b894, 0xfd79a8]),
-      skin: pick(skins), hair: pick([0x2a1d14, 0x4a3526, 0x1a1410]), longHair: true,
-      dressColor: pick([0xe84393, 0x6c5ce7, 0xfdcb6e, 0xff7675, 0x00cec9]), umb: pick(umbs), scale: 0.95 });
+    Object.assign(o, { shirt: pick([0xe84393, 0x9b59b6, 0xff7675, 0x00b894, 0xfd79a8, 0x00bcd4]),
+      pants: pick(pants), hairStyle: pick(['long', 'long', 'bun']), shortSleeve: Math.random() < 0.6,
+      dress: Math.random() < 0.55 ? pick([0xe84393, 0x6c5ce7, 0xfdcb6e, 0xff7675, 0x00cec9, 0xffffff]) : null,
+      scale: 0.96 });
   } else if (kind === 'child') {
-    g = humanoid({ legColor: pick(pants), shirt: pick(shirts), skin: pick(skins), hair: pick([0x2a1d14, 0x4a3526]),
-      umb: pick(umbs), scale: 0.58 });
+    Object.assign(o, { shirt: pick(shirts), pants: pick(shirts), hairStyle: Math.random() < 0.25 ? 'cap' : pick(['short', 'long']),
+      shorts: true, shortSleeve: true, scale: 0.6 });
   } else if (kind === 'elderly') {
-    g = humanoid({ legColor: pick([0x555a60, 0x6b6f74]), shirt: pick([0x95a5a6, 0x7f8c8d, 0xb2bec3, 0xa29bfe, 0xbdc3c7]),
-      skin: pick(skins), hair: 0xe4e8ea, umb: pick(umbs), scale: 0.9, lean: 0.16, cane: true });
+    Object.assign(o, { shirt: pick([0x95a5a6, 0x7f8c8d, 0xb2bec3, 0xa29bfe, 0xbdc3c7, 0x8d9197]),
+      pants: pick([0x555a60, 0x6b6f74, 0x4a4f55]), hairColor: 0xe6e9ea, hairStyle: Math.random() < 0.4 ? 'bald' : 'short',
+      scale: 0.92, lean: 0.14, cane: true });
   } else {
-    g = humanoid({ legColor: pick(pants), shirt: pick(shirts), skin: pick(skins), hair: pick([0x2a1d14, 0x4a3526, 0x1a1410, 0x6b5536]),
-      umb: pick(umbs), scale: 1.0 });
+    Object.assign(o, { shirt: pick(shirts), pants: pick(pants), hairStyle: Math.random() < 0.18 ? 'cap' : 'short',
+      shortSleeve: Math.random() < 0.5, scale: 1.0 });
   }
-  return { mesh: g, len: 1.0 };
+  return { mesh: buildPerson(o), len: 1.0 };
 }

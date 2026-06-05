@@ -238,6 +238,7 @@ function onTileTap(x, y) {
   }
   if (b.selected) {
     if (!G.view.isLand(x, y)) { toast('You can only build on land. 🏝️'); return; }
+    if (G.view.isRoadAt(x, y)) { toast('There is a road here — you can\'t build on the road. 🛣️'); return; }
     if (canPlace(G.state, x, y, b.selected)) {
       const theme = BUILDINGS[b.selected].customizable ? b.theme : null;
       build(G.state, x, y, b.selected, theme);

@@ -79,12 +79,20 @@ function cellWorld(x, y) {
 // of kampongs dotted across an otherwise rural island. Players build out the rest.
 function seed1965(state) {
   const c = Math.floor(GRID_SIZE / 2);
-  // the colonial city/port sat on the SOUTH coast (low y), by the Singapore River.
+  // the colonial city/port sat on the SOUTH coast (low y), by the Singapore River,
+  // well clear of the Central Catchment reservoir to the north.
   let south = c;
   for (let y = 0; y < GRID_SIZE; y++) { if (isLandCell(c, y)) { south = y; break; } }
-  const ty = Math.min(c - 3, south + 4);   // a few cells inland from the south shore
+  const ty = Math.min(c - 6, south + 3);   // town centre, a few cells inland from the south shore
+  const onLand = (x, y) => isLandCell(x, y);
 
-  // a compact street grid of nodes over land cells around the anchor
+  // Streets run along whole cell-lines; buildings sit in the BLOCKS between them,
+  // so nothing is ever placed on top of a road. roadRows/roadCols are the lines
+  // reserved for streets; every other interior cell is buildable.
+  const roadRows = [ty - 2, ty + 1];           // two east–west streets
+  const roadCols = [c - 3, c, c + 3];          // three north–south streets
+  const isRoadLine = (x, y) => roadRows.includes(y) || roadCols.includes(x);
+
   const roads = state.roads, nodeAt = new Map();
   const node = (x, y) => {
     const k = x + ',' + y;
@@ -92,29 +100,33 @@ function seed1965(state) {
     const w = cellWorld(x, y); roads.nodes.push(w);
     const id = roads.nodes.length - 1; nodeAt.set(k, id); return id;
   };
-  const onLand = (x, y) => isLandCell(x, y);
-  for (let gx = -3; gx <= 3; gx++) {
-    for (let gy = -2; gy <= 2; gy++) {
-      const x = c + gx, y = ty + gy;
-      if (!onLand(x, y)) continue;
-      if (onLand(x + 1, y)) roads.edges.push({ a: node(x, y), b: node(x + 1, y), ctrl: null, type: 'street', lanes: 2, elevated: false });
-      if (onLand(x, y + 1)) roads.edges.push({ a: node(x, y), b: node(x, y + 1), ctrl: null, type: 'street', lanes: 2, elevated: false });
-    }
+  const edge = (x1, y1, x2, y2) => {
+    if (onLand(x1, y1) && onLand(x2, y2)) roads.edges.push({ a: node(x1, y1), b: node(x2, y2), ctrl: null, type: 'street', lanes: 2, elevated: false });
+  };
+  // east–west streets
+  for (const y of roadRows) for (let x = c - 3; x < c + 3; x++) edge(x, y, x + 1, y);
+  // north–south streets (the west one runs all the way down to the waterfront)
+  for (const x of roadCols) {
+    const y0 = x === c - 3 ? Math.min(ty - 2, south) : ty - 2;
+    for (let y = y0; y < ty + 1; y++) edge(x, y, x, y + 1);
   }
 
-  // the colonial city core: rows of shophouses along the streets, a British
-  // municipal building by the waterfront, with kampongs on the fringes.
-  const placeAt = (x, y, k) => { if (x >= 0 && y >= 0 && x < GRID_SIZE && y < GRID_SIZE && isLandCell(x, y) && !state.grid[y][x]) place(state, x, y, k); };
-  placeAt(c, ty, 'colonial');                                   // seat of administration
-  placeAt(c - 1, ty, 'shophouse'); placeAt(c + 1, ty, 'shophouse');
-  placeAt(c - 1, ty + 1, 'shophouse'); placeAt(c + 1, ty + 1, 'shophouse');
-  placeAt(c, ty + 1, 'kampong'); placeAt(c - 2, ty, 'kampong');
-  placeAt(c + 2, ty - 1, 'reservoir');
+  // Fill the blocks with the colonial city core: a British municipal building at
+  // the heart, rows of shophouses, kampongs on the fringe. Skips any road line.
+  const placeAt = (x, y, k) => {
+    if (x < 0 || y < 0 || x >= GRID_SIZE || y >= GRID_SIZE) return;
+    if (isRoadLine(x, y) || !onLand(x, y) || state.grid[y][x]) return;
+    place(state, x, y, k);
+  };
+  placeAt(c - 1, ty, 'colonial');                              // seat of administration
+  for (const [x, y] of [[c - 2, ty], [c + 1, ty], [c + 2, ty],
+    [c - 2, ty - 1], [c - 1, ty - 1], [c + 1, ty - 1], [c + 2, ty - 1]]) placeAt(x, y, 'shophouse');
+  placeAt(c - 1, ty + 2, 'kampong'); placeAt(c + 1, ty + 2, 'kampong');
   // scatter rural kampongs around the island
   let placed = 0;
   for (let tries = 0; tries < 400 && placed < 6; tries++) {
     const x = Math.floor(Math.random() * GRID_SIZE), y = Math.floor(Math.random() * GRID_SIZE);
-    if (isLandCell(x, y) && !state.grid[y][x] && Math.hypot(x - c, y - ty) > 6) { place(state, x, y, 'kampong'); placed++; }
+    if (isLandCell(x, y) && !state.grid[y][x] && !isRoadLine(x, y) && Math.hypot(x - c, y - ty) > 6) { place(state, x, y, 'kampong'); placed++; }
   }
 }
 

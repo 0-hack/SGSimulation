@@ -23,6 +23,13 @@ function cellToWorld(gx, gy) {
 function cornerToWorld(i, j) {
   return { x: (i / N - 0.5) * WORLD, z: (0.5 - j / N) * WORLD };
 }
+// shortest distance from point (px,pz) to segment (ax,az)-(bx,bz)
+function segPointDist(px, pz, ax, az, bx, bz) {
+  const dx = bx - ax, dz = bz - az, len2 = dx * dx + dz * dz || 1e-9;
+  let t = ((px - ax) * dx + (pz - az) * dz) / len2;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(px - (ax + t * dx), pz - (az + t * dz));
+}
 
 export class Scene3D {
   constructor(canvas, { onTileTap, onGroundTap } = {}) {
@@ -476,6 +483,19 @@ export class Scene3D {
     const gx = Math.floor((wx / WORLD + 0.5) * N), gy = Math.floor((0.5 - wz / WORLD) * N);
     return !!(this.reserveMask && this.reserveMask[gy] && this.reserveMask[gy][gx]);
   }
+  // Is grid cell (gx,gy) covered by a freeform road? (blocks building on roads)
+  isRoadAt(gx, gy) {
+    const c = cellToWorld(gx, gy);
+    for (let e = 0; e < this.edgePts.length; e++) {
+      const pts = this.edgePts[e]; if (!pts || pts.length < 2) continue;
+      const T = ROAD_TYPES[this.edgeMeta[e]?.type] || ROAD_TYPES.street;
+      const margin = T.width / 2 + 2.6;          // carriageway + footpath clearance
+      for (let i = 0; i < pts.length - 1; i++) {
+        if (segPointDist(c.x, c.z, pts[i].x, pts[i].z, pts[i + 1].x, pts[i + 1].z) < margin) return true;
+      }
+    }
+    return false;
+  }
   // Walkable = on land and not occupied by a building (i.e. a street/open space).
   _walkable(x, y) { return this.isLand(x, y) && !(this.state?.grid?.[y]?.[x]); }
 
@@ -765,7 +785,10 @@ export class Scene3D {
   }
   _spawnPeople() {
     this.peopleOn = true;
-    const list = this._edgesNear(this.cam.radius, true);
+    // prefer footpaths near the camera; if it's over open country, fall back to
+    // the nearest roads so the streets that DO exist still feel alive.
+    let list = this._edgesNear(this.cam.radius, true);
+    if (!list.length) list = this._edgesNear(Math.max(this.cam.radius * 2.6, 140), true);
     if (!list.length) return;
     const count = Math.min(42, Math.max(12, Math.floor((this.state?.population || 0) / 12000)));
     while (this.people.length < count) {
@@ -1432,29 +1455,39 @@ export function makeBuilding(key, theme) {
     } else if (key === 'shophouse') {
       lawn(g, 9, 9, 0x9a9078);                                // packed-earth lane out front
       const pastels = [0xe8b04b, 0xd9694f, 0x6fae9e, 0xe2cd7a, 0xc97f9c, 0x7fa8c9, 0xe7e0cf];
-      const units = 4, uw = 2.0, depth = 4.2, x0 = -((units - 1) * uw) / 2;
+      const units = 4, uw = 2.05, depth = 4.6, body = 4.2, fz = depth / 2;  // facade faces +z (the street)
+      const x0 = -((units - 1) * uw) / 2;
+      const signc = [0xc0392b, 0x2c3e8f, 0x2f7d3a];
       for (let i = 0; i < units; i++) {
         const ux = x0 + i * uw;
         const wallc = tint != null ? tint : pastels[(i * 3 + 1) % pastels.length];
-        g.add(partBox(uw - 0.08, 4.4, depth, mat(wallc), ux, 2.2, 0));                       // two-storey body
-        g.add(partBox(uw - 0.5, 1.9, 0.2, mat(0x4a3b30), ux, 0.95, depth / 2 + 0.02));       // dark shopfront
-        const aw = new THREE.Mesh(new THREE.BoxGeometry(uw - 0.12, 0.1, 1.0), mat(i % 2 ? 0xb5402f : 0x35613f));
-        aw.position.set(ux, 1.98, depth / 2 + 0.45); aw.rotation.x = 0.2; aw.castShadow = true; g.add(aw); // awning over five-foot-way
-        g.add(cyl(0.1, 0.1, 1.95, 0xe8e2d2, ux - (uw - 0.6) / 2, 0.97, depth / 2 + 0.74));   // verandah columns
-        g.add(cyl(0.1, 0.1, 1.95, 0xe8e2d2, ux + (uw - 0.6) / 2, 0.97, depth / 2 + 0.74));
-        for (const sx of [-0.42, 0.42]) {                                                     // upper shuttered windows
-          g.add(partBox(0.34, 0.95, 0.06, mat(0x355a4a), ux + sx, 2.95, depth / 2 + 0.02));   // window
-          g.add(partBox(0.12, 0.95, 0.1, mat(0xede6d2), ux + sx - 0.24, 2.95, depth / 2 + 0.03)); // shutter
-          g.add(partBox(0.12, 0.95, 0.1, mat(0xede6d2), ux + sx + 0.24, 2.95, depth / 2 + 0.03));
+        g.add(partBox(uw - 0.06, body, depth, mat(wallc), ux, body / 2, 0));                  // two-storey body
+        g.add(partBox(uw - 0.16, 0.18, depth, mat(0xefe9da), ux, 2.05, 0));                   // floor string-course
+        g.add(partBox(uw - 0.16, 0.2, 0.1, mat(0xefe9da), ux, body - 0.05, fz + 0.01));       // cornice
+        // ground-floor shopfront, recessed under a five-foot-way verandah
+        g.add(partBox(uw - 0.4, 1.7, 0.16, mat(0x3f3128), ux, 0.95, fz - 0.5));               // dark shopfront
+        g.add(partBox(uw - 0.06, 0.16, 1.0, mat(i % 2 ? 0xb5402f : 0x35613f), ux, 1.92, fz + 0.46)); // flat awning
+        for (const sx of [-1, 1])
+          g.add(cyl(0.1, 0.1, 1.9, 0xe8e2d2, ux + sx * (uw / 2 - 0.16), 0.95, fz + 0.92));    // verandah columns
+        // upper-floor pair of louvered, shuttered windows
+        for (const sx of [-0.44, 0.44]) {
+          g.add(partBox(0.42, 1.0, 0.06, mat(0x32584a), ux + sx, 3.0, fz + 0.02));            // window
+          g.add(partBox(0.13, 1.0, 0.08, mat(0xece4cf), ux + sx - 0.27, 3.0, fz + 0.05));     // shutter
+          g.add(partBox(0.13, 1.0, 0.08, mat(0xece4cf), ux + sx + 0.27, 3.0, fz + 0.05));
         }
         if (i % 2 === 0)                                                                       // hanging vertical signboard
-          g.add(partBox(0.16, 1.4, 0.5, mat([0xc0392b, 0x2c3e8f, 0x2f7d3a][i % 3]), ux + (uw / 2 - 0.12), 2.4, depth / 2 + 0.22));
+          g.add(partBox(0.14, 1.3, 0.45, mat(signc[i % 3]), ux + (uw / 2 - 0.1), 2.5, fz + 0.18));
       }
-      const rw = units * uw + 0.2;                                                             // continuous clay-tile gable
-      for (const s of [-1, 1]) {
-        const slope = new THREE.Mesh(new THREE.BoxGeometry(rw, 0.12, depth * 0.62), mat(0xb15a3c));
-        slope.position.set(0, 4.86, s * depth * 0.16); slope.rotation.x = s * 0.5; slope.castShadow = true; g.add(slope);
+      // a single, correctly-pitched clay-tile gable across the whole terrace
+      const rw = units * uw + 0.25, rh = 1.15, halfD = depth / 2 + 0.1;
+      const slopeLen = Math.hypot(halfD, rh), ang = Math.atan2(rh, halfD);
+      for (const s of [1, -1]) {
+        const slope = new THREE.Mesh(new THREE.BoxGeometry(rw, 0.14, slopeLen), mat(0xb15a3c));
+        slope.position.set(0, body + rh / 2, s * halfD / 2); slope.rotation.x = -s * ang; slope.castShadow = true; g.add(slope);
       }
+      g.add(partBox(rw, 0.2, 0.2, mat(0x8f4630), 0, body + rh, 0));                            // ridge cap
+      for (const sx of [-1, 1])                                                                // gable end walls
+        g.add(partBox(0.12, rh, depth, mat(0xd8cdb6), sx * rw / 2, body + rh / 2, 0));
     } else {
       lawn(g, 9, 9);
       const topt = tint != null ? { tint } : undefined;

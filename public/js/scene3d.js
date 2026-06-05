@@ -5,7 +5,7 @@
 // main.js expects from the old 2D view.
 import * as THREE from './vendor/three.module.js';
 import { BUILDINGS, GRID_SIZE, ROAD_TYPES } from './data.js';
-import { SG_OUTLINE, SG_ISLANDS, pointInPolygon, landMask, inReservoir, reservoirArea, inRiver, riverPath } from './shape.js';
+import { SG_OUTLINE, SG_ISLANDS, pointInPolygon, landMask, inReservoir, reservoirArea, inRiver, reservoirBranches, riverBranches } from './shape.js';
 
 const N = GRID_SIZE;
 const WORLD = N * 10;         // world units across the bounding box (TILE stays ~10)
@@ -297,45 +297,39 @@ export class Scene3D {
       if (inReservoir(x, y, N)) this.reserveMask[y][x] = true;
       if (inRiver(x, y, N)) this.riverMask[y][x] = true;
     }
-    // The water itself is drawn as SMOOTH shapes (independent of the cell grid)
-    // so reservoir lobes and the river read as real curves when seen from afar.
+    // The water itself is drawn as SMOOTH, slim, branching ribbons (independent
+    // of the cell grid) so the reservoirs and river read as real dendritic
+    // shapes when seen from afar.
     if (this.catchGroup) this.scene.remove(this.catchGroup);
     this.catchGroup = new THREE.Group(); this.scene.add(this.catchGroup);
     const sMat = toon(0x8aa15a, { side: THREE.DoubleSide });            // muddy/grassy bank
     const wMat = new THREE.MeshToonMaterial({ color: 0x2f86c4, transparent: true, opacity: 0.95, side: THREE.DoubleSide, gradientMap: toonGradient() });
+    const branches = [...reservoirBranches(N), ...riverBranches(N)];
+    for (const br of branches) this._waterRibbon(br, 2.0, 0.1, sMat);   // banks first (lower)
+    for (const br of branches) this._waterRibbon(br, 0, 0.18, wMat);    // water on top
+  }
 
-    // Reservoir: overlapping discs (one per lobe) merge into a branching lake.
-    for (const l of reservoirArea(N).lobes) {
-      const c = cellToWorld(l.x, l.y), r = l.r * TILE;
-      const bank = new THREE.Mesh(new THREE.CircleGeometry(r + 3, 30), sMat);
-      bank.rotation.x = -Math.PI / 2; bank.position.set(c.x, 0.1, c.z); this.catchGroup.add(bank);
-      const water = new THREE.Mesh(new THREE.CircleGeometry(r, 30), wMat);
-      water.rotation.x = -Math.PI / 2; water.position.set(c.x, 0.18, c.z); this.catchGroup.add(water);
-    }
-
-    // River: a smooth ribbon swept along a Catmull-Rom curve through the path.
-    const rp = riverPath(N);
-    const ctrl = rp.map((p) => { const c = cellToWorld(p.x, p.y); return new THREE.Vector3(c.x, 0, c.z); });
+  // Build one smooth water ribbon from a branch (polyline of {x,y,w} cell coords),
+  // swept along a Catmull-Rom curve. `extra` widens it (world units) for banks.
+  _waterRibbon(pts, extra, yy, mat) {
+    if (!pts || pts.length < 2) return;
+    const ctrl = pts.map((p) => { const c = cellToWorld(p.x, p.y); return new THREE.Vector3(c.x, 0, c.z); });
     const curve = new THREE.CatmullRomCurve3(ctrl, false, 'catmullrom', 0.5);
-    const STEPS = 64, samples = curve.getPoints(STEPS);
-    const ribbon = (extra, yy, mat) => {
-      const pos = [], idx = [];
-      for (let i = 0; i <= STEPS; i++) {
-        const f = (i / STEPS) * (rp.length - 1);
-        const i0 = Math.min(rp.length - 1, Math.floor(f)), i1 = Math.min(rp.length - 1, i0 + 1), tt = f - i0;
-        const hw = (rp[i0].w * (1 - tt) + rp[i1].w * tt) * TILE + extra;
-        const p = samples[i], a = samples[Math.max(0, i - 1)], b = samples[Math.min(STEPS, i + 1)];
-        let tx = b.x - a.x, tz = b.z - a.z; const tl = Math.hypot(tx, tz) || 1; tx /= tl; tz /= tl;
-        const nx = -tz, nz = tx;
-        pos.push(p.x + nx * hw, yy, p.z + nz * hw, p.x - nx * hw, yy, p.z - nz * hw);
-      }
-      for (let i = 0; i < STEPS; i++) { const a = i * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
-      const g = new THREE.BufferGeometry();
-      g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setIndex(idx); g.computeVertexNormals();
-      const m = new THREE.Mesh(g, mat); m.receiveShadow = true; this.catchGroup.add(m);
-    };
-    ribbon(2.4, 0.1, sMat);     // sandy/muddy bank
-    ribbon(0, 0.18, wMat);      // water surface
+    const STEPS = Math.max(10, (pts.length - 1) * 14), samples = curve.getPoints(STEPS);
+    const pos = [], idx = [];
+    for (let i = 0; i <= STEPS; i++) {
+      const f = (i / STEPS) * (pts.length - 1);
+      const i0 = Math.min(pts.length - 1, Math.floor(f)), i1 = Math.min(pts.length - 1, i0 + 1), tt = f - i0;
+      const hw = (pts[i0].w * (1 - tt) + pts[i1].w * tt) * TILE + extra;
+      const p = samples[i], a = samples[Math.max(0, i - 1)], b = samples[Math.min(STEPS, i + 1)];
+      let tx = b.x - a.x, tz = b.z - a.z; const tl = Math.hypot(tx, tz) || 1; tx /= tl; tz /= tl;
+      const nx = -tz, nz = tx;
+      pos.push(p.x + nx * hw, yy, p.z + nz * hw, p.x - nx * hw, yy, p.z - nz * hw);
+    }
+    for (let i = 0; i < STEPS; i++) { const a = i * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setIndex(idx); g.computeVertexNormals();
+    const m = new THREE.Mesh(g, mat); m.receiveShadow = true; this.catchGroup.add(m);
   }
 
   // Rural greenery scattered across the undeveloped island (the 1965 look),

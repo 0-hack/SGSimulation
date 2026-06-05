@@ -82,52 +82,64 @@ export function landMask(size) {
   return mask;
 }
 
-// The Central Catchment reservoirs (MacRitchie / Upper & Lower Peirce / Seletar)
-// — a protected water body north of the island centre. Modelled as several
-// overlapping lobes so it reads as a branching reservoir, not a round pond.
-// Shared by engine + renderer.
-export function reservoirArea(size) {
-  const cx = size / 2, cy = size / 2 + size * 0.055;
-  const lobes = [
-    [0.000, 0.000, 0.060],   // MacRitchie (central)
-    [-0.075, 0.045, 0.045],  // Upper Peirce (north-west arm)
-    [0.015, 0.078, 0.050],   // Lower Peirce / Seletar (north arm)
-    [0.078, 0.012, 0.042],   // eastern arm
-    [-0.118, -0.004, 0.038], // western arm
-    [0.046, -0.055, 0.034],  // southern finger
-  ].map(([dx, dy, r]) => ({ x: cx + dx * size, y: cy + dy * size, r: r * size }));
-  return { cx, cy, forestR: size * 0.22, lobes };
-}
-export function inReservoir(x, y, size) {
-  if (!pointInPolygon((x + 0.5) / size, (y + 0.5) / size)) return false;
-  for (const l of reservoirArea(size).lobes) if (Math.hypot(x - l.x, y - l.y) < l.r) return true;
+// Distance test shared by the water bodies: is (x,y) within (local width + margin)
+// of any segment of any branch? Branches are polylines of {x, y, w} cell coords.
+function nearBranches(x, y, branches, margin) {
+  for (const br of branches) {
+    for (let i = 0; i < br.length - 1; i++) {
+      const a = br[i], b = br[i + 1];
+      const dx = b.x - a.x, dy = b.y - a.y, len2 = dx * dx + dy * dy || 1e-9;
+      let t = ((x - a.x) * dx + (y - a.y) * dy) / len2;
+      t = Math.max(0, Math.min(1, t));
+      const px = a.x + t * dx, py = a.y + t * dy, w = a.w + (b.w - a.w) * t;
+      if (Math.hypot(x - px, y - py) < w + margin) return true;
+    }
+  }
   return false;
 }
 
-// The Singapore River: a tidal channel winding inland from the south coast,
-// just west of the colonial city. A polyline of {x, y (cell coords), w (half-
-// width in cells)} that tapers from a wide mouth/basin to a narrow inland reach.
-export function riverPath(size) {
-  const c = size / 2, k = size / 48;
+// The Central Catchment reservoirs (MacRitchie / Upper & Lower Peirce / Seletar)
+// — slim, dendritic water bodies north of the island centre. Each is a set of
+// branches (polylines of {x, y (cells), w (half-width cells)}) that fork like
+// the real reservoirs, rather than round ponds. Shared by engine + renderer.
+export function reservoirArea(size) {
+  return { cx: size / 2, cy: size / 2 + size * 0.055, forestR: size * 0.22 };
+}
+export function reservoirBranches(size) {
+  const k = size / 48;
+  const P = (x, y, w) => ({ x: x * k, y: y * k, w: w * k });
   return [
-    { x: c - 4.0 * k, y: 12.2 * k, w: 0.85 * k },  // mouth / boat quay basin (opens to the sea)
-    { x: c - 4.4 * k, y: 15.0 * k, w: 0.52 * k },
-    { x: c - 5.3 * k, y: 18.0 * k, w: 0.40 * k },
-    { x: c - 6.8 * k, y: 20.0 * k, w: 0.34 * k },
-    { x: c - 9.0 * k, y: 21.0 * k, w: 0.28 * k },   // narrow inland reach (Robertson Quay)
+    // MacRitchie (central) — a forking dendrite
+    [P(24.0, 23.5, 0.40), P(24.2, 24.8, 0.55), P(24.0, 26.0, 0.50), P(23.5, 27.0, 0.40)],
+    [P(24.0, 26.0, 0.45), P(25.5, 25.8, 0.40), P(26.6, 25.2, 0.30)],
+    [P(24.2, 24.8, 0.40), P(22.8, 24.6, 0.34), P(21.8, 24.1, 0.26)],
+    // Peirce (north-west) — small dendrite
+    [P(22.0, 27.6, 0.34), P(21.0, 28.6, 0.46), P(20.4, 29.6, 0.40), P(20.0, 30.6, 0.28)],
+    [P(21.0, 28.6, 0.34), P(19.8, 28.9, 0.30), P(18.9, 29.3, 0.24)],
+    // Seletar (north-east) — small dendrite
+    [P(25.6, 27.6, 0.34), P(26.6, 28.6, 0.46), P(27.0, 29.9, 0.40), P(27.3, 31.0, 0.28)],
+    [P(26.6, 28.6, 0.30), P(27.8, 28.3, 0.30), P(28.6, 27.9, 0.24)],
+  ];
+}
+export function inReservoir(x, y, size) {
+  return pointInPolygon((x + 0.5) / size, (y + 0.5) / size) && nearBranches(x, y, reservoirBranches(size), 0.3);
+}
+
+// The Singapore River: a slim tidal channel winding inland from the south coast
+// just west of the colonial city, with a couple of canal tributaries branching
+// off. Same {x, y, w} branch format as the reservoirs.
+export function riverBranches(size) {
+  const k = size / 48, c = size / 2;
+  const P = (xc, y, w) => ({ x: c + xc * k, y: y * k, w: w * k }); // xc relative to centre (cells)
+  return [
+    // main river — winding inland from the mouth/quay basin
+    [P(-4.0, 12.2, 0.80), P(-4.4, 15.0, 0.48), P(-5.3, 18.0, 0.38), P(-6.8, 20.0, 0.32), P(-9.0, 21.0, 0.26)],
+    // canal tributaries branching off
+    [P(-6.8, 20.0, 0.28), P(-7.6, 19.0, 0.22), P(-8.4, 18.2, 0.18)],
+    [P(-5.3, 18.0, 0.28), P(-6.1, 16.8, 0.22), P(-6.7, 15.7, 0.18)],
   ];
 }
 export function inRiver(x, y, size) {
-  const pts = riverPath(size);
-  for (let i = 0; i < pts.length - 1; i++) {
-    const a = pts[i], b = pts[i + 1];
-    const dx = b.x - a.x, dy = b.y - a.y, len2 = dx * dx + dy * dy || 1e-9;
-    let t = ((x - a.x) * dx + (y - a.y) * dy) / len2;
-    t = Math.max(0, Math.min(1, t));
-    const px = a.x + t * dx, py = a.y + t * dy, w = a.w + (b.w - a.w) * t;
-    // small margin so the thin channel's cells are still protected from building
-    if (Math.hypot(x - px, y - py) < w + 0.4) return true;
-  }
-  return false;
+  return nearBranches(x, y, riverBranches(size), 0.4);
 }
 

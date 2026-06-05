@@ -5,7 +5,7 @@
 // main.js expects from the old 2D view.
 import * as THREE from './vendor/three.module.js';
 import { BUILDINGS, GRID_SIZE, ROAD_TYPES } from './data.js';
-import { SG_OUTLINE, pointInPolygon, landMask, inReservoir, reservoirArea } from './shape.js';
+import { SG_OUTLINE, SG_ISLANDS, pointInPolygon, landMask, inReservoir, reservoirArea } from './shape.js';
 
 const N = GRID_SIZE;
 const WORLD = N * 10;         // world units across the bounding box (TILE stays ~10)
@@ -134,39 +134,9 @@ export class Scene3D {
   }
 
   _buildIsland() {
-    // Build a THREE.Shape from the normalised outline, scaled to world units.
-    const shape = new THREE.Shape();
-    SG_OUTLINE.forEach(([nx, ny], i) => {
-      const x = (nx - 0.5) * WORLD;
-      const y = (ny - 0.5) * WORLD; // becomes -Z after rotation (north = far)
-      i === 0 ? shape.moveTo(x, y) : shape.lineTo(x, y);
-    });
-    const depth = 8;
-    const geo = new THREE.ExtrudeGeometry(shape, { depth, bevelEnabled: true, bevelThickness: 1.5, bevelSize: 1.5, bevelSegments: 2 });
-    geo.rotateX(-Math.PI / 2);   // lay flat; +Y(north) -> -Z
-    geo.computeBoundingBox();
-    geo.translate(0, -geo.boundingBox.max.y, 0); // align the (beveled) top surface to y = 0
-    const mat = new THREE.MeshToonMaterial({ color: 0x77c25a, gradientMap: toonGradient() }); // cartoon grass
-    const land = new THREE.Mesh(geo, mat);
-    land.receiveShadow = true;
-    this.scene.add(land);
-    this.island = land;
-
-    // A thin sandy "beach" skirt just inside the coast.
-    const beachShape = new THREE.Shape();
-    SG_OUTLINE.forEach(([nx, ny], i) => {
-      const x = (nx - 0.5) * WORLD, y = (ny - 0.5) * WORLD;
-      i === 0 ? beachShape.moveTo(x, y) : beachShape.lineTo(x, y);
-    });
-    const beachGeo = new THREE.ExtrudeGeometry(beachShape, { depth: 0.6, bevelEnabled: false });
-    beachGeo.rotateX(-Math.PI / 2);
-    beachGeo.computeBoundingBox();
-    // keep the sandy rim just BELOW the grass so roads/grass aren't covered
-    beachGeo.translate(0, -beachGeo.boundingBox.max.y - 0.12, 0);
-    const beach = new THREE.Mesh(beachGeo, new THREE.MeshToonMaterial({ color: 0xe6d6a6, gradientMap: toonGradient() }));
-    beach.scale.set(1.05, 1, 1.05);
-    beach.receiveShadow = true;
-    this.scene.add(beach);
+    // Main island, then the smaller outlying islands (decorative).
+    this._landmass(SG_OUTLINE, { depth: 8, bevel: 1.5, beachScale: 1.05, main: true });
+    for (const poly of SG_ISLANDS) this._landmass(poly, { depth: 5, bevel: 1.0, beachScale: 1.12, palms: true });
 
     // Invisible pick plane at ground level for raycasting taps.
     this.pickPlane = new THREE.Mesh(
@@ -176,6 +146,46 @@ export class Scene3D {
     this.pickPlane.rotation.x = -Math.PI / 2;
     this.scene.add(this.pickPlane);
     this.raycaster = new THREE.Raycaster();
+  }
+
+  // Build one landmass (grass + sandy beach skirt) from a normalised polygon.
+  _landmass(poly, { depth = 8, bevel = 1.5, beachScale = 1.05, main = false, palms = false } = {}) {
+    const toShape = () => {
+      const s = new THREE.Shape();
+      poly.forEach(([nx, ny], i) => {
+        const x = (nx - 0.5) * WORLD, y = (ny - 0.5) * WORLD; // +Y(north) -> -Z after rotation
+        i === 0 ? s.moveTo(x, y) : s.lineTo(x, y);
+      });
+      return s;
+    };
+    const geo = new THREE.ExtrudeGeometry(toShape(), { depth, bevelEnabled: true, bevelThickness: bevel, bevelSize: bevel, bevelSegments: 2 });
+    geo.rotateX(-Math.PI / 2);
+    geo.computeBoundingBox();
+    geo.translate(0, -geo.boundingBox.max.y, 0); // align the (beveled) top surface to y = 0
+    const land = new THREE.Mesh(geo, new THREE.MeshToonMaterial({ color: 0x77c25a, gradientMap: toonGradient() }));
+    land.receiveShadow = true; this.scene.add(land);
+    if (main) this.island = land;
+
+    // a thin sandy beach skirt just below the grass so roads/grass aren't covered
+    const beachGeo = new THREE.ExtrudeGeometry(toShape(), { depth: 0.6, bevelEnabled: false });
+    beachGeo.rotateX(-Math.PI / 2); beachGeo.computeBoundingBox();
+    beachGeo.translate(0, -beachGeo.boundingBox.max.y - 0.12, 0);
+    const beach = new THREE.Mesh(beachGeo, new THREE.MeshToonMaterial({ color: 0xe6d6a6, gradientMap: toonGradient() }));
+    beach.scale.set(beachScale, 1, beachScale); beach.receiveShadow = true; this.scene.add(beach);
+
+    if (palms) {
+      let cx = 0, cz = 0;
+      for (const [nx, ny] of poly) { cx += (nx - 0.5) * WORLD; cz += (0.5 - ny) * WORLD; }
+      cx /= poly.length; cz /= poly.length;
+      const gmat = new THREE.MeshToonMaterial({ color: 0x3fae57, gradientMap: toonGradient() });
+      const tmat = new THREE.MeshToonMaterial({ color: 0x8a6b43, gradientMap: toonGradient() });
+      for (const [dx, dz] of [[-5, -2], [4, 2], [0, 4]]) {
+        const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.8, 8, 8), tmat);
+        trunk.position.set(cx + dx, 4, cz + dz); trunk.castShadow = true; this.scene.add(trunk);
+        const fr = new THREE.Mesh(new THREE.SphereGeometry(3.6, 8, 6), gmat);
+        fr.position.set(cx + dx, 8.4, cz + dz); fr.scale.y = 0.5; fr.castShadow = true; this.scene.add(fr);
+      }
+    }
   }
 
   // Build the street network as a graph of edges running ALONG cell borders

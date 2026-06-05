@@ -63,23 +63,53 @@ export function newGame({ name = 'New Singapore', owner = 'Anonymous' } = {}) {
     daysElapsed: 0,
   };
 
-  // Seed a couple of starting kampongs near the island centre so there are
-  // citizens to govern (positions adapt to the grid/island size).
-  const c = Math.floor(GRID_SIZE / 2);
-  const seed = [];
-  for (let r = 0; r < GRID_SIZE && seed.length < 3; r++) {
-    for (let dy = -r; dy <= r && seed.length < 3; dy++) {
-      for (let dx = -r; dx <= r && seed.length < 3; dx++) {
-        const x = c + dx, y = c + dy;
-        if (x < 0 || y < 0 || x >= GRID_SIZE || y >= GRID_SIZE) continue;
-        if (isLandCell(x, y) && !grid[y][x] && !seed.some((s) => s[0] === x && s[1] === y)) seed.push([x, y]);
-      }
-    }
-  }
-  const kinds = ['kampong', 'kampong', 'reservoir'];
-  seed.forEach(([x, y], i) => place(state, x, y, kinds[i]));
+  seed1965(state);            // historical southern town + scattered kampongs
   refreshSummary(state);
   return state;
+}
+
+// Grid cell -> world coordinates (must match scene3d's cellToWorld).
+function cellWorld(x, y) {
+  return { x: (x + 0.5 - GRID_SIZE / 2) * 10, z: (GRID_SIZE / 2 - y - 0.5) * 10, y: 0 };
+}
+
+// Recreate roughly how Singapore looked at independence: a small developed town
+// in the south (the colonial city/port) with a sparse street grid, and a handful
+// of kampongs dotted across an otherwise rural island. Players build out the rest.
+function seed1965(state) {
+  const c = Math.floor(GRID_SIZE / 2);
+  // anchor the town on the southern part of the island (south = larger world-z)
+  let ty = c;
+  for (let dy = 2; dy < GRID_SIZE / 2; dy++) { if (isLandCell(c, c + dy) && isLandCell(c, c + dy + 1)) { ty = c + dy; break; } }
+
+  // a compact street grid of nodes over land cells around the anchor
+  const roads = state.roads, nodeAt = new Map();
+  const node = (x, y) => {
+    const k = x + ',' + y;
+    if (nodeAt.has(k)) return nodeAt.get(k);
+    const w = cellWorld(x, y); roads.nodes.push(w);
+    const id = roads.nodes.length - 1; nodeAt.set(k, id); return id;
+  };
+  const onLand = (x, y) => isLandCell(x, y);
+  for (let gx = -3; gx <= 3; gx++) {
+    for (let gy = -2; gy <= 2; gy++) {
+      const x = c + gx, y = ty + gy;
+      if (!onLand(x, y)) continue;
+      if (onLand(x + 1, y)) roads.edges.push({ a: node(x, y), b: node(x + 1, y), ctrl: null, type: 'street', lanes: 2, elevated: false });
+      if (onLand(x, y + 1)) roads.edges.push({ a: node(x, y), b: node(x, y + 1), ctrl: null, type: 'street', lanes: 2, elevated: false });
+    }
+  }
+
+  // a few kampongs in the town + a reservoir, plus rural kampongs further out
+  const placeAt = (x, y, k) => { if (x >= 0 && y >= 0 && x < GRID_SIZE && y < GRID_SIZE && isLandCell(x, y) && !state.grid[y][x]) place(state, x, y, k); };
+  placeAt(c, ty, 'kampong'); placeAt(c + 1, ty, 'kampong'); placeAt(c - 1, ty + 1, 'kampong');
+  placeAt(c + 2, ty - 1, 'reservoir');
+  // scatter rural kampongs around the island
+  let placed = 0;
+  for (let tries = 0; tries < 400 && placed < 6; tries++) {
+    const x = Math.floor(Math.random() * GRID_SIZE), y = Math.floor(Math.random() * GRID_SIZE);
+    if (isLandCell(x, y) && !state.grid[y][x] && Math.hypot(x - c, y - ty) > 6) { place(state, x, y, 'kampong'); placed++; }
+  }
 }
 
 // Bring a loaded save up to the current map size (e.g. older, smaller grids):

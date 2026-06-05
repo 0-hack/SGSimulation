@@ -3,7 +3,7 @@
 
 export const START_YEAR = 1965;
 export const START_DATE = { y: 1965, m: 8, d: 9 }; // National Day: 9 Aug 1965
-export const GRID_SIZE = 36;   // ~Singapore's land area at independence (1965)
+export const GRID_SIZE = 48;   // ~Singapore's land area at independence (1965)
 
 // Each "citizen" in state represents ~10 real people; display multiplies by 10.
 export const POP_SCALE = 10;

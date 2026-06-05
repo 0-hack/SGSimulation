@@ -106,10 +106,9 @@ export class Scene3D {
     scene.add(sea);
 
     this._buildIsland();
-    this._buildRoadGraph();
-    this._buildRoads();
-    this._buildProps();
-    this._buildNavGraph();   // unified traffic graph (grid now; freeform added on setState)
+    this.roadEdges = [];     // 1965 Singapore had no dense road grid — players build roads
+    this._buildNature();     // scatter rural greenery across the undeveloped island
+    this._buildNavGraph();   // traffic graph (freeform roads only; added on setState)
     this._initBoats();
     this._initWeather();
 
@@ -269,21 +268,29 @@ export class Scene3D {
   }
 
   // Street furniture along the kerbs: lampposts (lit at night), trees, benches.
-  _buildProps() {
-    for (const [[ai, aj], [bi, bj]] of this.roadEdges) {
-      if (Math.random() > 0.13) continue;   // sparser per-edge on the larger map
-      const a = cornerToWorld(ai, aj), b = cornerToWorld(bi, bj);
-      const mx = (a.x + b.x) / 2, mz = (a.z + b.z) / 2;
-      const dx = b.x - a.x, dz = b.z - a.z, len = Math.hypot(dx, dz) || 1;
-      const side = Math.random() < 0.5 ? 1 : -1;
-      const px = mx + (-dz / len) * 1.45 * side, pz = mz + (dx / len) * 1.45 * side;
-      const r = Math.random();
-      let prop;
-      if (r < 0.4) prop = makeLamppost();
-      else if (r < 0.78) { prop = new THREE.Group(); treeAt(prop, 0, 0, 0.9 + Math.random() * 0.6); }
-      else prop = makeBench(Math.atan2(dx, dz));
-      prop.position.set(px, 0, pz);
-      this.scene.add(prop);
+  // Rural greenery scattered across the undeveloped island (the 1965 look).
+  // Hidden on any cell that later gets a building.
+  _buildNature() {
+    if (this.natureGroup) this.scene.remove(this.natureGroup);
+    this.natureGroup = new THREE.Group(); this.scene.add(this.natureGroup);
+    this.natureCells = new Map();
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+      if (!this.land[y][x] || Math.random() > 0.34) continue;
+      const c = cellToWorld(x, y);
+      const g = new THREE.Group();
+      const n = 1 + (Math.random() < 0.4 ? 1 : 0);
+      for (let k = 0; k < n; k++) treeAt(g, (Math.random() - 0.5) * 6, (Math.random() - 0.5) * 6, 0.8 + Math.random() * 0.8);
+      g.position.set(c.x, 0, c.z); g.rotation.y = Math.random() * Math.PI;
+      g.traverse((m) => { if (m.isMesh) m.castShadow = false; });
+      this.natureGroup.add(g);
+      this.natureCells.set(x + ',' + y, g);
+    }
+  }
+  _refreshNature() {
+    if (!this.natureCells) return;
+    for (const [key, g] of this.natureCells) {
+      const [x, y] = key.split(',').map(Number);
+      g.visible = !(this.state?.grid?.[y]?.[x]);
     }
   }
 
@@ -487,13 +494,14 @@ export class Scene3D {
   syncAll() {
     for (const { group } of this.buildings.values()) this.scene.remove(group);
     this.buildings.clear();
-    if (!this.state) return;
+    if (!this.state) { this._refreshNature(); return; }
     for (let y = 0; y < N; y++) {
       for (let x = 0; x < N; x++) {
         const cell = this.state.grid[y]?.[x];
         if (cell) this._addMesh(x, y, cell.k, false, cell.c);
       }
     }
+    this._refreshNature();
   }
 
   _addMesh(x, y, key, animate, theme) {
@@ -520,7 +528,10 @@ export class Scene3D {
   }
 
   // called by main.js after a successful build
-  onBuilt(x, y, key, theme) { this._addMesh(x, y, key, true, theme); }
+  onBuilt(x, y, key, theme) {
+    this._addMesh(x, y, key, true, theme);
+    const g = this.natureCells?.get(x + ',' + y); if (g) g.visible = false;  // clear trees under it
+  }
 
   // called by main.js after demolish
   onDemolished(x, y) {
@@ -531,6 +542,7 @@ export class Scene3D {
     this.anims.push({ group: entry.group, t: 0, dur: 0.8, type: 'demolish' });
     const c = cellToWorld(x, y);
     this._spawnDust(c.x, c.z, 0xbfb09a, 26);
+    const g = this.natureCells?.get(x + ',' + y); if (g) g.visible = true;   // greenery returns
   }
   removeBuilding(x, y) {
     const id = `${x},${y}`;
@@ -609,7 +621,17 @@ export class Scene3D {
         const ad = a.dir > 0 ? a._lead.t - a.t : a.t - a._lead.t;
         if (ad < gap) adv = Math.max(0, adv - (gap - ad) * 0.7);
       }
-      const prevT = a.t; a.t += adv * a.dir; a._lead = null;
+      const prevT = a.t;
+      a.t += adv * a.dir; a._lead = null;
+      // stop on red at the junction ahead (vehicles only)
+      if (a.group === 'veh') {
+        const node = a.dir > 0 ? this.edgeN2[a.edge] : this.edgeN1[a.edge];
+        if (!this._greenFor(node, a.edge)) {
+          const stop = 2.4 / len;
+          if (a.dir > 0) a.t = Math.min(a.t, Math.max(prevT, 1 - stop));
+          else a.t = Math.max(a.t, Math.min(prevT, stop));
+        }
+      }
       const moving = Math.abs(a.t - prevT) > 1e-5;
       if (a.t >= 1 || a.t <= 0) {
         const atEnd = a.t >= 1;
@@ -1015,7 +1037,53 @@ export class Scene3D {
       add(this._sampleEdge(roads, e), e.lanes || T.lanes, e.type, e.elevated, !e.elevated);
     });
     this.navNodes = nodes; this.navAdj = adj;
+    this._buildLights();
     this._reseatAgents();   // edge indices changed — keep live agents valid
+  }
+
+  // Traffic lights at real junctions (3+ roads): incident roads are split into
+  // two phases that alternate; vehicles stop on red at the stop line.
+  _buildLights() {
+    if (this.lightGroup) this.scene.remove(this.lightGroup);
+    this.lightGroup = new THREE.Group(); this.scene.add(this.lightGroup);
+    this.lights = []; this.lightByNode = new Map();
+    for (let n = 0; n < this.navAdj.length; n++) {
+      const links = this.navAdj[n];
+      if (links.length < 3) continue;
+      const node = this.navNodes[n];
+      // bearing of each incident road leaving the node
+      const bear = (l) => {
+        const pts = this.edgePts[l.edge];
+        const a = l.fwd ? pts[0] : pts[pts.length - 1], b = l.fwd ? pts[1] : pts[pts.length - 2];
+        return Math.atan2(b.z - a.z, b.x - a.x);
+      };
+      const sorted = links.map((l) => ({ l, ang: bear(l) })).sort((p, q) => p.ang - q.ang);
+      const grpByEdge = new Map();
+      sorted.forEach((s, i) => grpByEdge.set(s.l.edge, i % 2));   // alternate → opposite roads pair up
+      const light = { node: n, grpByEdge, period: 7 + Math.random() * 3, t: Math.random() * 5, phase: 0, head: null };
+      // a little signal post with a coloured lamp
+      const post = new THREE.Group();
+      post.add(cyl(0.18, 0.2, 3.4, 0x3a3f45, 0, 1.7, 0));
+      const head = new THREE.Mesh(new THREE.SphereGeometry(0.5, 10, 8), new THREE.MeshToonMaterial({ color: 0x2ecc71, emissive: 0x2ecc71, emissiveIntensity: 0.7, gradientMap: toonGradient() }));
+      head.position.set(0, 3.4, 0); post.add(head); light.head = head;
+      post.position.set(node.x, node.y, node.z); this.lightGroup.add(post);
+      this.lights.push(light); this.lightByNode.set(n, light);
+    }
+  }
+  _updateLights(dt) {
+    if (!this.lights) return;
+    for (const lt of this.lights) {
+      lt.t += dt;
+      if (lt.t >= lt.period) { lt.t -= lt.period; lt.phase ^= 1; }
+      if (lt.head) { const c = lt.phase === 0 ? 0x2ecc71 : 0xe23b2e; lt.head.material.color.setHex(c); lt.head.material.emissive.setHex(c); }
+    }
+  }
+  // green for the road `edge` arriving at junction `node`?
+  _greenFor(node, edge) {
+    const lt = this.lightByNode?.get(node);
+    if (!lt) return true;
+    const g = lt.grpByEdge.get(edge);
+    return g === undefined || g === lt.phase;
   }
 
   // Re-seat any agent whose edge no longer exists (after a road rebuild/erase).
@@ -1086,6 +1154,7 @@ export class Scene3D {
     // unified traffic — density scales with population, drives grid + freeform roads
     if (this.state && this.edgePts.length) {
       const target = THREE.MathUtils.clamp(Math.floor(this.state.population / 30000), 5, 60);
+      this._updateLights(dt);
       this._ensureVehicles(target);
       this._advanceNet(this.vehicles, dt);
     }

@@ -46,6 +46,11 @@ Save your nation to a **centralised server** and share a link so other players c
   a city that lights up warmly after dark.
 - **A skyline that grows** — towers get taller and the city denser as your population
   and education rise over the decades.
+- **Start in 1965** on a large, mostly-rural island — kampongs dotted across the
+  countryside and one small colonial town with a street grid in the south. You build out
+  the roads and the nation from there, just like the real Singapore story.
+- **Traffic rules** — junctions have working **traffic lights**; cars stop on red at the
+  stop line and go on green.
 - **Build a real city**: HDB flats & estates, kampongs, condos & condo estates, power &
   desalination/NEWater plants, reservoirs, factories, a container port, the CBD, shopping
   malls, schools, hospitals, the MRT, parks, Nature Reserves, Gardens by the Bay, and a

@@ -24,15 +24,16 @@ try {
   await p.evaluate(()=>[...document.querySelectorAll('.road-tool')].find(b=>/Straight/.test(b.textContent)).click());
   await new Promise(r=>setTimeout(r,200));
 
-  // tap two points on the canvas to lay a road
+  // tap two points on the canvas to lay a road (note the pre-seeded 1965 roads)
+  const before = await p.evaluate(()=>window.__sgview.state.roads.edges.length);
   const box = await (await p.$('#city')).boundingBox();
   await p.mouse.click(box.x + box.width*0.35, box.y + box.height*0.45);
   await new Promise(r=>setTimeout(r,150));
   await p.mouse.click(box.x + box.width*0.65, box.y + box.height*0.55);
   await new Promise(r=>setTimeout(r,300));
-  const after = await p.evaluate(()=>({ edges: window.__sgview.state.roads.edges.length, type: window.__sgview.state.roads.edges[0]?.type, edgePts: window.__sgview.edgePts.length }));
-  ok(after.edges >= 1, `tapping the map created ${after.edges} road edge(s)`);
-  ok(after.type === 'avenue', 'road uses the selected Avenue type');
+  const after = await p.evaluate(()=>{ const e=window.__sgview.state.roads.edges; return { edges:e.length, type:e[e.length-1]?.type, edgePts:window.__sgview.edgePts.length }; });
+  ok(after.edges > before, `tapping the map added a road edge (${before} → ${after.edges})`);
+  ok(after.type === 'avenue', 'the drawn road uses the selected Avenue type');
   ok(after.edgePts >= 1, 'road network rebuilt for rendering/traffic');
 
   // a roundabout

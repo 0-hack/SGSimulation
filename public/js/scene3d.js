@@ -34,6 +34,10 @@ export class Scene3D {
     this.ghost = null;
     this.hoverCell = null;
     this.disaster = null;
+    this.people = [];            // pedestrians (shown when zoomed in)
+    this.peopleOn = false;
+    this.timeOfDay = 0.36;       // 0=midnight, .25=sunrise, .5=noon, .75=sunset
+    this.devFactor = 1;          // skyline grows with national development
 
     this._initRenderer();
     this._initScene();
@@ -65,6 +69,7 @@ export class Scene3D {
 
     // Lighting
     const hemi = new THREE.HemisphereLight(0xbfe3ff, 0x4a6b3a, 0.85);
+    this.hemi = hemi;
     scene.add(hemi);
     const sun = new THREE.DirectionalLight(0xfff4e0, 1.15);
     sun.position.set(120, 220, 80);
@@ -174,9 +179,11 @@ export class Scene3D {
 
   // ---- camera controls (orbit / pan / pinch) --------------------------------
   _initControls() {
-    this.camera = new THREE.PerspectiveCamera(45, 1, 1, 2000);
+    this.camera = new THREE.PerspectiveCamera(45, 1, 0.5, 2000);
     this.target = new THREE.Vector3(0, 0, 0);
-    this.cam = { radius: 300, theta: -0.7, phi: 0.95 };
+    this.cam = { radius: 190, theta: -0.7, phi: 0.92 };
+    this.MIN_R = 28;             // street-level zoom
+    this.MAX_R = 560;
     this._pointers = new Map();
     this._lastPinch = 0;
     this._moved = false;
@@ -198,7 +205,7 @@ export class Scene3D {
       if (this._pointers.size === 2) {
         const pts = [...this._pointers.values()];
         const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
-        if (this._lastPinch) this.cam.radius = THREE.MathUtils.clamp(this.cam.radius * this._lastPinch / dist, 110, 560);
+        if (this._lastPinch) this.cam.radius = THREE.MathUtils.clamp(this.cam.radius * this._lastPinch / dist, this.MIN_R, this.MAX_R);
         // two-finger pan
         const mid = { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
         if (this._lastMid) this._pan(mid.x - this._lastMid.x, mid.y - this._lastMid.y);
@@ -228,7 +235,7 @@ export class Scene3D {
     c.addEventListener('pointerleave', () => { if (this.ghost) this.ghost.visible = false; });
     c.addEventListener('wheel', (e) => {
       e.preventDefault();
-      this.cam.radius = THREE.MathUtils.clamp(this.cam.radius * (e.deltaY < 0 ? 0.92 : 1.08), 110, 560);
+      this.cam.radius = THREE.MathUtils.clamp(this.cam.radius * (e.deltaY < 0 ? 0.92 : 1.08), this.MIN_R, this.MAX_R);
     }, { passive: false });
     window.addEventListener('resize', () => this.resize());
   }
@@ -254,7 +261,7 @@ export class Scene3D {
     this.camera.lookAt(this.target);
   }
 
-  centerCamera() { this.target.set(0, 0, 0); this.cam.radius = 300; this.cam.theta = -0.7; this.cam.phi = 0.95; }
+  centerCamera() { this.target.set(0, 0, 0); this.cam.radius = 190; this.cam.theta = -0.7; this.cam.phi = 0.92; }
 
   resize() {
     const r = this.canvas.getBoundingClientRect();
@@ -280,6 +287,8 @@ export class Scene3D {
     return { x: gx, y: gy };
   }
   isLand(x, y) { return !!(this.land[y] && this.land[y][x]); }
+  // Walkable = on land and not occupied by a building (i.e. a street/open space).
+  _walkable(x, y) { return this.isLand(x, y) && !(this.state?.grid?.[y]?.[x]); }
 
   // Project a grid cell to absolute viewport pixel coordinates (for tests/UX).
   cellToScreen(gx, gy) {
@@ -348,17 +357,23 @@ export class Scene3D {
   _addMesh(x, y, key, animate) {
     const id = `${x},${y}`;
     if (this.buildings.has(id)) this.removeBuilding(x, y, false);
+    const b = BUILDINGS[key];
     const group = makeBuilding(key);
     const c = cellToWorld(x, y);
     group.position.set(c.x, 0, c.z);
     group.rotation.y = (Math.floor(Math.random() * 4)) * Math.PI / 2;
     group.castShadow = true;
     this.scene.add(group);
-    this.buildings.set(id, { group, key });
+    const tall = b.cat === 'residential' || b.cat === 'industry';
+    const entry = { group, key, tall, anim: false };
+    this.buildings.set(id, entry);
     if (animate) {
       group.scale.set(1, 0.001, 1);
-      this.anims.push({ group, t: 0, dur: 0.9, type: 'build' });
+      entry.anim = true;
+      this.anims.push({ group, entry, t: 0, dur: 0.9, type: 'build' });
       this._spawnDust(c.x, c.z, 0x9ad06a);
+    } else {
+      group.scale.set(1, tall ? this.devFactor : 1, 1);
     }
   }
 
@@ -513,6 +528,139 @@ export class Scene3D {
     }
   }
 
+  // ---- day / night cycle ----------------------------------------------------
+  _updateDayNight(dt) {
+    if (!this.disaster || this.disaster.type !== 'haze') {
+      this.timeOfDay = (this.timeOfDay + dt / 120) % 1; // ~2 min per full day
+    }
+    const elev = Math.sin(2 * Math.PI * (this.timeOfDay - 0.25)); // -1..1
+    const dayness = THREE.MathUtils.clamp((elev + 0.18) / 0.5, 0, 1);
+    const horizon = THREE.MathUtils.clamp(1 - Math.abs(elev) / 0.28, 0, 1);
+    this.nightFactor = 1 - dayness;
+
+    // Sun position along an arc; keep a little fill at night for moonlight.
+    const a = 2 * Math.PI * (this.timeOfDay - 0.25);
+    this.sun.position.set(Math.cos(a) * 200, Math.max(12, elev * 260), 90 + Math.sin(a) * 60);
+    this.sun.intensity = 0.18 + dayness * 1.15;
+    const sunCol = new THREE.Color(0xfff4e0).lerp(new THREE.Color(0xff8a3c), horizon * (1 - dayness * 0.5));
+    this.sun.color.copy(sunCol).lerp(new THREE.Color(0x9fb6ff), this.nightFactor * 0.6);
+    this.hemi.intensity = 0.22 + dayness * 0.7;
+
+    // Sky + fog colour: night → day, with a sunrise/sunset glow at the horizon.
+    const night = new THREE.Color(0x0c1830), day = new THREE.Color(0x8ec5e8);
+    const sky = night.clone().lerp(day, dayness).lerp(new THREE.Color(0xf2935a), horizon * 0.6 * (1 - dayness * 0.3));
+    if (!(this.disaster && this.disaster.type === 'haze')) {
+      this.scene.background = sky; this.fog.color.copy(sky);
+    }
+    this.skyColor = sky.clone();
+
+    // City lights: buildings glow warm at night.
+    const glow = this.nightFactor;
+    for (const m of MAT.values()) {
+      if (!m.__glow) { m.emissive = new THREE.Color(0xffca6a); m.__glow = true; }
+      m.emissiveIntensity = glow * 0.55;
+    }
+  }
+
+  // ---- development: skyline grows taller & denser as the nation matures ----
+  _updateDevelopment(dt) {
+    if (!this.state) return;
+    const pop = this.state.population || 0;
+    const edu = this.state.education || 20;
+    const target = 1
+      + THREE.MathUtils.clamp((pop - 80000) / 1_600_000, 0, 1) * 0.5   // size of nation
+      + THREE.MathUtils.clamp((edu - 20) / 80, 0, 1) * 0.28;           // sophistication
+    this.devFactor += (target - this.devFactor) * Math.min(1, dt * 0.5);
+
+    // Ease each "tall" building toward the current development height.
+    for (const entry of this.buildings.values()) {
+      if (entry.anim) continue;                 // don't fight build/demolish tweens
+      const want = entry.tall ? this.devFactor : 1;
+      const s = entry.group.scale;
+      s.y += (want - s.y) * Math.min(1, dt * 0.8);
+    }
+  }
+
+  // ---- pedestrians (level-of-detail: only when zoomed in) ------------------
+  _updatePeople(dt) {
+    const near = this.cam.radius < 150;
+    if (near && !this.peopleOn) this._spawnPeople();
+    if (!near && this.peopleOn) this._clearPeople();
+    if (!this.peopleOn) return;
+
+    const reach = this.cam.radius * 0.9;
+    for (const pr of this.people) {
+      if (!pr.next) { this._pickPersonStep(pr, reach); continue; }
+      pr.p += dt * pr.speed / TILE;
+      const a = cellToWorld(pr.cell[0], pr.cell[1]);
+      const b = cellToWorld(pr.next[0], pr.next[1]);
+      if (pr.p >= 1) { pr.cell = pr.next; this._pickPersonStep(pr, reach); continue; }
+      const ang = Math.atan2(b.x - a.x, b.z - a.z);
+      const px = a.x + (b.x - a.x) * pr.p + Math.cos(ang) * pr.lane;
+      const pz = a.z + (b.z - a.z) * pr.p - Math.sin(ang) * pr.lane;
+      pr.mesh.position.set(px, 0, pz);
+      pr.mesh.rotation.y = ang;
+      pr.mesh.children[0].position.y = 1.2 + Math.abs(Math.sin(pr.p * Math.PI * 8)) * 0.2; // walking bob
+    }
+  }
+  _spawnPeople() {
+    this.peopleOn = true;
+    const cells = this._cellsNearTarget(this.cam.radius);
+    if (!cells.length) return;
+    const count = Math.min(60, Math.max(12, Math.floor((this.state?.population || 0) / 9000)));
+    while (this.people.length < count) {
+      const [x, y] = cells[Math.floor(Math.random() * cells.length)];
+      this.people.push(this._makePerson(x, y));
+    }
+    for (const pr of this.people) { pr.mesh.visible = true; }
+  }
+  _clearPeople() {
+    this.peopleOn = false;
+    for (const pr of this.people) pr.mesh.visible = false;
+  }
+  _makePerson(x, y) {
+    const g = new THREE.Group();
+    const shirts = [0xe74c3c, 0x3498db, 0xf1c40f, 0x2ecc71, 0x9b59b6, 0xffffff, 0xe67e22];
+    const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.5, 1.4, 3, 6), mat(shirts[Math.floor(Math.random() * shirts.length)]));
+    body.position.y = 1.2;
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.5, 8, 6), mat(0xf0c9a0));
+    head.position.y = 2.4;
+    g.add(body); g.add(head);
+    const c = cellToWorld(x, y);
+    g.position.set(c.x, 0, c.z);
+    this.scene.add(g);
+    const pr = { mesh: g, cell: [x, y], next: null, p: 0, speed: 2.2 + Math.random() * 1.6, lane: (Math.random() - 0.5) * 4, dir: null };
+    this._pickPersonStep(pr, this.cam.radius);
+    return pr;
+  }
+  _pickPersonStep(pr, reach) {
+    const [x, y] = pr.cell;
+    // wander back toward the camera target if they've strayed too far
+    const c = cellToWorld(x, y);
+    if (Math.hypot(c.x - this.target.x, c.z - this.target.z) > reach * 1.4) {
+      const cells = this._cellsNearTarget(this.cam.radius);
+      if (cells.length) { const [nx, ny] = cells[Math.floor(Math.random() * cells.length)]; pr.cell = [nx, ny]; }
+    }
+    let dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]].filter(([dx, dy]) => this._walkable(pr.cell[0] + dx, pr.cell[1] + dy));
+    if (!dirs.length) dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]].filter(([dx, dy]) => this.isLand(pr.cell[0] + dx, pr.cell[1] + dy));
+    if (!dirs.length) { pr.next = null; return; }
+    let ch = dirs[Math.floor(Math.random() * dirs.length)];
+    if (pr.dir && Math.random() < 0.6) { const s = dirs.find(([dx, dy]) => dx === pr.dir[0] && dy === pr.dir[1]); if (s) ch = s; }
+    pr.dir = ch; pr.next = [pr.cell[0] + ch[0], pr.cell[1] + ch[1]]; pr.p = 0;
+  }
+  _cellsNearTarget(radius) {
+    const walk = [], anyLand = [];
+    const R = Math.max(radius, 60);
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+      if (!this.land[y][x]) continue;
+      const c = cellToWorld(x, y);
+      if (Math.hypot(c.x - this.target.x, c.z - this.target.z) > R) continue;
+      anyLand.push([x, y]);
+      if (this._walkable(x, y)) walk.push([x, y]);
+    }
+    return walk.length ? walk : anyLand;
+  }
+
   // ---- per-frame update + render -------------------------------------------
   render() {
     const dt = Math.min(this.clock.getDelta(), 0.05);
@@ -523,8 +671,9 @@ export class Scene3D {
       a.t += dt;
       const k = Math.min(a.t / a.dur, 1);
       if (a.type === 'build') {
-        const e = easeOutBack(k);
-        a.group.scale.set(1, e, 1);
+        const e = easeOutBack(k) * (a.entry?.tall ? this.devFactor : 1);
+        a.group.scale.set(1, Math.max(0.001, e), 1);
+        if (k >= 1 && a.entry) a.entry.anim = false;
       } else {
         a.group.scale.y = Math.max(0.001, 1 - k);
         a.group.rotation.z = k * 0.4;
@@ -560,6 +709,9 @@ export class Scene3D {
     // sea shimmer
     if (this.sea) this.sea.material.opacity = 0.9 + Math.sin(this.clock.elapsedTime * 1.5) * 0.03;
 
+    this._updateDayNight(dt);
+    this._updateDevelopment(dt);
+    this._updatePeople(dt);
     this._updateDisaster(dt);
     this._updateCamera();
     this.renderer.render(this.scene, this.camera);
@@ -637,8 +789,8 @@ export function makeBuilding(key) {
     }
   } else if (cat === 'industry') {
     if (key === 'office') {
-      g.add(box(7, 30, 7, col, { metalness: 0.5, roughness: 0.2 }));
-      const top = box(7.2, 1, 7.2, 0x88ccff, { metalness: 0.6 }); top.position.y = 30; g.add(top);
+      g.add(box(7, 26, 7, col, { metalness: 0.5, roughness: 0.2 }));
+      const top = box(7.2, 1, 7.2, 0x88ccff, { metalness: 0.6 }); top.position.y = 26; g.add(top);
     } else if (key === 'port') {
       g.add(box(9, 1.2, 9, 0x6b7a86));
       for (const cx of [-2.5, 2.5]) {

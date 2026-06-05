@@ -23,6 +23,12 @@ Save your nation to a **centralised server** and share a link so other players c
 - **A 3D island city** rendered as the shape of Singapore — orbit, pan and pinch-zoom
   (touch + mouse). Construction, demolition (with dust), traffic and disasters are all
   animated.
+- **Zoom into any neighbourhood** down to street level and watch it live: **pedestrians
+  walk the streets** and cars drive the roads in real time (they appear as you zoom in).
+- **A day/night cycle** — the sun arcs across the sky, sunrise/sunset glows on the
+  horizon, and the city lights up warmly after dark.
+- **A skyline that grows** — towers get taller and the city denser as your population
+  and education rise over the decades.
 - **Build a real city**: HDB flats, kampongs,
   condos, power & desalination/NEWater plants, reservoirs, factories, a container
   port, the CBD, schools, hospitals, the MRT, parks, Gardens by the Bay and more —

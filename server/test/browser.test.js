@@ -82,6 +82,21 @@ try {
   const floodOk = await page.evaluate(() => !!window.__sgview.disaster || window.__sgview.floodPlane.visible);
   ok(floodOk, 'flood disaster animation triggered');
 
+  // Zooming in to street level spawns animated pedestrians (LOD).
+  const peopled = await page.evaluate(async () => {
+    const v = window.__sgview;
+    v.cam.radius = 50;                      // street-level zoom
+    await new Promise((r) => setTimeout(r, 500));
+    return { on: v.peopleOn, count: v.people.length };
+  });
+  ok(peopled.on && peopled.count > 0, `street zoom spawned ${peopled.count} pedestrians`);
+
+  // Day/night clock is advancing.
+  const t0 = await page.evaluate(() => window.__sgview.timeOfDay);
+  await new Promise((r) => setTimeout(r, 600));
+  const t1 = await page.evaluate(() => window.__sgview.timeOfDay);
+  ok(t0 !== t1, 'day/night cycle is running');
+
   // Speed up and let time pass.
   await page.click('.spd[data-spd="3"]');
   const date0 = await page.$eval('#hud-date', (e) => e.textContent);

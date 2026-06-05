@@ -5,7 +5,7 @@
 // main.js expects from the old 2D view.
 import * as THREE from './vendor/three.module.js';
 import { BUILDINGS, GRID_SIZE, ROAD_TYPES } from './data.js';
-import { SG_OUTLINE, SG_ISLANDS, pointInPolygon, landMask, inReservoir, reservoirArea } from './shape.js';
+import { SG_OUTLINE, SG_ISLANDS, pointInPolygon, landMask, inReservoir, reservoirArea, inRiver } from './shape.js';
 
 const N = GRID_SIZE;
 const WORLD = N * 10;         // world units across the bounding box (TILE stays ~10)
@@ -290,6 +290,7 @@ export class Scene3D {
   // dense rainforest — the centre of 1965 Singapore.
   _buildCatchment() {
     this.reserveMask = Array.from({ length: N }, () => Array(N).fill(false));
+    this.riverMask = Array.from({ length: N }, () => Array(N).fill(false));
     if (this.catchGroup) this.scene.remove(this.catchGroup);
     this.catchGroup = new THREE.Group(); this.scene.add(this.catchGroup);
     const v = [], idx = [], sand = [], sIdx = [];
@@ -299,8 +300,11 @@ export class Scene3D {
       bi.push(n, n + 1, n + 2, n, n + 2, n + 3);
     };
     for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
-      if (!this.land[y][x] || !inReservoir(x, y, N)) continue;
-      this.reserveMask[y][x] = true;
+      if (!this.land[y][x]) continue;
+      const res = inReservoir(x, y, N), riv = inRiver(x, y, N);
+      if (!res && !riv) continue;
+      if (res) this.reserveMask[y][x] = true;
+      if (riv) this.riverMask[y][x] = true;
       const c = cellToWorld(x, y);
       quad(sand, sIdx, c.x, c.z, TILE / 2 + 1.2, 0.12);   // muddy/sandy shoreline ring
       quad(v, idx, c.x, c.z, TILE / 2 + 0.4, 0.2);         // water surface
@@ -323,7 +327,7 @@ export class Scene3D {
     this.natureCells = new Map();
     const ca = reservoirArea(N);
     for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
-      if (!this.land[y][x] || this.reserveMask?.[y]?.[x]) continue;   // not on the lake
+      if (!this.land[y][x] || this.reserveMask?.[y]?.[x] || this.riverMask?.[y]?.[x]) continue; // not on the water
       const d = Math.hypot(x - ca.cx, y - ca.cy);
       const forest = d < ca.forestR;                                  // the nature reserve ring
       if (Math.random() > (forest ? 0.78 : 0.32)) continue;
@@ -487,11 +491,18 @@ export class Scene3D {
     if (gx < 0 || gy < 0 || gx >= N || gy >= N) return null;
     return { x: gx, y: gy };
   }
-  isLand(x, y) { return !!(this.land[y] && this.land[y][x] && !(this.reserveMask && this.reserveMask[y][x])); }
+  isLand(x, y) {
+    return !!(this.land[y] && this.land[y][x] && !(this.reserveMask && this.reserveMask[y][x]) && !(this.riverMask && this.riverMask[y][x]));
+  }
   // Is a world point over the protected reservoir / catchment? (blocks road drawing)
   isReserveAt(wx, wz) {
     const gx = Math.floor((wx / WORLD + 0.5) * N), gy = Math.floor((0.5 - wz / WORLD) * N);
     return !!(this.reserveMask && this.reserveMask[gy] && this.reserveMask[gy][gx]);
+  }
+  // Is a world point over the Singapore River? (blocks road drawing — needs a bridge)
+  isRiverAt(wx, wz) {
+    const gx = Math.floor((wx / WORLD + 0.5) * N), gy = Math.floor((0.5 - wz / WORLD) * N);
+    return !!(this.riverMask && this.riverMask[gy] && this.riverMask[gy][gx]);
   }
   // Is grid cell (gx,gy) covered by a freeform road? (blocks building on roads)
   isRoadAt(gx, gy) {

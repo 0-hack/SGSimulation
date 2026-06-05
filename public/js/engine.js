@@ -4,11 +4,12 @@ import {
   BUILDINGS, POLICIES, START_DATE, GRID_SIZE, POP_SCALE,
   HISTORICAL_EVENTS, RANDOM_EVENTS,
 } from './data.js';
-import { pointInPolygon, inReservoir } from './shape.js';
+import { pointInPolygon, inReservoir, inRiver } from './shape.js';
 
-// Is grid cell (x,y) on the island (land) and not in the protected reservoir?
+// Is grid cell (x,y) on the island (land), not in the reservoir, not in the river?
 function isLandCell(x, y) {
-  return pointInPolygon((x + 0.5) / GRID_SIZE, (y + 0.5) / GRID_SIZE) && !inReservoir(x, y, GRID_SIZE);
+  return pointInPolygon((x + 0.5) / GRID_SIZE, (y + 0.5) / GRID_SIZE)
+    && !inReservoir(x, y, GRID_SIZE) && !inRiver(x, y, GRID_SIZE);
 }
 
 const DAYS_IN_MONTH = 30;

@@ -328,6 +328,7 @@ function onGroundTap(x, z) {
   const R = G.road;
   if (R.tool === 'erase') { eraseRoadAt(x, z); return; }
   if (G.view.isReserveAt(x, z)) { toast('Protected Central Catchment — no roads on the reservoir.'); return; }
+  if (G.view.isRiverAt(x, z)) { toast('That\'s the Singapore River — roads can\'t cross open water.'); return; }
   if (R.tool === 'roundabout') { placeRoundabout(x, z); return; }
   const pt = { x, z };
   if (R.tool === 'straight') {

@@ -82,13 +82,51 @@ export function landMask(size) {
   return mask;
 }
 
-// The Central Catchment reservoir (e.g. MacRitchie/Peirce/Seletar) — a protected
-// water body slightly north of the island centre. Shared by engine + renderer.
+// The Central Catchment reservoirs (MacRitchie / Upper & Lower Peirce / Seletar)
+// — a protected water body north of the island centre. Modelled as several
+// overlapping lobes so it reads as a branching reservoir, not a round pond.
+// Shared by engine + renderer.
 export function reservoirArea(size) {
-  return { cx: size / 2, cy: size / 2 + size * 0.055, r: size * 0.085, forestR: size * 0.2 };
+  const cx = size / 2, cy = size / 2 + size * 0.055;
+  const lobes = [
+    [0.000, 0.000, 0.060],   // MacRitchie (central)
+    [-0.075, 0.045, 0.045],  // Upper Peirce (north-west arm)
+    [0.015, 0.078, 0.050],   // Lower Peirce / Seletar (north arm)
+    [0.078, 0.012, 0.042],   // eastern arm
+    [-0.118, -0.004, 0.038], // western arm
+    [0.046, -0.055, 0.034],  // southern finger
+  ].map(([dx, dy, r]) => ({ x: cx + dx * size, y: cy + dy * size, r: r * size }));
+  return { cx, cy, forestR: size * 0.22, lobes };
 }
 export function inReservoir(x, y, size) {
-  const { cx, cy, r } = reservoirArea(size);
-  return Math.hypot(x - cx, y - cy) < r && pointInPolygon((x + 0.5) / size, (y + 0.5) / size);
+  if (!pointInPolygon((x + 0.5) / size, (y + 0.5) / size)) return false;
+  for (const l of reservoirArea(size).lobes) if (Math.hypot(x - l.x, y - l.y) < l.r) return true;
+  return false;
+}
+
+// The Singapore River: a tidal channel winding inland from the south coast,
+// just west of the colonial city. A polyline of {x, y (cell coords), w (half-
+// width in cells)} that tapers from a wide mouth/basin to a narrow inland reach.
+export function riverPath(size) {
+  const c = size / 2, k = size / 48;
+  return [
+    { x: c - 4.0 * k, y: 12.0 * k, w: 2.0 * k },   // mouth / boat quay basin (opens to the sea)
+    { x: c - 4.5 * k, y: 15.0 * k, w: 1.3 * k },
+    { x: c - 5.5 * k, y: 18.0 * k, w: 1.1 * k },
+    { x: c - 7.0 * k, y: 20.0 * k, w: 1.0 * k },
+    { x: c - 9.0 * k, y: 21.0 * k, w: 0.9 * k },    // narrow inland reach (Robertson Quay)
+  ];
+}
+export function inRiver(x, y, size) {
+  const pts = riverPath(size);
+  for (let i = 0; i < pts.length - 1; i++) {
+    const a = pts[i], b = pts[i + 1];
+    const dx = b.x - a.x, dy = b.y - a.y, len2 = dx * dx + dy * dy || 1e-9;
+    let t = ((x - a.x) * dx + (y - a.y) * dy) / len2;
+    t = Math.max(0, Math.min(1, t));
+    const px = a.x + t * dx, py = a.y + t * dy, w = a.w + (b.w - a.w) * t;
+    if (Math.hypot(x - px, y - py) < w) return true;
+  }
+  return false;
 }
 

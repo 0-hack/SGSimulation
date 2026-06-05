@@ -4,6 +4,12 @@ import {
   BUILDINGS, POLICIES, START_DATE, GRID_SIZE, POP_SCALE,
   HISTORICAL_EVENTS, RANDOM_EVENTS,
 } from './data.js';
+import { pointInPolygon } from './shape.js';
+
+// Is grid cell (x,y) on the island (land)?
+function isLandCell(x, y) {
+  return pointInPolygon((x + 0.5) / GRID_SIZE, (y + 0.5) / GRID_SIZE);
+}
 
 const DAYS_IN_MONTH = 30;
 const STATE_VERSION = 1;
@@ -57,11 +63,43 @@ export function newGame({ name = 'New Singapore', owner = 'Anonymous' } = {}) {
     daysElapsed: 0,
   };
 
-  // Seed a couple of starting kampongs so there are citizens to govern.
-  place(state, 10, 10, 'kampong');
-  place(state, 11, 10, 'kampong');
-  place(state, 10, 11, 'reservoir');
+  // Seed a couple of starting kampongs near the island centre so there are
+  // citizens to govern (positions adapt to the grid/island size).
+  const c = Math.floor(GRID_SIZE / 2);
+  const seed = [];
+  for (let r = 0; r < GRID_SIZE && seed.length < 3; r++) {
+    for (let dy = -r; dy <= r && seed.length < 3; dy++) {
+      for (let dx = -r; dx <= r && seed.length < 3; dx++) {
+        const x = c + dx, y = c + dy;
+        if (x < 0 || y < 0 || x >= GRID_SIZE || y >= GRID_SIZE) continue;
+        if (isLandCell(x, y) && !grid[y][x] && !seed.some((s) => s[0] === x && s[1] === y)) seed.push([x, y]);
+      }
+    }
+  }
+  const kinds = ['kampong', 'kampong', 'reservoir'];
+  seed.forEach(([x, y], i) => place(state, x, y, kinds[i]));
   refreshSummary(state);
+  return state;
+}
+
+// Bring a loaded save up to the current map size (e.g. older, smaller grids):
+// re-centre the existing layout onto a fresh GRID_SIZE×GRID_SIZE grid.
+export function ensureGrid(state) {
+  if (!state) return state;
+  if (!state.roads) state.roads = { nodes: [], edges: [], islands: [] };
+  if (!state.roads.islands) state.roads.islands = [];
+  const g = state.grid;
+  const ok = Array.isArray(g) && g.length === GRID_SIZE && Array.isArray(g[0]) && g[0].length === GRID_SIZE;
+  if (ok) return state;
+  const old = Array.isArray(g) ? g : [];
+  const oldH = old.length, oldW = oldH ? (old[0]?.length || 0) : 0;
+  const off = Math.floor((GRID_SIZE - oldW) / 2), offY = Math.floor((GRID_SIZE - oldH) / 2);
+  const next = Array.from({ length: GRID_SIZE }, () => Array(GRID_SIZE).fill(null));
+  for (let y = 0; y < oldH; y++) for (let x = 0; x < oldW; x++) {
+    const ny = y + offY, nx = x + off;
+    if (ny >= 0 && nx >= 0 && ny < GRID_SIZE && nx < GRID_SIZE) next[ny][nx] = old[y]?.[x] || null;
+  }
+  state.grid = next;
   return state;
 }
 
@@ -139,7 +177,7 @@ export function derive(state) {
 
   for (let y = 0; y < GRID_SIZE; y++) {
     for (let x = 0; x < GRID_SIZE; x++) {
-      const cell = state.grid[y][x];
+      const cell = state.grid[y]?.[x];
       if (!cell) continue;
       const b = BUILDINGS[cell.k];
       if (!b) continue;

@@ -1,7 +1,7 @@
 // Main controller: boots the menu, runs the game loop, wires the UI & cloud.
 import {
   newGame, tickDay, build, demolish, canPlace, derive,
-  resolveEvent, snapshot, refreshSummary,
+  resolveEvent, snapshot, refreshSummary, ensureGrid,
 } from './engine.js';
 import { Scene3D } from './scene3d.js';
 import { api } from './api.js';
@@ -138,8 +138,7 @@ function continueGame() {
 }
 
 function attachState() {
-  if (!G.state.roads) G.state.roads = { nodes: [], edges: [], islands: [] }; // migrate older saves
-  if (!G.state.roads.islands) G.state.roads.islands = [];
+  ensureGrid(G.state); // migrate older/smaller saves to the current map size + roads
   refreshSummary(G.state);
   G.view.setState(G.state);
   G.view.centerCamera();

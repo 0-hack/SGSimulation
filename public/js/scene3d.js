@@ -8,7 +8,7 @@ import { BUILDINGS, GRID_SIZE, ROAD_TYPES } from './data.js';
 import { SG_OUTLINE, pointInPolygon, landMask } from './shape.js';
 
 const N = GRID_SIZE;
-const WORLD = 220;            // world units across the island bounding box
+const WORLD = N * 10;         // world units across the bounding box (TILE stays ~10)
 const TILE = WORLD / N;
 const SEA_Y = -1.2;
 const DAY_CYCLE = 16;         // in-game days per full day/night cycle
@@ -77,8 +77,8 @@ export class Scene3D {
     this.skyColor = new THREE.Color(0x8ec5e8);
     scene.background = this.skyColor.clone();
     // Linear fog fades the sea into the horizon so the world edge is never seen.
-    this.fog = new THREE.Fog(0x9fc6e0, 150, 440);
-    this.fogFar = 440;
+    this.fog = new THREE.Fog(0x9fc6e0, WORLD * 0.68, WORLD * 2.0);
+    this.fogFar = WORLD * 2.0;
     scene.fog = this.fog;
 
     // Lighting
@@ -89,8 +89,8 @@ export class Scene3D {
     sun.position.set(120, 220, 80);
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
-    const s = 170;
-    Object.assign(sun.shadow.camera, { left: -s, right: s, top: s, bottom: -s, near: 1, far: 700 });
+    const s = WORLD * 0.78;
+    Object.assign(sun.shadow.camera, { left: -s, right: s, top: s, bottom: -s, near: 1, far: WORLD * 3.4 });
     sun.shadow.bias = -0.0004;
     this.sun = sun;
     scene.add(sun);
@@ -271,7 +271,7 @@ export class Scene3D {
   // Street furniture along the kerbs: lampposts (lit at night), trees, benches.
   _buildProps() {
     for (const [[ai, aj], [bi, bj]] of this.roadEdges) {
-      if (Math.random() > 0.22) continue;
+      if (Math.random() > 0.13) continue;   // sparser per-edge on the larger map
       const a = cornerToWorld(ai, aj), b = cornerToWorld(bi, bj);
       const mx = (a.x + b.x) / 2, mz = (a.z + b.z) / 2;
       const dx = b.x - a.x, dz = b.z - a.z, len = Math.hypot(dx, dz) || 1;
@@ -313,9 +313,9 @@ export class Scene3D {
   _initControls() {
     this.camera = new THREE.PerspectiveCamera(45, 1, 0.5, 2000);
     this.target = new THREE.Vector3(0, 0, 0);
-    this.cam = { radius: 190, theta: -0.7, phi: 0.92 };
-    this.MIN_R = 26;             // street-level zoom
-    this.MAX_R = 340;            // capped so the fogged sea edge stays hidden
+    this.cam = { radius: WORLD * 0.85, theta: -0.7, phi: 0.92 };
+    this.MIN_R = 26;             // street-level zoom (buildings unchanged)
+    this.MAX_R = WORLD * 1.5;    // capped so the fogged sea edge stays hidden
     this._pointers = new Map();
     this._lastPinch = 0;
     this._moved = false;
@@ -398,7 +398,7 @@ export class Scene3D {
     this.camera.lookAt(this.target);
   }
 
-  centerCamera() { this.target.set(0, 0, 0); this.cam.radius = 190; this.cam.theta = -0.7; this.cam.phi = 0.92; }
+  centerCamera() { this.target.set(0, 0, 0); this.cam.radius = WORLD * 0.85; this.cam.theta = -0.7; this.cam.phi = 0.92; }
 
   resize() {
     const r = this.canvas.getBoundingClientRect();

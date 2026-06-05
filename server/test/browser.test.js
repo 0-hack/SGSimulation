@@ -62,7 +62,10 @@ try {
   // Find a free land cell, project it to screen, and tap there to build.
   const spot = await page.evaluate(() => {
     const v = window.__sgview;
-    for (let y = 7; y <= 14; y++) for (let x = 6; x <= 16; x++) {
+    const N = v.land.length, c = Math.floor(N / 2);
+    for (let r = 0; r < N; r++) for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+      const x = c + dx, y = c + dy;
+      if (x < 0 || y < 0 || x >= N || y >= N) continue;
       if (v.isLand(x, y) && !v.state.grid[y][x]) { const s = v.cellToScreen(x, y); return { x, y, sx: s.x, sy: s.y }; }
     }
     return null;

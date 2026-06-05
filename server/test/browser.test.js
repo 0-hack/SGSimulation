@@ -91,11 +91,16 @@ try {
   });
   ok(peopled.on && peopled.count > 0, `street zoom spawned ${peopled.count} pedestrians`);
 
-  // Day/night clock is advancing.
-  const t0 = await page.evaluate(() => window.__sgview.timeOfDay);
-  await new Promise((r) => setTimeout(r, 600));
-  const t1 = await page.evaluate(() => window.__sgview.timeOfDay);
-  ok(t0 !== t1, 'day/night cycle is running');
+  // Day/night clock is driven by the in-game date (advanceClock).
+  const dn = await page.evaluate(() => {
+    const v = window.__sgview;
+    const a = v.timeOfDay; v.advanceClock(4); v.render(); return { a, b: v.timeOfDay };
+  });
+  ok(dn.a !== dn.b, 'day/night cycle advances with the game clock');
+
+  // Vehicles drive the street network.
+  const veh = await page.evaluate(() => window.__sgview.vehicles.length);
+  ok(veh >= 1, `${veh} vehicles on the roads`);
 
   // Speed up and let time pass.
   await page.click('.spd[data-spd="3"]');

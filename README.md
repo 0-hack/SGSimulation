@@ -28,10 +28,17 @@ Save your nation to a **centralised server** and share a link so other players c
   ports with gantry cranes, hospitals, sawtooth factories, supertrees…) rather than plain
   blocks, with lit windows at night.
 - **A clean, minimalist UI** with custom hand-drawn line icons and a warm light theme.
-- **Zoom into any neighbourhood** down to street level and watch it live: **pedestrians
-  walk the streets** and cars drive the roads in real time (they appear as you zoom in).
-- **A day/night cycle** — the sun arcs across the sky, sunrise/sunset glows on the
-  horizon, and the city lights up warmly after dark.
+- **A living, physically-sensible city.** A real street network runs *between* the
+  building plots; **distinct vehicles** (cars, taxis, motorbikes, lorries, buses) keep
+  to their lanes with car-following so they don't drive through each other, while
+  **distinct pedestrians** (men, women, children, the elderly) walk the footpaths.
+- **Zoom into any neighbourhood** down to street level and watch it live in real time;
+  the world fades into a hazy horizon so you never see its edge.
+- **Weather** — sunny, cloudy, rain, windy and storms roll through with drifting clouds,
+  wind-blown rain and changing light (shown in the HUD).
+- **A day/night cycle locked to the in-game clock** — the sun arcs across the sky in
+  step with the date (and speeds up when you fast-forward), with sunrise/sunset glow and
+  a city that lights up warmly after dark.
 - **A skyline that grows** — towers get taller and the city denser as your population
   and education rise over the decades.
 - **Build a real city**: HDB flats, kampongs,

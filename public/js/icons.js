@@ -40,6 +40,21 @@ export const ICONS = {
   globe: svg('<circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/>'),
   bulldoze: svg('<path d="M3 18h7l2-4h6v4h3"/><circle cx="7" cy="20" r="1.6"/><circle cx="17" cy="20" r="1.6"/><path d="M5 14V9h4l2 4"/>'),
   pin: svg('<path d="M12 21s7-6.3 7-11a7 7 0 1 0-14 0c0 4.7 7 11 7 11z"/><circle cx="12" cy="10" r="2.4"/>'),
+
+  // weather
+  sunny: svg('<circle cx="12" cy="12" r="4.2"/><path d="M12 3v2.4M12 18.6V21M3 12h2.4M18.6 12H21M5.6 5.6l1.7 1.7M16.7 16.7l1.7 1.7M18.4 5.6l-1.7 1.7M7.3 16.7l-1.7 1.7"/>'),
+  cloudy: svg('<path d="M7.5 18a4 4 0 0 1-.4-8 5.5 5.5 0 0 1 10.7-1.2A3.8 3.8 0 0 1 18.5 18z"/>'),
+  rain: svg('<path d="M7.5 15a4 4 0 0 1-.4-8 5.5 5.5 0 0 1 10.7-1.2A3.8 3.8 0 0 1 18.5 15z"/><path d="M8 18l-1 2M12 18l-1 2M16 18l-1 2"/>'),
+  windy: svg('<path d="M3 9h11a2.5 2.5 0 1 0-2.5-2.5"/><path d="M3 13h15a2.5 2.5 0 1 1-2.5 2.5"/><path d="M3 17h8"/>'),
+  storm: svg('<path d="M7.5 14a4 4 0 0 1-.4-8 5.5 5.5 0 0 1 10.7-1.2A3.8 3.8 0 0 1 18.5 14z"/><path d="M12 13l-2 4h3l-2 4" fill="currentColor" stroke="none"/>'),
+};
+
+export const WEATHER = {
+  sunny: { icon: 'sunny', label: 'Sunny' },
+  cloudy: { icon: 'cloudy', label: 'Cloudy' },
+  rain: { icon: 'rain', label: 'Rain' },
+  windy: { icon: 'windy', label: 'Windy' },
+  storm: { icon: 'storm', label: 'Storm' },
 };
 
 export const CAT_ICON = {

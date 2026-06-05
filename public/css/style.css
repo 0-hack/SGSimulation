@@ -110,7 +110,9 @@ svg { display: block; width: 100%; height: 100%; }
 .icon-btn span { width: 20px; height: 20px; display: inline-flex; }
 .nation { min-width: 0; }
 .nation-name { font-weight: 800; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 26vw; letter-spacing: -0.2px; }
-.hud-date { font-size: 11px; color: var(--muted); font-weight: 600; }
+.hud-date { font-size: 11px; color: var(--muted); font-weight: 600; display: flex; align-items: center; gap: 6px; }
+.weather { display: inline-flex; align-items: center; gap: 3px; color: var(--teal); font-weight: 700; }
+.weather .w-ico { width: 13px; height: 13px; display: inline-flex; }
 .hud-stats {
   display: flex; gap: 6px; margin-left: auto; flex-wrap: wrap; justify-content: flex-end;
 }

@@ -10,7 +10,7 @@ import {
   money, num, pct, el,
 } from './ui.js';
 import { BUILDINGS, POP_SCALE } from './data.js';
-import { injectIcons } from './icons.js';
+import { injectIcons, ICONS, WEATHER } from './icons.js';
 
 const LS_SAVE = 'sg_save_v1';
 const LS_NAME = 'sg_owner';
@@ -158,6 +158,8 @@ function loop(ts) {
   G.lastFrame = ts;
 
   if (G.state && G.speed > 0 && !G.state.pendingEvent) {
+    // drive the day/night sun & weather clock in lockstep with the date
+    if (G.view) G.view.advanceClock(dt * SPEED_RATE[G.speed]);
     G.acc += dt * SPEED_RATE[G.speed];
     let ticks = 0;
     while (G.acc >= 1 && ticks < 60) {
@@ -177,7 +179,17 @@ function loop(ts) {
     }
   }
 
-  if (G.view) G.view.render();
+  if (G.view) { G.view.render(); updateWeatherHud(); }
+}
+
+let lastWeather = '';
+function updateWeatherHud() {
+  const w = G.view?.weather?.type;
+  if (!w || w === lastWeather) return;
+  lastWeather = w;
+  const meta = WEATHER[w] || WEATHER.sunny;
+  const elw = $('hud-weather');
+  if (elw) elw.innerHTML = `<span class="w-ico">${ICONS[meta.icon]}</span>${meta.label}`;
 }
 
 let lastShortageKey = '';

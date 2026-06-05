@@ -23,6 +23,11 @@ Save your nation to a **centralised server** and share a link so other players c
 - **A 3D island city** rendered as the shape of Singapore — orbit, pan and pinch-zoom
   (touch + mouse). Construction, demolition (with dust), traffic and disasters are all
   animated.
+- **Detailed, realistically-proportioned buildings** — each plot is a little complex of
+  windowed structures (HDB slabs with rooftop water tanks, glass office towers, container
+  ports with gantry cranes, hospitals, sawtooth factories, supertrees…) rather than plain
+  blocks, with lit windows at night.
+- **A clean, minimalist UI** with custom hand-drawn line icons and a warm light theme.
 - **Zoom into any neighbourhood** down to street level and watch it live: **pedestrians
   walk the streets** and cars drive the roads in real time (they appear as you zoom in).
 - **A day/night cycle** — the sun arcs across the sky, sunrise/sunset glows on the

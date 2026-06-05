@@ -2,6 +2,7 @@
 // Returns DOM and wires callbacks; keeps main.js focused on orchestration.
 import { BUILDINGS, CATEGORIES, POLICIES, POP_SCALE } from './data.js';
 import { derive, isUnlocked, formatDate } from './engine.js';
+import { ICONS, CAT_ICON } from './icons.js';
 
 // ---- formatting ----
 export function money(m) {
@@ -31,8 +32,11 @@ export function updateHud(state, readOnly) {
   document.getElementById('hud-pop').textContent = num(popReal);
   const ap = document.getElementById('hud-approval');
   ap.textContent = pct(state.approval);
-  ap.parentElement.querySelector('.s-ico').textContent =
-    state.approval >= 60 ? '😀' : state.approval >= 40 ? '🙂' : state.approval >= 25 ? '😟' : '😡';
+  const face = state.approval >= 55 ? 'smile' : state.approval >= 32 ? 'meh' : 'frown';
+  const faceEl = document.getElementById('approval-face');
+  if (faceEl && faceEl.dataset.face !== face) { faceEl.dataset.face = face; faceEl.innerHTML = ICONS[face]; }
+  const stat = ap.closest('.stat');
+  if (stat) stat.dataset.mood = face;
 }
 
 // ===========================================================================
@@ -43,7 +47,8 @@ export function renderBuild(state, ctx) {
 
   // Tool actions: inspect/bulldoze
   const actions = el('div', 'tool-actions');
-  const bulldoze = el('button', 'btn danger' + (ctx.bulldoze ? ' active' : ''), '🧨 Bulldoze');
+  const bulldoze = el('button', 'btn danger' + (ctx.bulldoze ? ' active' : ''),
+    `<span class="bi">${ICONS.bulldoze}</span> Bulldoze`);
   bulldoze.onclick = () => ctx.toggleBulldoze();
   actions.append(bulldoze);
   wrap.append(actions);
@@ -51,7 +56,8 @@ export function renderBuild(state, ctx) {
   // Category tabs
   const tabs = el('div', 'cat-tabs');
   for (const c of CATEGORIES) {
-    const t = el('button', 'cat-tab' + (ctx.cat === c.id ? ' active' : ''), `${c.icon} ${c.name}`);
+    const t = el('button', 'cat-tab' + (ctx.cat === c.id ? ' active' : ''),
+      `<span class="ci">${ICONS[CAT_ICON[c.id]] || ''}</span>${c.name}`);
     t.onclick = () => ctx.setCat(c.id);
     tabs.append(t);
   }

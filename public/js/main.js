@@ -10,6 +10,7 @@ import {
   money, num, pct, el,
 } from './ui.js';
 import { BUILDINGS, POP_SCALE } from './data.js';
+import { injectIcons } from './icons.js';
 
 const LS_SAVE = 'sg_save_v1';
 const LS_NAME = 'sg_owner';
@@ -38,6 +39,7 @@ const G = {
 // Boot
 // ===========================================================================
 function boot() {
+  injectIcons(); // swap [data-icon] placeholders for custom SVG icons
   // restore owner name
   const savedName = localStorage.getItem(LS_NAME);
   if (savedName) $('m-owner').value = savedName;
@@ -187,12 +189,12 @@ function updateShortages() {
 
   const alerts = $('alerts');
   const msgs = [];
-  if (power) msgs.push({ t: '⚡ Power shortage — build more generation', warn: false });
-  if (water) msgs.push({ t: '💧 Water shortage — build reservoirs / plants', warn: false });
-  if (d.housingPressure > 1.05) msgs.push({ t: '🏠 Housing shortage — citizens are overcrowded', warn: true });
-  if (d.unemployment > 0.18) msgs.push({ t: '💼 High unemployment — build industry & offices', warn: true });
-  if (G.state.treasury < 0) msgs.push({ t: '💸 Treasury in deficit!', warn: false });
-  if (G.state.approval < 30) msgs.push({ t: '😡 Approval is dangerously low', warn: false });
+  if (power) msgs.push({ t: 'Power shortage — build more generation', warn: false });
+  if (water) msgs.push({ t: 'Water shortage — build reservoirs / plants', warn: false });
+  if (d.housingPressure > 1.05) msgs.push({ t: 'Housing shortage — citizens are overcrowded', warn: true });
+  if (d.unemployment > 0.18) msgs.push({ t: 'High unemployment — build industry & offices', warn: true });
+  if (G.state.treasury < 0) msgs.push({ t: 'Treasury in deficit', warn: false });
+  if (G.state.approval < 30) msgs.push({ t: 'Approval is dangerously low', warn: false });
 
   const key = msgs.map((m) => m.t).join('|');
   if (key === lastShortageKey) return;
@@ -264,8 +266,8 @@ function openPanel(panel) {
 function refreshPanel() {
   const panel = G.currentPanel;
   const title = {
-    build: '🏗️ Build', policy: '⚖️ Policies & Laws',
-    dash: '📊 National Dashboard', events: '📜 National News', cloud: '☁️ Save & Share',
+    build: 'Build', policy: 'Policies & Laws',
+    dash: 'National Dashboard', events: 'National News', cloud: 'Save & Share',
   }[panel] || 'Panel';
   $('sheet-title').textContent = title;
   const content = $('sheet-content');
@@ -389,15 +391,15 @@ function renderCloud() {
   pub.innerHTML = `<input type="checkbox" id="cl-public" checked> List my nation publicly so others can visit`;
   wrap.append(pub);
 
-  const saveBtn = el('button', 'btn btn-primary big', G.cloud ? '☁️ Update Cloud Save' : '☁️ Save to Cloud');
+  const saveBtn = el('button', 'btn btn-primary big', G.cloud ? 'Update Cloud Save' : 'Save to Cloud');
   saveBtn.onclick = () => cloudSave($('cl-public')?.checked !== false);
   wrap.append(saveBtn);
 
-  const localBtn = el('button', 'btn big', '💾 Save Locally Now');
+  const localBtn = el('button', 'btn big', 'Save Locally Now');
   localBtn.onclick = () => { saveLocal(); toast('Saved on this device.'); };
   wrap.append(localBtn);
 
-  const browseBtn = el('button', 'btn big', '🌏 Visit Other Nations');
+  const browseBtn = el('button', 'btn big', 'Visit Other Nations');
   browseBtn.onclick = () => { closeSheet(); openBrowser(); };
   wrap.append(browseBtn);
 
@@ -421,7 +423,7 @@ async function cloudSave(isPublic) {
     }
     G.dirty = false;
     saveLocal();
-    toast('☁️ Saved to cloud!');
+    toast('Saved to cloud');
     if (G.currentPanel === 'cloud') refreshPanel();
   } catch (err) {
     toast('Cloud save failed: ' + err.message);
@@ -440,7 +442,7 @@ function saveLocal() {
 // ===========================================================================
 async function openBrowser() {
   G.currentPanel = 'browse';
-  $('sheet-title').textContent = '🌏 Visit Other Nations';
+  $('sheet-title').textContent = 'Visit Other Nations';
   $('sheet').classList.remove('hidden');
   const content = $('sheet-content');
   content.innerHTML = '';

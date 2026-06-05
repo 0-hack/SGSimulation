@@ -14,9 +14,9 @@
   <!-- ===================== START MENU ===================== -->
   <div id="menu" class="screen menu">
     <div class="menu-card">
-      <div class="flag">🇸🇬</div>
+      <div class="brand"><span class="brand-dot"></span><span class="brand-mark" data-icon="flag"></span></div>
       <h1>Singapore<br><span>Nation Builder</span></h1>
-      <p class="tagline">From independence in 1965 — build the little red dot into a thriving nation.</p>
+      <p class="tagline">From independence in 1965 — grow the little red dot into a thriving nation.</p>
 
       <div class="menu-form">
         <label>Nation name
@@ -27,11 +27,11 @@
         </label>
       </div>
 
-      <button id="btn-new" class="btn btn-primary big">▶ Start New Nation</button>
-      <button id="btn-continue" class="btn big hidden">↻ Continue Saved Game</button>
-      <button id="btn-browse" class="btn big">🌏 Visit Other Nations</button>
+      <button id="btn-new" class="btn btn-primary big">Start New Nation</button>
+      <button id="btn-continue" class="btn big hidden">Continue Saved Game</button>
+      <button id="btn-browse" class="btn ghost big"><span class="bi" data-icon="globe"></span>Visit Other Nations</button>
 
-      <p class="version">A society simulation · save & share on the cloud</p>
+      <p class="version">A society simulation · save &amp; share on the cloud</p>
     </div>
   </div>
 
@@ -41,28 +41,28 @@
     <!-- Top HUD -->
     <header id="hud">
       <div class="hud-left">
-        <button id="btn-menu" class="icon-btn" title="Menu">☰</button>
+        <button id="btn-menu" class="icon-btn" title="Menu"><span data-icon="menu"></span></button>
         <div class="nation">
           <div id="hud-nation" class="nation-name">New Singapura</div>
           <div id="hud-date" class="hud-date">09 Aug 1965</div>
         </div>
       </div>
       <div class="hud-stats">
-        <div class="stat" title="Treasury"><span class="s-ico">💵</span><span id="hud-treasury">$180M</span></div>
-        <div class="stat" title="Population"><span class="s-ico">👥</span><span id="hud-pop">120,000</span></div>
-        <div class="stat" title="Approval"><span class="s-ico">🙂</span><span id="hud-approval">58%</span></div>
+        <div class="stat" title="Treasury"><span class="s-ico" data-icon="money"></span><span id="hud-treasury">$180M</span></div>
+        <div class="stat" title="Population"><span class="s-ico" data-icon="people"></span><span id="hud-pop">120,000</span></div>
+        <div class="stat approval" title="Approval"><span class="s-ico" id="approval-face" data-icon="smile"></span><span id="hud-approval">58%</span></div>
       </div>
       <div class="speed">
-        <button class="spd" data-spd="0" title="Pause">⏸</button>
-        <button class="spd active" data-spd="1" title="Play">▶</button>
-        <button class="spd" data-spd="2" title="Fast">▶▶</button>
-        <button class="spd" data-spd="3" title="Hyper">▶▶▶</button>
+        <button class="spd" data-spd="0" title="Pause"><span data-icon="pause"></span></button>
+        <button class="spd active" data-spd="1" title="Play"><span data-icon="play"></span></button>
+        <button class="spd" data-spd="2" title="Fast"><span data-icon="ff2"></span></button>
+        <button class="spd" data-spd="3" title="Hyper"><span data-icon="ff3"></span></button>
       </div>
     </header>
 
     <!-- Visiting banner -->
     <div id="visit-banner" class="visit-banner hidden">
-      👁️ Viewing <b id="visit-name"></b> — read only
+      <span class="vb-ico" data-icon="pin"></span> Viewing <b id="visit-name"></b>
       <button id="btn-leave-visit" class="btn tiny">Leave</button>
     </div>
 
@@ -77,11 +77,11 @@
 
   <!-- Bottom toolbar — body-level fixed so it always sits above open sheets -->
   <nav id="toolbar" class="hidden">
-    <button class="tool" data-panel="build">🏗️<span>Build</span></button>
-    <button class="tool" data-panel="policy">⚖️<span>Policy</span></button>
-    <button class="tool" data-panel="dash">📊<span>Stats</span></button>
-    <button class="tool" data-panel="events">📜<span>News</span></button>
-    <button class="tool" data-panel="cloud">☁️<span>Save</span></button>
+    <button class="tool" data-panel="build"><span class="t-ico" data-icon="build"></span><span>Build</span></button>
+    <button class="tool" data-panel="policy"><span class="t-ico" data-icon="policy"></span><span>Policy</span></button>
+    <button class="tool" data-panel="dash"><span class="t-ico" data-icon="stats"></span><span>Stats</span></button>
+    <button class="tool" data-panel="events"><span class="t-ico" data-icon="news"></span><span>News</span></button>
+    <button class="tool" data-panel="cloud"><span class="t-ico" data-icon="save"></span><span>Save</span></button>
   </nav>
 
   <!-- ===================== SHEETS / PANELS ===================== -->
@@ -91,7 +91,7 @@
       <div class="sheet-handle"></div>
       <div class="sheet-head">
         <h2 id="sheet-title">Panel</h2>
-        <button id="sheet-close" class="icon-btn">✕</button>
+        <button id="sheet-close" class="icon-btn"><span data-icon="close"></span></button>
       </div>
       <div id="sheet-content" class="sheet-content"></div>
     </div>
@@ -100,7 +100,7 @@
   <!-- ===================== EVENT MODAL ===================== -->
   <div id="event-modal" class="modal hidden">
     <div class="modal-card">
-      <div class="modal-icon">📰</div>
+      <div class="modal-icon" data-icon="news"></div>
       <h2 id="event-title">Event</h2>
       <p id="event-body"></p>
       <div id="event-actions" class="modal-actions"></div>

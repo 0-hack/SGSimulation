@@ -554,12 +554,9 @@ export class Scene3D {
     }
     this.skyColor = sky.clone();
 
-    // City lights: buildings glow warm at night.
+    // City lights: lit windows & buildings glow warm at night.
     const glow = this.nightFactor;
-    for (const m of MAT.values()) {
-      if (!m.__glow) { m.emissive = new THREE.Color(0xffca6a); m.__glow = true; }
-      m.emissiveIntensity = glow * 0.55;
-    }
+    for (const m of ALL_MATS) m.emissiveIntensity = glow * (m.userData.glowK ?? 0.3);
   }
 
   // ---- development: skyline grows taller & denser as the nation matures ----
@@ -724,24 +721,102 @@ function easeOutBack(t) {
 }
 
 // ===========================================================================
-// Building meshes — stylised primitives per type.
+// Building meshes — detailed, realistically-proportioned complexes.
+// Tiles are ~10 units; buildings occupy ~8 units (leaving gaps for streets) and
+// are built as clusters of windowed structures rather than single blocks.
 // Each returned Group sits on the ground (y=0) and grows upward.
 // ===========================================================================
+export const ALL_MATS = []; // every building material, for the night-glow pass
+function reg(m, glowK = 0.22) {
+  m.emissive = new THREE.Color(0xffd9a0); m.emissiveIntensity = 0; m.userData.glowK = glowK;
+  ALL_MATS.push(m); return m;
+}
 const MAT = new Map();
-function mat(color, opts = {}) {
-  const key = color + JSON.stringify(opts);
-  if (!MAT.has(key)) MAT.set(key, new THREE.MeshStandardMaterial({ color, roughness: 0.8, metalness: 0.05, ...opts }));
+function mat(color, opts = {}, glowK = 0.18) {
+  const key = color + JSON.stringify(opts) + glowK;
+  if (!MAT.has(key)) MAT.set(key, reg(new THREE.MeshStandardMaterial({ color, roughness: 0.85, metalness: 0.04, ...opts }), glowK));
   return MAT.get(key);
 }
-function box(w, h, d, color, opts) {
-  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat(color, opts));
-  m.position.y = h / 2; m.castShadow = true; m.receiveShadow = true;
-  return m;
+
+// --- procedural facade textures (colour + emissive window maps) ------------
+const TEX = {};
+function facadeTextures(style) {
+  if (TEX[style]) return TEX[style];
+  const palette = {
+    hdb:    { wall: '#e7ddca', win: '#8aa1ad', ledge: '#cdbfa3' },
+    glass:  { wall: '#6da3c7', win: '#cdeafb', ledge: '#5b8caa' },
+    office: { wall: '#7c8b97', win: '#bfe6ff', ledge: '#6a7884' },
+    hotel:  { wall: '#caa977', win: '#f3e6c8', ledge: '#b6965f' },
+  }[style] || { wall: '#9aa3a8', win: '#c8d2d6', ledge: '#828a8f' };
+  const S = 96;
+  const make = (draw) => {
+    const c = document.createElement('canvas'); c.width = c.height = S;
+    draw(c.getContext('2d'));
+    const t = new THREE.CanvasTexture(c);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 4;
+    return t;
+  };
+  const cols = 4, rows = 4, m = S * 0.07;
+  const gw = (S - m * (cols + 1)) / cols, gh = (S - m * (rows + 1)) / rows;
+  const grid = (x, fill) => {
+    for (let i = 0; i < cols; i++) for (let j = 0; j < rows; j++) fill(x, m + i * (gw + m), m + j * (gh + m), gw, gh);
+  };
+  const map = make((x) => {
+    x.fillStyle = palette.wall; x.fillRect(0, 0, S, S);
+    x.fillStyle = palette.ledge;
+    for (let j = 0; j <= rows; j++) x.fillRect(0, j * (gh + m) - 1, S, 2);
+    grid(x, (g, px, py, w, h) => { g.fillStyle = palette.win; g.fillRect(px, py, w, h); });
+  });
+  const emap = make((x) => {
+    x.fillStyle = '#000'; x.fillRect(0, 0, S, S);
+    grid(x, (g, px, py, w, h) => { g.fillStyle = Math.random() < 0.72 ? '#ffe6b0' : '#1a1208'; g.fillRect(px, py, w, h); });
+  });
+  TEX[style] = { map, emap };
+  return TEX[style];
 }
-function cyl(r, h, color, seg = 12) {
-  const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, h, seg), mat(color));
-  m.position.y = h / 2; m.castShadow = true;
-  return m;
+const FMAT = new Map();
+function facadeMat(style, repX, repY, opts = {}) {
+  const key = `${style}|${repX}x${repY}|${JSON.stringify(opts)}`;
+  if (!FMAT.has(key)) {
+    const { map, emap } = facadeTextures(style);
+    const cm = map.clone(); cm.repeat.set(repX, repY); cm.needsUpdate = true;
+    const ce = emap.clone(); ce.repeat.set(repX, repY); ce.needsUpdate = true;
+    FMAT.set(key, reg(new THREE.MeshStandardMaterial({
+      map: cm, emissiveMap: ce, emissive: 0xffe2a8, emissiveIntensity: 0,
+      roughness: style === 'glass' ? 0.25 : 0.7, metalness: style === 'glass' ? 0.5 : 0.1, ...opts,
+    }), 1.0));
+  }
+  return FMAT.get(key);
+}
+
+// --- primitives ------------------------------------------------------------
+function partBox(w, h, d, material, x = 0, y = h / 2, z = 0) {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
+  m.position.set(x, y, z); m.castShadow = true; m.receiveShadow = true; return m;
+}
+function box(w, h, d, color, opts) { return partBox(w, h, d, mat(color, opts)); }
+function cyl(rt, rb, h, color, x = 0, y = h / 2, z = 0, seg = 14) {
+  const m = new THREE.Mesh(new THREE.CylinderGeometry(rt, rb, h, seg), typeof color === 'object' ? color : mat(color));
+  m.position.set(x, y, z); m.castShadow = true; return m;
+}
+function tower(w, h, d, style, x = 0, z = 0, opts) {
+  const repX = Math.max(1, Math.round(w / 2.6)), repY = Math.max(1, Math.round(h / 3.4));
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), facadeMat(style, repX, repY, opts));
+  m.position.set(x, h / 2, z); m.castShadow = true; m.receiveShadow = true; return m;
+}
+function roofKit(g, x, z, w, d, topY) {
+  g.add(partBox(w + 0.3, 0.5, d + 0.3, mat(0x9aa0a6), x, topY + 0.25, z));
+  g.add(cyl(0.5, 0.5, 0.9, 0x6f757b, x - w * 0.2, topY + 0.9, z - d * 0.2));
+  g.add(partBox(1.2, 0.7, 1.2, mat(0x7d848b), x + w * 0.18, topY + 0.6, z + d * 0.18));
+}
+function treeAt(g, x, z, s = 1) {
+  g.add(cyl(0.18 * s, 0.22 * s, 1.4 * s, 0x7a5836, x, 0.7 * s, z));
+  const f = new THREE.Mesh(new THREE.SphereGeometry(1.0 * s, 7, 6), mat(0x4f9e3f));
+  f.position.set(x, 1.9 * s, z); f.scale.y = 1.2; f.castShadow = true; g.add(f);
+}
+function lawn(g, w, d, color = 0x6fb15a) {
+  const p = new THREE.Mesh(new THREE.PlaneGeometry(w, d), mat(color, {}, 0.1));
+  p.rotation.x = -Math.PI / 2; p.position.y = 0.04; p.receiveShadow = true; g.add(p);
 }
 
 export function makeBuilding(key) {
@@ -749,94 +824,136 @@ export function makeBuilding(key) {
   const g = new THREE.Group();
   const col = parseInt((b.color || '#888888').slice(1), 16);
   const cat = b.cat;
+  const rnd = (a, bb) => a + Math.random() * (bb - a);
 
   if (cat === 'residential') {
     if (key === 'kampong') {
-      g.add(box(6, 2.4, 6, 0x9c7a4d));
-      const roof = new THREE.Mesh(new THREE.ConeGeometry(5, 2.6, 4), mat(0x6b4f2a));
-      roof.position.y = 3.7; roof.rotation.y = Math.PI / 4; roof.castShadow = true; g.add(roof);
+      lawn(g, 9, 9, 0x8aa15a);
+      for (const [dx, dz] of [[-2.2, -1.5], [1.8, -2], [0, 1.8], [2.4, 1.6]]) {
+        g.add(partBox(2.4, 1.8, 2.8, mat(0xb89b6a), dx, 0.9, dz));
+        const roof = new THREE.Mesh(new THREE.ConeGeometry(2.2, 1.3, 4), mat(0x7a5a36));
+        roof.position.set(dx, 2.4, dz); roof.rotation.y = Math.PI / 4; roof.castShadow = true; g.add(roof);
+      }
+      treeAt(g, -3, 2.6, 1.1); treeAt(g, 3, -3, 0.9);
     } else {
-      const h = key === 'hdb_newtown' ? 24 : key === 'condo' ? 20 : 16;
-      const w = key === 'hdb_newtown' ? 7 : 6;
-      g.add(box(w, h, w, col, key === 'condo' ? { metalness: 0.4, roughness: 0.3 } : {}));
-      const cap = box(w + 0.6, 1, w + 0.6, 0xffffff); cap.position.y = h; g.add(cap);
+      lawn(g, 9, 9);
+      const conf = key === 'hdb_newtown'
+        ? { slabs: [[-2.4, -1, 3.6, 16, 2.6], [1.4, -2.2, 3.4, 14, 2.4], [2.2, 1.8, 3.2, 18, 2.4]], style: 'hdb' }
+        : key === 'condo'
+          ? { slabs: [[-1.8, -1, 3.0, 17, 3.0], [1.8, 1.2, 2.8, 14, 2.8]], style: 'glass' }
+          : { slabs: [[-2, -0.5, 3.4, 12, 3.0], [1.8, 0.6, 3.2, 14, 2.8]], style: 'hdb' };
+      for (const [dx, dz, w, h, d] of conf.slabs) { g.add(tower(w, h, d, conf.style, dx, dz)); roofKit(g, dx, dz, w, d, h); }
+      g.add(partBox(8, 1.6, 4.4, mat(0xcdbfa3), 0, 0.8, 2.6));
+      if (key === 'condo') { const pool = new THREE.Mesh(new THREE.PlaneGeometry(3, 1.6), mat(0x49b6e0, { metalness: 0.4, roughness: 0.15 })); pool.rotation.x = -Math.PI / 2; pool.position.set(-2.6, 0.06, 2.8); g.add(pool); }
+      treeAt(g, -3.4, 3, 0.9); treeAt(g, 3.4, -3.2, 0.9);
     }
   } else if (cat === 'power') {
+    lawn(g, 9, 9, 0x9a9f7a);
     if (key === 'solar_farm') {
-      g.add(box(8, 0.6, 8, 0x335a2f));
       for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) {
-        const p = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.2, 2.8), mat(0x16263b, { metalness: 0.6, roughness: 0.2 }));
-        p.position.set(i * 2.6, 1.4, j * 2.8); p.rotation.x = -0.5; p.castShadow = true; g.add(p);
+        const p = partBox(2.3, 0.18, 1.5, mat(0x1c2c44, { metalness: 0.6, roughness: 0.2 }), i * 2.7, 1.1, j * 2.4);
+        p.rotation.x = -0.5; g.add(p);
+        g.add(cyl(0.08, 0.08, 1, 0x555555, i * 2.7, 0.5, j * 2.4));
       }
+      g.add(partBox(1.4, 1.4, 1, mat(0xcfcabb), 3.4, 0.7, 3.4));
     } else {
-      g.add(box(8, 5, 8, col));
-      const chimneys = key === 'power_station' ? 2 : 1;
-      for (let i = 0; i < chimneys; i++) {
-        const ch = cyl(1, 10, 0xbcbcbc); ch.position.set(i * 3 - (chimneys - 1) * 1.5, 5 + 5, i * 2 - 1); g.add(ch);
-        const cap = cyl(1.2, 1, 0x884422); cap.position.set(ch.position.x, 15.2, ch.position.z); g.add(cap);
+      g.add(partBox(8, 4.5, 6, mat(col), 0, 2.25, -0.5));
+      const stacks = key === 'power_station' ? 2 : 1;
+      for (let i = 0; i < stacks; i++) {
+        const x = i * 3 - (stacks - 1) * 1.5;
+        g.add(cyl(0.9, 1.1, 11, 0xc8cacc, x, 5.5, 2.5));
+        g.add(cyl(1.1, 1.1, 0.8, 0xa0531f, x, 11.2, 2.5));
       }
+      if (key === 'power_station') g.add(cyl(2.4, 3.0, 6, 0xd3d6d8, 3, 3, -2.4));
     }
   } else if (cat === 'water') {
+    lawn(g, 9, 9, 0x7da77a);
     if (key === 'reservoir') {
-      const water = new THREE.Mesh(new THREE.CylinderGeometry(5, 5, 0.6, 20), mat(0x3a86c8, { metalness: 0.3, roughness: 0.2 }));
-      water.position.y = 0.4; g.add(water);
-      const rim = new THREE.Mesh(new THREE.TorusGeometry(5, 0.5, 8, 24), mat(0x6a8a4a));
-      rim.rotation.x = Math.PI / 2; rim.position.y = 0.5; g.add(rim);
+      const water = new THREE.Mesh(new THREE.CircleGeometry(4.2, 22), mat(0x2f86c4, { metalness: 0.3, roughness: 0.15 }));
+      water.rotation.x = -Math.PI / 2; water.position.y = 0.12; g.add(water);
+      const rim = new THREE.Mesh(new THREE.TorusGeometry(4.2, 0.45, 8, 26), mat(0x6f8f55));
+      rim.rotation.x = Math.PI / 2; rim.position.y = 0.4; g.add(rim);
+      g.add(partBox(0.5, 0.5, 3, mat(0x8a6f4a), 4, 0.4, 0));
     } else {
-      g.add(box(8, 3, 8, 0x9aa6ad));
+      g.add(partBox(6, 2.6, 4, mat(0x9aa6ad), -1.5, 1.3, -1.5));
       const tanks = key === 'desal' ? 3 : 2;
-      for (let i = 0; i < tanks; i++) { const t = cyl(1.8, 6, col); t.position.set(i * 4 - (tanks - 1) * 2, 0, 1.5); g.add(t); }
+      for (let i = 0; i < tanks; i++) g.add(cyl(1.5, 1.5, 4.5, col, i * 3.2 - (tanks - 1) * 1.6, 2.25, 1.6));
+      const pipe = cyl(0.25, 0.25, 6, 0x6f757b, 0, 0.6, 1.6); pipe.rotation.z = Math.PI / 2; g.add(pipe);
     }
   } else if (cat === 'industry') {
     if (key === 'office') {
-      g.add(box(7, 26, 7, col, { metalness: 0.5, roughness: 0.2 }));
-      const top = box(7.2, 1, 7.2, 0x88ccff, { metalness: 0.6 }); top.position.y = 26; g.add(top);
+      lawn(g, 9, 9, 0x86a6a0);
+      g.add(tower(4.2, 24, 4.2, 'office', -1.6, -0.8));
+      g.add(tower(3.4, rnd(16, 20), 3.4, 'glass', 1.8, 1.2, { metalness: 0.6 }));
+      roofKit(g, -1.6, -0.8, 4.2, 4.2, 24);
+      g.add(cyl(0.12, 0.12, 3, 0xdddddd, -1.6, 25.6, -0.8));
+      g.add(partBox(7, 2, 4, mat(0x9fb0bd), 0, 1, 2.4));
     } else if (key === 'port') {
-      g.add(box(9, 1.2, 9, 0x6b7a86));
-      for (const cx of [-2.5, 2.5]) {
-        const crane = box(0.6, 14, 0.6, 0xffb300); crane.position.set(cx, 0, -2); g.add(crane);
-        const arm = box(0.6, 0.6, 8, 0xffb300); arm.position.set(cx, 13.5, 1); g.add(arm);
+      g.add(partBox(9, 0.8, 9, mat(0x7a8893), 0, 0.4, 0));
+      for (const cx of [-2.6, 2.6]) {
+        g.add(partBox(0.5, 13, 0.5, mat(0xf2b134), cx, 6.5, -2));
+        g.add(partBox(0.5, 13, 0.5, mat(0xf2b134), cx + 1.4, 6.5, -2));
+        g.add(partBox(0.5, 0.6, 8, mat(0xf2b134), cx + 0.7, 12.6, 1));
+        g.add(partBox(1.2, 1.4, 1.4, mat(0x33414d), cx + 0.7, 11.4, 3.8));
       }
-      const cont = [0xd84141, 0x3f7fd8, 0x4caf50, 0xffb300];
-      for (let i = 0; i < 5; i++) { const cb = box(2, 1.6, 4, cont[i % 4]); cb.position.set(2 + (i % 2) * 2.2, (Math.floor(i / 2)) * 1.6, 3); g.add(cb); }
+      const cc = [0xd84141, 0x3f7fd8, 0x4caf50, 0xf2b134, 0xe06c2a];
+      for (let i = 0; i < 8; i++) g.add(partBox(1.9, 1.5, 3.6, mat(cc[i % cc.length]), -3 + (i % 3) * 2, 0.8 + Math.floor(i / 3) * 1.5, 3));
     } else if (key === 'tourism') {
-      g.add(box(9, 6, 9, col));
-      for (const dx of [-3, 0, 3]) { const dome = new THREE.Mesh(new THREE.SphereGeometry(2.4, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), mat(0xe6b3d8, { metalness: 0.4 })); dome.position.set(dx, 6, 0); dome.castShadow = true; g.add(dome); }
-    } else { // factory
-      g.add(box(8, 5, 8, col));
-      const ch = cyl(1, 8, 0xb0b0b0); ch.position.set(2.5, 5, 2.5); g.add(ch);
-      const saw = box(8, 1.4, 8, 0x8a6f55); saw.position.y = 5; g.add(saw);
+      lawn(g, 9, 9, 0x86a6a0);
+      g.add(partBox(8, 2.4, 6, mat(0xcaa977), 0, 1.2, 0));
+      for (const dx of [-2.4, 0, 2.4]) g.add(tower(2.2, rnd(12, 17), 4.2, 'hotel', dx, -0.4));
+      g.add(partBox(7.5, 1.4, 2, mat(0xb6965f), 0, 17.6, -0.4));
+      for (let i = -3; i <= 3; i += 1.5) treeAt(g, i, -0.4, 0.4);
+      const pool = new THREE.Mesh(new THREE.PlaneGeometry(6, 1.4), mat(0x49b6e0, { roughness: 0.15, metalness: 0.4 })); pool.rotation.x = -Math.PI / 2; pool.position.set(0, 18.4, -0.4); g.add(pool);
+    } else {
+      lawn(g, 9, 9, 0x9a9f7a);
+      g.add(partBox(8, 4, 5.5, mat(col), 0, 2, -0.8));
+      for (let i = -2.6; i <= 2.6; i += 1.7) {
+        const s = new THREE.Mesh(new THREE.BoxGeometry(0.9, 1.2, 5.5), mat(0x8a6f55)); s.position.set(i, 4.5, -0.8); s.rotation.z = 0.5; s.castShadow = true; g.add(s);
+      }
+      g.add(cyl(0.8, 1, 8, 0xb6b6b6, 2.8, 4, 2.4));
+      g.add(cyl(1.4, 1.4, 3, 0xc9cfd2, -3, 1.5, 2.6));
     }
   } else if (cat === 'civic') {
     if (key === 'hospital') {
-      g.add(box(8, 8, 8, 0xf2f2f2));
-      const v = box(1.4, 4, 0.6, 0xe53935); v.position.y = 8 - 2 + 0.3 + 4; v.position.set(0, 6, 4.1); g.add(v);
-      const hbar = box(4, 1.4, 0.6, 0xe53935); hbar.position.set(0, 6, 4.1); g.add(hbar);
+      lawn(g, 9, 9, 0x86a6a0);
+      g.add(tower(6.5, 9, 4, 'glass', 0, -0.6, { color: 0xf4f6f7 }));
+      g.add(partBox(3, 5, 3, mat(0xeef1f3), -3.4, 2.5, 1.6));
+      g.add(partBox(3, 5, 3, mat(0xeef1f3), 3.4, 2.5, 1.6));
+      g.add(partBox(1.5, 4.4, 0.4, mat(0xe23744), 0, 6.6, 1.45));
+      g.add(partBox(4.4, 1.5, 0.4, mat(0xe23744), 0, 6.6, 1.45));
+      const heli = new THREE.Mesh(new THREE.CircleGeometry(2.3, 18), mat(0x6a7078)); heli.rotation.x = -Math.PI / 2; heli.position.set(0, 9.1, -0.6); g.add(heli);
     } else if (key === 'mrt') {
-      for (const px of [-3, 3]) { const pil = box(1, 5, 1, 0xbdbdbd); pil.position.set(px, 0, 0); g.add(pil); }
-      const deck = box(9, 1, 4, 0x9e9e9e); deck.position.y = 5.5; g.add(deck);
-      const train = box(8, 2.2, 3, col); train.position.y = 7.1; g.add(train);
+      lawn(g, 9, 9);
+      for (const px of [-3.5, 0, 3.5]) g.add(partBox(1, 5, 1, mat(0xc4c8cc), px, 2.5, 0));
+      g.add(partBox(9, 0.8, 4.4, mat(0x9aa0a6), 0, 5.4, 0));
+      const train = tower(8, 2.4, 3, 'glass', 0, 0, { color: col }); train.position.y = 7; g.add(train);
+      g.add(partBox(9.4, 0.4, 5, mat(0xbfd6e6, { metalness: 0.3 }), 0, 8.6, 0));
     } else if (key === 'school') {
-      g.add(box(9, 4, 7, col));
-      const pole = cyl(0.2, 7, 0xcccccc); pole.position.set(4, 4, 3); g.add(pole);
-      const flag = box(2, 1.2, 0.1, 0xe53935); flag.position.set(5, 9.5, 3); g.add(flag);
-    } else { // police
-      g.add(box(7, 5, 7, col));
-      const light = box(1, 0.8, 1, 0x2244ff); light.position.y = 5; g.add(light);
+      lawn(g, 9, 9, 0x6fb15a);
+      g.add(partBox(7, 3.6, 3, mat(col), 0, 1.8, -2.2));
+      g.add(partBox(3, 3.4, 4.5, mat(0xf0ead8), -3.5, 1.7, 1));
+      const field = new THREE.Mesh(new THREE.CircleGeometry(2.6, 20), mat(0x4f9e3f)); field.rotation.x = -Math.PI / 2; field.position.set(1.6, 0.05, 1.8); g.add(field);
+      g.add(cyl(0.12, 0.12, 6, 0xcfd3d6, 3.4, 3, -2.2));
+      g.add(partBox(1.8, 1.1, 0.08, mat(0xe23744), 4.25, 5.4, -2.2));
+    } else {
+      lawn(g, 9, 9);
+      g.add(partBox(6, 4, 5, mat(col), 0, 2, 0));
+      g.add(tower(2.4, 7, 2.4, 'office', 2.4, -1, { color: 0x4a5b8a }));
+      g.add(cyl(0.5, 0.5, 0.8, 0x2a44dd, -1.5, 4.4, 1.8));
     }
   } else if (cat === 'green') {
+    lawn(g, 9.4, 9.4, key === 'gardens' ? 0x4f9e3a : 0x66bd5a);
     if (key === 'gardens') {
-      g.add(new THREE.Mesh(new THREE.CircleGeometry(6, 18), mat(0x4f9e3a)).rotateX(-Math.PI / 2));
-      for (const [dx, dz, h, c] of [[-2, -1, 14, 0xa64ca6], [2, 1, 18, 0x6a3d9a], [0, 3, 12, 0xc06cc0]]) {
-        const trunk = cyl(0.8, h, 0x6b4f2a); trunk.position.set(dx, 0, dz); g.add(trunk);
-        const top = new THREE.Mesh(new THREE.ConeGeometry(3, 5, 8), mat(c)); top.position.set(dx, h, dz); top.castShadow = true; g.add(top);
+      for (const [dx, dz, h, c] of [[-2.4, -1.4, 13, 0x9b4fa0], [2, 1, 17, 0x6a3d9a], [0.4, 3, 11, 0xc06cc0], [3, -2.4, 9, 0x7e4fae]]) {
+        g.add(cyl(0.5, 0.8, h, 0x6b4f2a, dx, h / 2, dz));
+        const top = new THREE.Mesh(new THREE.ConeGeometry(2.4, 4.6, 9), mat(c)); top.position.set(dx, h + 0.6, dz); top.castShadow = true; g.add(top);
       }
-    } else { // park
-      const ground = new THREE.Mesh(new THREE.CircleGeometry(5, 16), mat(0x5bbf6a)); ground.rotation.x = -Math.PI / 2; ground.position.y = 0.05; g.add(ground);
-      for (const [dx, dz] of [[-2, -1], [2, 1], [0, 2.5], [-2.5, 2]]) {
-        const trunk = cyl(0.4, 2.2, 0x6b4f2a); trunk.position.set(dx, 0, dz); g.add(trunk);
-        const leaf = new THREE.Mesh(new THREE.ConeGeometry(1.8, 3.4, 8), mat(0x3f9e3a)); leaf.position.set(dx, 2.4, dz); leaf.castShadow = true; g.add(leaf);
-      }
+      const dome = new THREE.Mesh(new THREE.SphereGeometry(2.2, 14, 9, 0, Math.PI * 2, 0, Math.PI / 2), mat(0xbfe6c8, { metalness: 0.3, roughness: 0.2, transparent: true, opacity: 0.85 }));
+      dome.position.set(-2.6, 0.1, 2.6); g.add(dome);
+    } else {
+      const pond = new THREE.Mesh(new THREE.CircleGeometry(1.8, 18), mat(0x49b6e0, { roughness: 0.2 })); pond.rotation.x = -Math.PI / 2; pond.position.set(1.6, 0.06, -1.4); g.add(pond);
+      for (const [dx, dz, s] of [[-2.6, -1.6, 1.2], [2.2, 1.8, 1.0], [-1, 2.4, 0.9], [-3, 1.5, 0.8], [2.8, -2.6, 1.1]]) treeAt(g, dx, dz, s);
     }
   } else {
     g.add(box(6, 6, 6, col));

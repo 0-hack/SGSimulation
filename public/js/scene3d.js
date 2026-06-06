@@ -71,16 +71,16 @@ const AIRPORT = {
   overrun: 4,          // paved overrun past each threshold
   taxiOff: 9,          // continuous parallel taxiway offset (localX, inland of runway)
   taxiHalfW: 1.6,      // parallel-taxiway half-width
-  apronOff: 18,        // apron centre offset across the runway, inland (+localX)
+  apronOff: 15,        // apron centre offset across the runway, inland (+localX)
   apronHalfW: 8,       // apron half-width
-  apronHalfL: 15,      // apron half-length (a compact parking, toward one end)
-  apronCzFrac: -0.4,   // apron/building cluster offset toward the south end (× runway half-length)
+  apronHalfL: 12,      // apron half-length (a compact parking, toward one end)
+  apronCzFrac: -0.1,   // apron/building cluster offset along the runway (× runway half-length)
   apronLinks: 4,       // short links from the apron to the parallel taxiway
   linkW: 2.4,          // taxiway/link width
-  pierOff: 21,         // finger-pier offset (aircraft dock against it)
-  termOff: 31,         // terminal building offset across the runway, inland (set back)
-  hangarOff: 34,       // maintenance hangars offset, inland
-  carparkOff: 43,      // landside car park offset
+  pierOff: 19,         // finger-pier offset (aircraft dock against it)
+  termOff: 30,         // terminal offset (rotated 90°: tower toward the apron, slab inland)
+  carparkOff: 36,      // landside car park offset
+  hangarOff: 33,       // maintenance hangars offset, inland
   termScale: 0.6,      // terminal/hangar shrunk toward normal building scale
   planeScale: 0.5,     // airliners ~one building-length
 };
@@ -623,17 +623,22 @@ export class Scene3D {
       pl.position.set(AIRPORT.pierOff - 9, 0, apCz - apHL * 0.5 + i * (apHL / (gates - 1)));
       pl.rotation.y = faceApron; g.add(pl);
     }
-    // --- terminal: multi-storey block + control tower, set back behind the pier ---
+    // --- terminal rotated 90°: the control tower (tallest part) points at the apron,
+    //     the slab + concourse run inland ---
     const term = makeTerminal(); term.scale.setScalar(sc);
-    term.position.set(AIRPORT.termOff, 0, apCz); term.rotation.y = faceApron; g.add(term);
-    // --- a row of maintenance hangars off to one end (north of the terminal) ---
+    term.position.set(AIRPORT.termOff, 0, apCz); term.rotation.y = 0; g.add(term);
+    // --- car park inline on the terminal's left side (−Z) ---
+    const carZ = apCz - 15;
+    slab(20, 13, 0x6d6f74, AIRPORT.carparkOff, carZ, 0.12);
+    addCars(g, AIRPORT.carparkOff, carZ, 18, 12);
+    // --- maintenance hangars beyond the car park, the row tilted ~30° off the grid ---
+    const hg = new THREE.Group();
+    hg.position.set(AIRPORT.hangarOff, 0, carZ - 16); hg.rotation.y = faceApron + Math.PI / 6;
     for (let i = 0; i < 3; i++) {
       const h = makeHangar(); h.scale.setScalar(sc);
-      h.position.set(AIRPORT.hangarOff, 0, apCz + 22 + i * 11); h.rotation.y = faceApron; g.add(h);
+      h.position.set(0, 0, (i - 1) * 11); hg.add(h);
     }
-    // --- landside car park behind the terminal ---
-    slab(15, apHL * 1.5, 0x6d6f74, AIRPORT.carparkOff, apCz - 2, 0.12);
-    addCars(g, AIRPORT.carparkOff, apCz - 2, 13, apHL * 1.4);
+    g.add(hg);
 
     // --- footprint mask (unbuildable) ---
     this.airportMask = Array.from({ length: N }, () => Array(N).fill(false));
@@ -645,7 +650,7 @@ export class Scene3D {
       const lx = ox * cosr - oz * sinr, lz = ox * sinr + oz * cosr;
       const onRunway = Math.abs(lx) < halfW + 2 && Math.abs(lz) < halfL;
       const onTaxi = Math.abs(lx - txOff) < txHW + 2 && Math.abs(lz) < halfL;
-      const onComplex = lx > 1 && lx < AIRPORT.carparkOff + 9 && lz > apCz - apHL - 8 && lz < apCz + apHL + 36;
+      const onComplex = lx > 1 && lx < AIRPORT.termOff + 22 && lz > apCz - 50 && lz < apCz + apHL + 6;
       if (onRunway || onTaxi || onComplex) this.airportMask[y][x] = true;
     }
   }

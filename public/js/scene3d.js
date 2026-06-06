@@ -5,7 +5,7 @@
 // main.js expects from the old 2D view.
 import * as THREE from './vendor/three.module.js';
 import { BUILDINGS, GRID_SIZE, ROAD_TYPES } from './data.js';
-import { SG_OUTLINE, SG_ISLANDS, pointInPolygon, landMask, inReservoir, reservoirArea, inRiver, reservoirBranches, riverBranches } from './shape.js';
+import { SG_OUTLINE, SG_ISLANDS, SG_RESERVOIRS, pointInPolygon, landMask, inReservoir, reservoirArea, inRiver, reservoirBranches, riverBranches } from './shape.js';
 
 const N = GRID_SIZE;
 const WORLD = N * 10;         // world units across the bounding box (TILE stays ~10)
@@ -302,18 +302,36 @@ export class Scene3D {
       if (inReservoir(x, y, N)) this.reserveMask[y][x] = true;
       if (inRiver(x, y, N)) this.riverMask[y][x] = true;
     }
-    // The water itself is drawn as SMOOTH, slim, branching ribbons (independent
-    // of the cell grid) so the reservoirs and river read as real dendritic
-    // shapes when seen from afar.
+    // Reservoirs are drawn as filled dendritic LAKES traced from the survey map;
+    // the river is still a slim swept ribbon. One unified water colour so the
+    // river, reservoirs, coastal inlets and the open sea all read as one body.
     if (this.catchGroup) this.scene.remove(this.catchGroup);
     this.catchGroup = new THREE.Group(); this.scene.add(this.catchGroup);
-    // One unified water colour so the river, reservoirs, coastal inlets and the
-    // open sea all read as the same body of water and merge seamlessly.
     const sMat = toon(0x8aa15a, { side: THREE.DoubleSide });            // muddy/grassy bank
     const wMat = new THREE.MeshToonMaterial({ color: SEA_COLOR, transparent: true, opacity: 0.95, side: THREE.DoubleSide, gradientMap: toonGradient() });
-    const branches = [...reservoirBranches(N), ...riverBranches(N)];
-    for (const br of branches) this._waterRibbon(br, 2.0, 0.1, sMat);   // banks first (lower)
-    for (const br of branches) this._waterRibbon(br, 0, 0.18, wMat);    // water on top
+    for (const poly of SG_RESERVOIRS) this._reservoirLake(poly, sMat, wMat);
+    const branches = riverBranches(N);
+    for (const br of branches) this._waterRibbon(br, 2.0, 0.1, sMat);   // river banks first (lower)
+    for (const br of branches) this._waterRibbon(br, 0, 0.18, wMat);    // river water on top
+  }
+
+  // A filled reservoir lake from a normalised polygon: a flat water surface with
+  // a slightly wider muddy bank just beneath it (scaled about the lake centroid).
+  _reservoirLake(poly, bankMat, waterMat) {
+    if (!poly || poly.length < 3) return;
+    const shape = new THREE.Shape();
+    let cx = 0, cz = 0;
+    poly.forEach(([nx, ny], i) => {
+      const x = (nx - 0.5) * WORLD, y = (ny - 0.5) * WORLD;            // +Y(north) -> -Z after rotateX
+      i === 0 ? shape.moveTo(x, y) : shape.lineTo(x, y);
+      cx += x; cz += -y;
+    });
+    cx /= poly.length; cz /= poly.length;
+    const mk = (yy, mat) => { const g = new THREE.ShapeGeometry(shape); g.rotateX(-Math.PI / 2); const m = new THREE.Mesh(g, mat); m.position.y = yy; m.receiveShadow = true; return m; };
+    const bank = mk(0.08, bankMat);                                     // wider muddy rim
+    const bs = 1.06; bank.scale.set(bs, 1, bs); bank.position.set((1 - bs) * cx, 0.08, (1 - bs) * cz);
+    this.catchGroup.add(bank);
+    this.catchGroup.add(mk(0.2, waterMat));                            // water surface on top
   }
 
   // Build one smooth water ribbon from a branch (polyline of {x,y,w} cell coords),

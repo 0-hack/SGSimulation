@@ -1,122 +1,102 @@
-// Re-process the traced 1966 road graph (thousands of tiny straight edges) into
-// smooth STROKES. Real roads flow through intersections, so we trace strokes:
-// from an unused edge, keep extending through each node along the straightest
-// continuation, then Chaikin-smooth and prune stubby spurs. Emits
-// ROAD_NODES_1966 (stroke endpoints) + ROAD_CHAINS_1966 (smoothed polylines).
-import { ROAD_NODES_1966, ROAD_EDGES_1966, RESERVOIRS_1966 } from '../public/js/roads1966.js';
+// Clean + smooth the traced 1966 road graph WITHOUT changing its topology, so
+// the network stays faithful to the trace and fully interconnected:
+//   1. drop tiny isolated specks (noise),
+//   2. prune very short dead-end hairs (skeleton spurs),
+//   3. Taubin-smooth node positions (de-jagged, no shrinkage) — every original
+//      edge is kept, junctions keep connecting.
+// Emits ROAD_NODES_1966 + ROAD_EDGES_1966 ([a,b,oneway]) + RESERVOIRS_1966.
+import { ROAD_NODES_1966, ROAD_EDGES_1966, RESERVOIRS_1966 } from '/tmp/roads_orig.js';
 import { writeFileSync } from 'node:fs';
 
-const N = ROAD_NODES_1966.map(([x, z]) => ({ x, z }));
-const adj = Array.from({ length: N.length }, () => new Set());
-const owKey = (a, b) => (a < b ? a + ',' + b : b + ',' + a);
-const oneway = new Map();
+let N = ROAD_NODES_1966.map(([x, z]) => ({ x, z }));
+// undirected edge set with oneway flag
+const eMap = new Map();                       // "a:b" -> oneway
+const ek = (a, b) => (a < b ? a + ':' + b : b + ':' + a);
 for (const [a, b, ow] of ROAD_EDGES_1966) {
-  if (a === b) continue; adj[a].add(b); adj[b].add(a);
-  if (ow) oneway.set(owKey(a, b), true);
+  if (a === b || a == null || b == null) continue;
+  const k = ek(a, b);
+  eMap.set(k, eMap.get(k) || !!ow);
 }
+let edges = [...eMap.keys()].map((k) => { const [a, b] = k.split(':').map(Number); return { a, b, ow: eMap.get(k) }; });
 
-const eKey = (a, b) => (a < b ? a + ':' + b : b + ':' + a);
-const used = new Set();
-const heading = (i, j) => { const dx = N[j].x - N[i].x, dz = N[j].z - N[i].z; const l = Math.hypot(dx, dz) || 1; return [dx / l, dz / l]; };
+const buildAdj = () => {
+  const adj = Array.from({ length: N.length }, () => new Set());
+  for (const { a, b } of edges) { adj[a].add(b); adj[b].add(a); }
+  return adj;
+};
+const dist = (i, j) => Math.hypot(N[i].x - N[j].x, N[i].z - N[j].z);
 
-// extend a stroke from node `cur` (arriving along heading h) picking the
-// unused neighbour whose direction best continues h (max dot, > cos120°).
-function extend(prev, cur, push) {
-  for (;;) {
-    const [hx, hz] = heading(prev, cur);
-    let best = -1, bestDot = -0.5;     // require turn < ~120°
-    for (const k of adj[cur]) {
-      if (k === prev) continue;
-      if (used.has(eKey(cur, k))) continue;
-      const [dx, dz] = heading(cur, k);
-      const dot = dx * hx + dz * hz;
-      if (dot > bestDot) { bestDot = dot; best = k; }
-    }
-    if (best === -1) break;
-    used.add(eKey(cur, best));
-    push(best);
-    prev = cur; cur = best;
+// --- 1. keep only sizeable connected components (drop floating specks) ---
+{
+  const adj = buildAdj();
+  const comp = new Array(N.length).fill(-1);
+  let nc = 0;
+  for (let s = 0; s < N.length; s++) {
+    if (comp[s] !== -1 || adj[s].size === 0) continue;
+    const stack = [s]; comp[s] = nc; const members = [s];
+    while (stack.length) { const u = stack.pop(); for (const v of adj[u]) if (comp[v] === -1) { comp[v] = nc; members.push(v); stack.push(v); } }
+    nc++;
   }
+  // component total edge length
+  const compLen = new Array(nc).fill(0);
+  for (const { a, b } of edges) compLen[comp[a]] += dist(a, b);
+  const compCnt = new Array(nc).fill(0);
+  for (let i = 0; i < N.length; i++) if (comp[i] >= 0) compCnt[comp[i]]++;
+  const keep = (c) => compLen[c] >= 18 || compCnt[c] >= 6;   // drop tiny isolated bits
+  edges = edges.filter(({ a }) => keep(comp[a]));
 }
 
-const strokes = [];
-// seed from every edge; strongest seeds first doesn't matter much
-const allEdges = [];
-for (let a = 0; a < N.length; a++) for (const b of adj[a]) if (a < b) allEdges.push([a, b]);
-for (const [a, b] of allEdges) {
-  if (used.has(eKey(a, b))) continue;
-  used.add(eKey(a, b));
-  const path = [a, b];
-  extend(a, b, (k) => path.push(k));               // forward
-  const back = [];
-  extend(b, a, (k) => back.push(k));               // backward
-  back.reverse(); const full = back.concat(path);
-  strokes.push(full);
+// --- 2. iteratively prune short dead-end hairs ---
+for (let pass = 0; pass < 4; pass++) {
+  const adj = buildAdj();
+  const before = edges.length;
+  edges = edges.filter(({ a, b }) => {
+    const da = adj[a].size, db = adj[b].size;
+    const isHair = (da === 1 || db === 1) && dist(a, b) < 4.5;   // a stubby spur tip
+    return !isHair;
+  });
+  if (edges.length === before) break;
 }
 
-const plen = (path) => { let s = 0; for (let i = 1; i < path.length; i++) s += Math.hypot(N[path[i]].x - N[path[i - 1]].x, N[path[i]].z - N[path[i - 1]].z); return s; };
+// --- compact node indices to those still referenced ---
+{
+  const used = new Set();
+  for (const { a, b } of edges) { used.add(a); used.add(b); }
+  const remap = new Map(); const newN = [];
+  for (const i of used) { remap.set(i, newN.length); newN.push(N[i]); }
+  N = newN;
+  edges = edges.map(({ a, b, ow }) => ({ a: remap.get(a), b: remap.get(b), ow }));
+}
 
-function chaikin(pts, iters) {
-  let p = pts;
-  for (let it = 0; it < iters; it++) {
-    if (p.length < 3) break;
-    const out = [p[0]];
-    for (let i = 0; i < p.length - 1; i++) {
-      const a = p[i], b = p[i + 1];
-      out.push({ x: a.x * 0.75 + b.x * 0.25, z: a.z * 0.75 + b.z * 0.25 });
-      out.push({ x: a.x * 0.25 + b.x * 0.75, z: a.z * 0.25 + b.z * 0.75 });
-    }
-    out.push(p[p.length - 1]);
-    p = out;
+// --- 3. Taubin smoothing (λ then μ) of node positions: de-jagged, no shrink ---
+function smoothPass(weight) {
+  const adj = buildAdj();
+  const out = N.map((p) => ({ x: p.x, z: p.z }));
+  for (let i = 0; i < N.length; i++) {
+    const nb = adj[i]; if (nb.size === 0) continue;
+    let sx = 0, sz = 0;
+    for (const j of nb) { sx += N[j].x; sz += N[j].z; }
+    const ax = sx / nb.size, az = sz / nb.size;
+    out[i].x = N[i].x + weight * (ax - N[i].x);
+    out[i].z = N[i].z + weight * (az - N[i].z);
   }
-  return p;
+  N = out;
 }
-function decimate(pts, minD) {
-  if (pts.length < 3) return pts;
-  const out = [pts[0]]; let last = pts[0];
-  for (let i = 1; i < pts.length - 1; i++) {
-    if (Math.hypot(pts[i].x - last.x, pts[i].z - last.z) >= minD) { out.push(pts[i]); last = pts[i]; }
-  }
-  out.push(pts[pts.length - 1]);
-  return out;
-}
+for (let it = 0; it < 6; it++) { smoothPass(0.55); smoothPass(-0.54); }   // Taubin λ/μ
 
 const round = (v) => Math.round(v * 10) / 10;
-const jIndex = new Map(); const outNodes = [];
-function nodeIdAt(p) {                              // snap endpoints to a shared node within 4u
-  for (const [key, id] of jIndex) { const o = outNodes[id]; if (Math.hypot(o[0] - p.x, o[1] - p.z) < 4) return id; }
-  const id = outNodes.length; outNodes.push([round(p.x), round(p.z)]); jIndex.set(id, id); return id;
-}
+const outNodes = N.map((p) => [round(p.x), round(p.z)]);
+const outEdges = edges.map(({ a, b, ow }) => `[${a},${b},${ow ? 1 : 0}]`);
 
-const outChains = [];
-for (const path of strokes) {
-  const L = plen(path);
-  if (L < 7 && path.length <= 3) continue;          // drop tiny specks / stubs
-  const raw = path.map((i) => N[i]);
-  let sm = chaikin(raw, 3);
-  sm = decimate(sm, 2.2);
-  sm[0] = raw[0]; sm[sm.length - 1] = raw[raw.length - 1];
-  const owVotes = []; for (let i = 1; i < path.length; i++) owVotes.push(oneway.has(owKey(path[i - 1], path[i])));
-  const ow = owVotes.filter(Boolean).length > owVotes.length / 2;
-  const a = nodeIdAt(sm[0]), b = nodeIdAt(sm[sm.length - 1]);
-  outChains.push([a, b, ow ? 1 : 0, sm.map((p) => [round(p.x), round(p.z)])]);
-}
-
-const fmtPts = (pts) => '[' + pts.map(([x, z]) => `[${x},${z}]`).join(',') + ']';
 const body = `// 1966 Singapore road network + reservoirs, traced from the 1966 survey map
-// (NUS Libmaps GeoTIFF), georeferenced onto the game island. Auto-generated.
-// NODES: [x, z] world coords (stroke endpoints).
-// CHAINS: [aNode, bNode, oneway, [[x,z]...] smoothed polyline].
-// RESERVOIRS: normalised polygons.
+// (NUS Libmaps GeoTIFF), georeferenced onto the game island. Auto-generated:
+// the full interconnected trace, de-noised and Taubin-smoothed (topology kept).
+// NODES: [x, z] world coords.  EDGES: [a, b, oneway].  RESERVOIRS: normalised polygons.
 export const ROAD_NODES_1966 = [${outNodes.map(([x, z]) => `[${x},${z}]`).join(', ')}];
 
-export const ROAD_CHAINS_1966 = [
-${outChains.map(([a, b, ow, pts]) => `[${a},${b},${ow},${fmtPts(pts)}]`).join(',\n')}
-];
+export const ROAD_EDGES_1966 = [${outEdges.join(',')}];
 
 export const RESERVOIRS_1966 = ${JSON.stringify(RESERVOIRS_1966)};
 `;
 writeFileSync(new URL('../public/js/roads1966.js', import.meta.url), body);
-const totalPts = outChains.reduce((s, c) => s + c[3].length, 0);
-const lens = outChains.map((c, i) => plen(strokes[i] || [])); // approx
-console.log(`strokes=${strokes.length} kept=${outChains.length} nodes=${outNodes.length} avgPts=${(totalPts / outChains.length).toFixed(1)} totalPts=${totalPts}`);
+console.log(`nodes=${outNodes.length} edges=${outEdges.length} oneway=${edges.filter((e) => e.ow).length}`);

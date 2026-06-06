@@ -1443,13 +1443,13 @@ export class Scene3D {
       const pts = this._sampleEdge(roads, e);
       if (pts.length < 2) return;
       if (e.traced) {
-        // a traced historical road: a slim, smoothly-curving carriageway. Real
-        // 1966 roads were narrow, so we render a thin ribbon, no stop lines at
-        // every joint, and just a centre line for two-way streets.
+        // a traced historical road: a slim carriageway. The network is a dense
+        // graph of short segments, so we draw just a thin asphalt ribbon with a
+        // pale shoulder — no per-joint stop lines or centre dashes (which would
+        // clutter every tiny segment). The shared nodes keep it interconnected.
         const hw = 0.95;
         ribbon(pave, pts, hw + 0.4, 0.0);
         ribbon(road, pts, hw, 0.03);
-        if (!e.oneway) markLine(pts, 0, false, 0.06);   // single solid centre line
         return;
       }
       const hw = T.width / 2, L = e.lanes || T.lanes, lw = T.width / L;

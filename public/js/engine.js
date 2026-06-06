@@ -5,7 +5,7 @@ import {
   HISTORICAL_EVENTS, RANDOM_EVENTS,
 } from './data.js';
 import { pointInPolygon, inReservoir, inRiver } from './shape.js';
-import { ROAD_NODES_1966, ROAD_CHAINS_1966 } from './roads1966.js';
+import { ROAD_NODES_1966, ROAD_EDGES_1966 } from './roads1966.js';
 
 // Is grid cell (x,y) on the island (land), not in the reservoir, not in the river?
 function isLandCell(x, y) {
@@ -79,19 +79,25 @@ function cellWorld(x, y) {
 // Recreate roughly how Singapore looked at independence: a small developed town
 // in the south (the colonial city/port) with a sparse street grid, and a handful
 // of kampongs dotted across an otherwise rural island. Players build out the rest.
-function seed1965(state) {
-  // The real 1966 road network (traced from the survey map, georeferenced onto the
-  // island) is the starting infrastructure — no colonial street grid or town blocks.
-  // One-way streets carry a `oneway` flag (lanes: 1). The old houses/roads are gone.
-  const roads = state.roads;
+// Inject the traced 1966 road network into a roads object: the full, smoothed,
+// interconnected graph — nodes shared between edges so the streets connect at
+// every junction. One-way streets carry a `oneway` flag (lanes: 1). `traced`
+// marks them for the slim, no-stop-line rendering. Seeded only once.
+function injectTracedRoads(roads) {
+  const base = roads.nodes.length;
   for (const [x, z] of ROAD_NODES_1966) roads.nodes.push({ x, z, y: 0 });
-  // each chain is a smoothed polyline (real roads curve); `poly` carries the
-  // full centre-line so the renderer/traffic follow the curve, not a straight a→b.
-  for (const [a, b, ow, pts] of ROAD_CHAINS_1966)
+  for (const [a, b, ow] of ROAD_EDGES_1966)
     roads.edges.push({
-      a, b, ctrl: null, poly: pts.map(([x, z]) => ({ x, z, y: 0 })),
+      a: a + base, b: b + base, ctrl: null,
       type: 'street', lanes: ow ? 1 : 2, elevated: false, oneway: !!ow, traced: true,
     });
+  roads.seeded1966 = true;
+}
+
+function seed1965(state) {
+  // The real 1966 road network is the starting infrastructure — no colonial
+  // street grid or town blocks. The old houses/roads are gone.
+  injectTracedRoads(state.roads);
 
   // a handful of rural kampongs still dotted across the otherwise-undeveloped island
   let placed = 0;
@@ -108,6 +114,13 @@ export function ensureGrid(state) {
   if (typeof state.debt !== 'number') state.debt = 0;
   if (!state.roads) state.roads = { nodes: [], edges: [], islands: [] };
   if (!state.roads.islands) state.roads.islands = [];
+  // back-fill the traced 1966 roads into saves that predate them (so existing
+  // games aren't left road-less after the update); skip if already seeded or
+  // the player has drawn their own roads.
+  if (!state.roads.seeded1966 && !state.roads.edges.some((e) => e.traced)) {
+    if (state.roads.edges.length === 0) injectTracedRoads(state.roads);
+    else state.roads.seeded1966 = true; // had hand-drawn roads — leave them be
+  }
   const g = state.grid;
   const ok = Array.isArray(g) && g.length === GRID_SIZE && Array.isArray(g[0]) && g[0].length === GRID_SIZE;
   if (ok) return state;

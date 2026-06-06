@@ -60,19 +60,23 @@ const HILL_RX = 0.135;              // east–west half-extent (narrow)
 const HILL_RY = 0.205;              // north–south half-extent (long) — N–S elongated
 const HILL_MAXH = 22;               // tallest peak, for elevation colour banding
 
-// Singapore (Paya Lebar) Airport — the long white strip in the east of the 1965
-// survey map. Runway centreline given in NORMALISED island coords (SW→NE; it
-// runs diagonally across the eastern land), with the terminal/apron on its
-// inland (west) flank.
+// Singapore (Paya Lebar) Airport — the long pale strip in the east of the 1965
+// survey map. The runway runs roughly N–S (tilted ~16° NNE–SSW); a rectangular
+// apron parks the aircraft beside it, linked by five short connector taxiways,
+// with two terminal buildings set back on the inland (west) side. Centreline
+// endpoints in NORMALISED island coords (south → north).
 const AIRPORT = {
-  sw: { x: 0.6267, y: 0.418 }, ne: { x: 0.6923, y: 0.476 }, // runway centreline (normalised) — ~12% of island width
-  rwHalfW: 5,          // runway half-width (world units)
-  overrun: 6,          // paved overrun past each threshold
-  termOff: 15,         // terminal offset across the runway, toward inland (+localX)
-  apronX: [3, 12],     // apron spans this localX band (between runway and terminal)
-  apronHalfL: 24,      // apron/terminal half-length along the runway axis
-  termScale: 0.82,     // terminal shrunk toward normal building scale
-  planeScale: 0.6,     // airliners ~one building-length, not two
+  south: { x: 0.573, y: 0.441 }, north: { x: 0.589, y: 0.497 }, // runway centreline (~8% of island, ~16° off N–S)
+  rwHalfW: 4.5,        // runway half-width (world units)
+  overrun: 4,          // paved overrun past each threshold
+  apronOff: 15,        // apron centre offset across the runway, inland (+localX)
+  apronHalfW: 6,       // apron half-width
+  apronHalfL: 27,      // apron half-length along the runway (< runway half-length)
+  taxiCount: 5,        // connector taxiways linking the apron to the runway
+  taxiW: 2.4,          // taxiway width
+  termOff: 27,         // terminal buildings offset across the runway, inland
+  termScale: 0.6,      // terminal/hangar shrunk toward normal building scale
+  planeScale: 0.5,     // airliners ~one building-length
 };
 
 export class Scene3D {
@@ -553,75 +557,71 @@ export class Scene3D {
     }
   }
 
-  // Singapore (Paya Lebar) Airport: a diagonal runway in the east with a parallel
-  // taxiway, an apron of parked airliners, and the 1955 modernist terminal +
-  // control tower (replicated from period photographs). Built as a fixed landmark
-  // and marked unbuildable so the city grows around it.
+  // Singapore (Paya Lebar) Airport: a straight ~N–S runway in the east, a
+  // rectangular apron parking the aircraft, five connector taxiways to the
+  // runway, and two terminal buildings (the modernist terminal + control tower
+  // and a hangar) set back inland. A fixed landmark, marked unbuildable so the
+  // city grows around it.
   _buildAirport() {
     if (this.airportGroup) this.scene.remove(this.airportGroup);
     const nw = (p) => ({ x: (p.x - 0.5) * WORLD, z: (0.5 - p.y) * WORLD });
-    const sw = nw(AIRPORT.sw), ne = nw(AIRPORT.ne);
-    const cx = (sw.x + ne.x) / 2, cz = (sw.z + ne.z) / 2;
-    const dx = ne.x - sw.x, dz = ne.z - sw.z, len = Math.hypot(dx, dz);
-    const rot = Math.atan2(dx, dz);             // align local +Z with the SW→NE axis
+    const s = nw(AIRPORT.south), n = nw(AIRPORT.north);
+    const cx = (s.x + n.x) / 2, cz = (s.z + n.z) / 2;
+    const dx = n.x - s.x, dz = n.z - s.z, len = Math.hypot(dx, dz);
+    const rot = Math.atan2(dx, dz);             // local +Z = south→north runway axis
     const g = new THREE.Group(); g.position.set(cx, 0, cz); g.rotation.y = rot;
     this.scene.add(g); this.airportGroup = g;
     this._airportCenter = { cx, cz, rot, len };
 
-    // local frame: +Z = runway long axis, +X = across toward the inland terminal
-    const halfL = len / 2 + AIRPORT.overrun, halfW = AIRPORT.rwHalfW;
-    const slab = (w, d, color, x, z, y = 0.12, glow = 0.05) => {
+    // local frame: +Z = runway long axis (N), +X = inland (west) toward terminals
+    const halfW = AIRPORT.rwHalfW, over = AIRPORT.overrun, halfL = len / 2 + over;
+    const slab = (w, d, color, x, z, y = 0.12) => {
       const m = new THREE.Mesh(new THREE.BoxGeometry(w, 0.24, d), toon(color));
       m.position.set(x, y, z); m.receiveShadow = true; g.add(m); return m;
     };
-    // runway + grass shoulders + parallel taxiway
-    slab(halfW * 2 + 6, halfL * 2 + 4, 0x6f9e57, 0, 0, 0.10);        // grassy strip border
-    slab(halfW * 2, halfL * 2, 0x35383d, 0, 0, 0.14);                // asphalt runway
-    slab(3.6, halfL * 2 + 8, 0x3a3d43, AIRPORT.termOff - 9, 0, 0.13); // taxiway (toward terminal)
-    // centreline dashes
-    const dashes = Math.floor((halfL * 2) / 6);
-    for (let i = 0; i < dashes; i++) {
-      const z = -halfL + 3 + i * 6;
-      slab(0.5, 3.2, 0xeae4d2, 0, z, 0.16);
+    // --- straight runway ---
+    slab(halfW * 2 + 5, halfL * 2 + 4, 0x6f9e57, 0, 0, 0.10);          // grass shoulder
+    slab(halfW * 2, halfL * 2, 0x35383d, 0, 0, 0.14);                  // asphalt
+    const dashes = Math.floor((len) / 6);
+    for (let i = 0; i < dashes; i++) slab(0.5, 3.0, 0xeae4d2, 0, -len / 2 + 3 + i * 6, 0.16);
+    for (const sgn of [-1, 1]) {                                        // thresholds
+      for (let k = -2; k <= 2; k++) slab(0.6, 3.4, 0xeae4d2, k * 1.3, sgn * (halfL - 3.5), 0.16);
+      slab(halfW * 2 - 1, 0.7, 0xeae4d2, 0, sgn * (halfL - 1.2), 0.16);
     }
-    // threshold bars + runway designators at each end
-    for (const s of [-1, 1]) {
-      for (let k = -2; k <= 2; k++) slab(0.7, 4, 0xeae4d2, k * 1.5, s * (halfL - 5), 0.16);
-      slab(halfW * 2 - 1, 0.8, 0xeae4d2, 0, s * (halfL - 1.5), 0.16);
+    // --- rectangular apron (aircraft parking) parallel to the runway ---
+    const apOff = AIRPORT.apronOff, apHW = AIRPORT.apronHalfW, apHL = AIRPORT.apronHalfL;
+    slab(apHW * 2 + 1.6, apHL * 2 + 1.6, 0x8f9c63, apOff, 0, 0.10);    // grass rim
+    slab(apHW * 2, apHL * 2, 0xb9b4a6, apOff, 0, 0.13);               // concrete apron
+    // --- five connector taxiways linking the apron to the runway ---
+    const innerEdge = apOff - apHW, linkW = innerEdge - halfW, linkMid = (halfW + innerEdge) / 2;
+    for (let i = 0; i < AIRPORT.taxiCount; i++) {
+      const t = AIRPORT.taxiCount > 1 ? i / (AIRPORT.taxiCount - 1) : 0.5;
+      slab(linkW, AIRPORT.taxiW, 0x3a3d43, linkMid, -apHL * 0.82 + t * apHL * 1.64, 0.13);
     }
-
-    // apron (concrete) on the inland flank, between runway and terminal
-    const apX = (AIRPORT.apronX[0] + AIRPORT.apronX[1]) / 2, apW = AIRPORT.apronX[1] - AIRPORT.apronX[0];
-    slab(apW + 8, AIRPORT.apronHalfL * 2, 0xb9b4a6, apX + 1, 0, 0.13);
-
-    // parked airliners on the apron, noses out toward the runway
-    for (let i = -1; i <= 1; i++) {
-      const pl = makeAirliner();
-      pl.scale.setScalar(AIRPORT.planeScale);
-      pl.position.set(apX, 0, i * 9);
-      pl.rotation.y = -Math.PI / 2;             // fuselage along the runway, nose to -X
-      g.add(pl);
+    // --- parked airliners along the apron, noses toward the runway (-X) ---
+    const rows = 4;
+    for (let i = 0; i < rows; i++) {
+      const pl = makeAirliner(); pl.scale.setScalar(AIRPORT.planeScale);
+      pl.position.set(apOff, 0, -apHL * 0.6 + i * (apHL * 1.2 / (rows - 1)));
+      pl.rotation.y = -Math.PI / 2; g.add(pl);
     }
+    // --- two terminal buildings set back inland, facing the apron (model +Z -> -X) ---
+    const term = makeTerminal(); term.scale.setScalar(AIRPORT.termScale);
+    term.position.set(AIRPORT.termOff, 0, -8); term.rotation.y = -Math.PI / 2; g.add(term);
+    const hangar = makeHangar(); hangar.scale.setScalar(AIRPORT.termScale);
+    hangar.position.set(AIRPORT.termOff + 1, 0, 17); hangar.rotation.y = -Math.PI / 2; g.add(hangar);
 
-    // terminal complex on the inland side, front (+Z of the model) facing the apron
-    const term = makeTerminal();
-    term.scale.setScalar(AIRPORT.termScale);
-    term.position.set(AIRPORT.termOff, 0, 0);
-    term.rotation.y = -Math.PI / 2;             // model +Z -> parent -X (toward the apron)
-    g.add(term);
-
-    // mark the runway + apron/terminal footprint unbuildable
+    // --- footprint mask (unbuildable) ---
     this.airportMask = Array.from({ length: N }, () => Array(N).fill(false));
     const cosr = Math.cos(rot), sinr = Math.sin(rot);
     for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
       if (!this.land[y][x]) continue;
       const w = cellToWorld(x, y);
       const ox = w.x - cx, oz = w.z - cz;
-      const lx = ox * cosr - oz * sinr;          // world -> local (inverse Y-rot)
-      const lz = ox * sinr + oz * cosr;
-      const onRunway = Math.abs(lx) < halfW + 4 && Math.abs(lz) < halfL;
-      const onApron = lx > 2 && lx < AIRPORT.termOff + 6 && Math.abs(lz) < AIRPORT.apronHalfL;
-      if (onRunway || onApron) this.airportMask[y][x] = true;
+      const lx = ox * cosr - oz * sinr, lz = ox * sinr + oz * cosr;
+      const onRunway = Math.abs(lx) < halfW + 2 && Math.abs(lz) < halfL;
+      const onComplex = lx > 1 && lx < AIRPORT.termOff + 7 && Math.abs(lz) < apHL + 3;
+      if (onRunway || onComplex) this.airportMask[y][x] = true;
     }
   }
 
@@ -1805,6 +1805,19 @@ function makeTerminal() {
   // landside garden behind the slab
   lawn(g, 40, 8, 0x6fb15a);                                          // (under the slab; cheap green base)
   for (const tx of [-14, -4, 6, 16]) treeAt(g, tx, -7.5, 1.2);
+  return g;
+}
+
+// The second airport building: an aircraft hangar — a long shed with a curved
+// barrel roof and big doors, facing local +Z (the apron side).
+function makeHangar() {
+  const g = new THREE.Group();
+  g.add(partBox(22, 8, 13, mat(0xcfc9b8), 0, 4, 0));                 // body
+  const roof = new THREE.Mesh(new THREE.CylinderGeometry(6.8, 6.8, 22.2, 18), mat(0x9aa0a6));
+  roof.rotation.z = Math.PI / 2; roof.position.set(0, 8, 0); roof.castShadow = true; g.add(roof);
+  g.add(partBox(18, 6.6, 0.5, mat(0x70757b), 0, 3.5, 6.6));          // hangar doors (apron side)
+  for (let i = -3; i <= 3; i++) g.add(partBox(0.3, 6.4, 0.1, mat(0x586066), i * 2.6, 3.4, 6.86)); // door ribs
+  for (const dx of [-9.2, 9.2]) g.add(partBox(0.6, 8, 13, mat(0xc2bcaa), dx, 4, 0)); // end pilasters
   return g;
 }
 

@@ -60,6 +60,19 @@ const HILL_RX = 0.135;              // east–west half-extent (narrow)
 const HILL_RY = 0.205;              // north–south half-extent (long) — N–S elongated
 const HILL_MAXH = 22;               // tallest peak, for elevation colour banding
 
+// Singapore (Paya Lebar) Airport — the long white strip in the east of the 1965
+// survey map. Runway centreline given in NORMALISED island coords (SW→NE; it
+// runs diagonally across the eastern land), with the terminal/apron on its
+// inland (west) flank.
+const AIRPORT = {
+  sw: { x: 0.603, y: 0.397 }, ne: { x: 0.716, y: 0.497 }, // runway centreline (normalised)
+  rwHalfW: 6,          // runway half-width (world units)
+  overrun: 8,          // paved overrun past each threshold
+  termOff: 19,         // terminal offset across the runway, toward inland (+localX)
+  apronX: [4, 15],     // apron spans this localX band (between runway and terminal)
+  apronHalfL: 34,      // apron/terminal half-length along the runway axis
+};
+
 export class Scene3D {
   constructor(canvas, { onTileTap, onGroundTap } = {}) {
     this.canvas = canvas;
@@ -146,6 +159,7 @@ export class Scene3D {
     this.roadEdges = [];     // 1965 Singapore had no dense road grid — players build roads
     this._buildCatchment();  // Central Catchment reservoir + nature reserve (centre of island)
     this._buildTerrain();    // the nature-reserve hills (Bukit Timah massif) around the reservoirs
+    this._buildAirport();    // Singapore (Paya Lebar) Airport on the east side
     this._buildNature();     // scatter rural greenery across the undeveloped island
     this._buildNavGraph();   // traffic graph (freeform roads only; added on setState)
     this._initBoats();
@@ -515,7 +529,7 @@ export class Scene3D {
     // for larger grids (the forest reserve stays comparatively dense).
     const forestProb = 0.78 * (48 / N), openProb = 0.32 * (48 / N) * (48 / N);
     for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
-      if (!this.land[y][x] || this.reserveMask?.[y]?.[x] || this.riverMask?.[y]?.[x]) continue; // not on the water
+      if (!this.land[y][x] || this.reserveMask?.[y]?.[x] || this.riverMask?.[y]?.[x] || this.airportMask?.[y]?.[x]) continue; // not on the water / runway
       const d = Math.hypot(x - ca.cx, y - ca.cy);
       const forest = d < ca.forestR;                                  // the nature reserve ring
       if (Math.random() > (forest ? forestProb : openProb)) continue;
@@ -534,6 +548,76 @@ export class Scene3D {
     for (const [key, g] of this.natureCells) {
       const [x, y] = key.split(',').map(Number);
       g.visible = !(this.state?.grid?.[y]?.[x]);
+    }
+  }
+
+  // Singapore (Paya Lebar) Airport: a diagonal runway in the east with a parallel
+  // taxiway, an apron of parked airliners, and the 1955 modernist terminal +
+  // control tower (replicated from period photographs). Built as a fixed landmark
+  // and marked unbuildable so the city grows around it.
+  _buildAirport() {
+    if (this.airportGroup) this.scene.remove(this.airportGroup);
+    const nw = (p) => ({ x: (p.x - 0.5) * WORLD, z: (0.5 - p.y) * WORLD });
+    const sw = nw(AIRPORT.sw), ne = nw(AIRPORT.ne);
+    const cx = (sw.x + ne.x) / 2, cz = (sw.z + ne.z) / 2;
+    const dx = ne.x - sw.x, dz = ne.z - sw.z, len = Math.hypot(dx, dz);
+    const rot = Math.atan2(dx, dz);             // align local +Z with the SW→NE axis
+    const g = new THREE.Group(); g.position.set(cx, 0, cz); g.rotation.y = rot;
+    this.scene.add(g); this.airportGroup = g;
+    this._airportCenter = { cx, cz, rot, len };
+
+    // local frame: +Z = runway long axis, +X = across toward the inland terminal
+    const halfL = len / 2 + AIRPORT.overrun, halfW = AIRPORT.rwHalfW;
+    const slab = (w, d, color, x, z, y = 0.12, glow = 0.05) => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(w, 0.24, d), toon(color));
+      m.position.set(x, y, z); m.receiveShadow = true; g.add(m); return m;
+    };
+    // runway + grass shoulders + parallel taxiway
+    slab(halfW * 2 + 6, halfL * 2 + 4, 0x6f9e57, 0, 0, 0.10);        // grassy strip border
+    slab(halfW * 2, halfL * 2, 0x35383d, 0, 0, 0.14);                // asphalt runway
+    slab(3.6, halfL * 2 + 8, 0x3a3d43, AIRPORT.termOff - 9, 0, 0.13); // taxiway (toward terminal)
+    // centreline dashes
+    const dashes = Math.floor((halfL * 2) / 6);
+    for (let i = 0; i < dashes; i++) {
+      const z = -halfL + 3 + i * 6;
+      slab(0.5, 3.2, 0xeae4d2, 0, z, 0.16);
+    }
+    // threshold bars + runway designators at each end
+    for (const s of [-1, 1]) {
+      for (let k = -2; k <= 2; k++) slab(0.7, 4, 0xeae4d2, k * 1.5, s * (halfL - 5), 0.16);
+      slab(halfW * 2 - 1, 0.8, 0xeae4d2, 0, s * (halfL - 1.5), 0.16);
+    }
+
+    // apron (concrete) on the inland flank, between runway and terminal
+    const apX = (AIRPORT.apronX[0] + AIRPORT.apronX[1]) / 2, apW = AIRPORT.apronX[1] - AIRPORT.apronX[0];
+    slab(apW + 8, AIRPORT.apronHalfL * 2, 0xb9b4a6, apX + 1, 0, 0.13);
+
+    // parked airliners on the apron, noses out toward the runway
+    for (let i = -1; i <= 1; i++) {
+      const pl = makeAirliner();
+      pl.position.set(apX, 0, i * 13);
+      pl.rotation.y = -Math.PI / 2;             // fuselage along the runway, nose to -X
+      g.add(pl);
+    }
+
+    // terminal complex on the inland side, front (+Z of the model) facing the apron
+    const term = makeTerminal();
+    term.position.set(AIRPORT.termOff, 0, 0);
+    term.rotation.y = -Math.PI / 2;             // model +Z -> parent -X (toward the apron)
+    g.add(term);
+
+    // mark the runway + apron/terminal footprint unbuildable
+    this.airportMask = Array.from({ length: N }, () => Array(N).fill(false));
+    const cosr = Math.cos(rot), sinr = Math.sin(rot);
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+      if (!this.land[y][x]) continue;
+      const w = cellToWorld(x, y);
+      const ox = w.x - cx, oz = w.z - cz;
+      const lx = ox * cosr - oz * sinr;          // world -> local (inverse Y-rot)
+      const lz = ox * sinr + oz * cosr;
+      const onRunway = Math.abs(lx) < halfW + 4 && Math.abs(lz) < halfL;
+      const onApron = lx > 2 && lx < AIRPORT.termOff + 6 && Math.abs(lz) < AIRPORT.apronHalfL;
+      if (onRunway || onApron) this.airportMask[y][x] = true;
     }
   }
 
@@ -680,7 +764,7 @@ export class Scene3D {
     return { x: gx, y: gy };
   }
   isLand(x, y) {
-    return !!(this.land[y] && this.land[y][x] && !(this.reserveMask && this.reserveMask[y][x]) && !(this.riverMask && this.riverMask[y][x]));
+    return !!(this.land[y] && this.land[y][x] && !(this.reserveMask && this.reserveMask[y][x]) && !(this.riverMask && this.riverMask[y][x]) && !(this.airportMask && this.airportMask[y][x]));
   }
   // Is a world point over the protected reservoir / catchment? (blocks road drawing)
   isReserveAt(wx, wz) {
@@ -1641,6 +1725,83 @@ function treeAt(g, x, z, s = 1) {
 function lawn(g, w, d, color = 0x6fb15a) {
   const p = new THREE.Mesh(new THREE.PlaneGeometry(w, d), mat(color, {}, 0.1));
   p.rotation.x = -Math.PI / 2; p.position.y = 0.04; p.receiveShadow = true; g.add(p);
+}
+
+// A 1950s propliner / early jet for the airport apron (silver with a red cheat
+// line). Built nose-along local +Z, lying on the ground.
+function makeAirliner() {
+  const g = new THREE.Group();
+  const skin = mat(0xe3e7ea), trim = mat(0xc6402f), dark = mat(0x2f3338), glass = mat(0x9fd0e6, { transparent: true, opacity: 0.85 });
+  const yb = 1.7;
+  const fus = new THREE.Mesh(new THREE.CylinderGeometry(1.05, 1.05, 14, 16), skin);
+  fus.rotation.x = Math.PI / 2; fus.position.set(0, yb, 0); fus.castShadow = true; g.add(fus);
+  const nose = new THREE.Mesh(new THREE.ConeGeometry(1.05, 2.6, 16), skin);
+  nose.rotation.x = -Math.PI / 2; nose.position.set(0, yb, 8.3); nose.castShadow = true; g.add(nose);
+  const tail = new THREE.Mesh(new THREE.ConeGeometry(1.05, 3.4, 16), skin);
+  tail.rotation.x = Math.PI / 2; tail.position.set(0, yb + 0.4, -8.0); tail.castShadow = true; g.add(tail);
+  g.add(partBox(2.2, 0.5, 13, mat(0xeceef0), 0, yb + 1.02, 0));        // window-line spine highlight
+  g.add(partBox(2.2, 0.45, 11, trim, 0, yb + 0.35, 0.5));             // red cheat line
+  // wings (swept back) + horizontal stabilisers + tail fin
+  const wing = partBox(22, 0.4, 4.2, skin, 0, yb - 0.2, -0.8); wing.rotation.y = 0.12; g.add(wing);
+  g.add(partBox(9, 0.34, 2.4, skin, 0, yb + 0.5, -6.8));
+  const fin = partBox(0.4, 4.2, 3.0, skin, 0, yb + 2.6, -7.2); g.add(fin);
+  g.add(partBox(0.42, 2.4, 1.4, trim, 0, yb + 3.4, -7.6));            // fin flash
+  // four under-wing engine nacelles
+  for (const ex of [-7.5, -4, 4, 7.5]) {
+    const nac = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.5, 3.2, 12), dark);
+    nac.rotation.x = Math.PI / 2; nac.position.set(ex, yb - 0.7, -0.2 + Math.abs(ex) * 0.12); nac.castShadow = true; g.add(nac);
+  }
+  // nose-wheel & main gear (short struts)
+  for (const [gx, gz] of [[0, 6.5], [-2.2, -1.5], [2.2, -1.5]]) g.add(cyl(0.28, 0.28, 1.4, 0x26282c, gx, 0.7, gz));
+  g.add(glassPanes(glass));                                          // cockpit glass
+  return g;
+}
+function glassPanes(glassMat) {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.9, 1.2), glassMat);
+  m.position.set(0, 2.3, 6.6); return m;
+}
+
+// The 1955 Singapore (Paya Lebar) terminal: a long six-storey office slab, a
+// tall square control tower with a glazed cab, a saw-tooth-roofed concourse
+// wing, and a lattice radio mast — modelled facing local +Z (the apron side).
+function makeTerminal() {
+  const g = new THREE.Group();
+  const concrete = 0xd8d3c4, pale = 0xe6e1d2, grey = 0x9aa0a6, glassBlue = 0xbfe6ff;
+  // main six-storey slab
+  g.add(tower(34, 20, 8, 'office', 0, -1));
+  g.add(partBox(34.6, 1.2, 8.6, mat(pale), 0, 20.4, -1));            // parapet cap
+  // glazed ground-floor entrance + cantilevered canopy on the apron side
+  g.add(partBox(34, 4.4, 0.4, mat(glassBlue, { transparent: true, opacity: 0.7 }), 0, 2.2, 3.2));
+  g.add(partBox(34, 0.4, 4.0, mat(pale), 0, 4.5, 5.0));
+  for (const cx of [-15, -7.5, 0, 7.5, 15]) g.add(cyl(0.22, 0.22, 4.4, 0xcfcabb, cx, 2.2, 6.8));
+  // control tower (right end), stepped forward of the slab
+  g.add(tower(7, 33, 7, 'office', 15, 2));
+  for (const fx of [-3.5, 3.5]) { g.add(partBox(0.5, 33, 0.4, mat(concrete), 15 + fx, 16.5, 5.4)); g.add(partBox(0.4, 33, 0.5, mat(concrete), 15 + fx, 16.5, 2)); } // vertical fins
+  g.add(partBox(9, 3.6, 9, mat(glassBlue, { transparent: true, opacity: 0.8 }), 15, 34.8, 2)); // glazed cab
+  g.add(partBox(10, 0.7, 10, mat(grey), 15, 37.0, 2));              // cab roof overhang
+  g.add(cyl(0.18, 0.22, 6, 0xd23b32, 15, 40.3, 2));                 // radio mast (red)
+  g.add(cyl(0.1, 0.1, 1.6, 0xf2efe6, 15, 44.0, 2));                 // white tip
+  // saw-tooth concourse wing (left end), single-storey
+  const baseX = -25;
+  g.add(partBox(18, 6, 10, mat(pale), baseX, 3, 0));
+  for (let i = 0; i < 6; i++) {
+    const sx = baseX - 7.5 + i * 3.0;
+    const roof = partBox(3.0, 0.3, 6.6, mat(0xc9c4b4), sx, 7.0, -1.2); roof.rotation.z = 0.5; g.add(roof);
+    g.add(partBox(0.3, 1.7, 6.6, mat(glassBlue, { transparent: true, opacity: 0.75 }), sx - 1.3, 6.7, -1.2)); // north-light glazing
+  }
+  // lattice radio mast beside the slab
+  const mast = new THREE.Group(); mast.position.set(24, 0, -5);
+  for (const [mx, mz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) mast.add(cyl(0.12, 0.16, 26, 0xb24a3f, mx, 13, mz));
+  for (let h = 3; h < 26; h += 3.2) for (const [a, b] of [[[-1, -1], [1, -1]], [[1, -1], [1, 1]], [[1, 1], [-1, 1]], [[-1, 1], [-1, -1]]]) {
+    const ax = a[0], az = a[1], bx = b[0], bz = b[1];
+    const bar = partBox(Math.hypot(bx - ax, bz - az) + 0.1, 0.12, 0.12, mat(0xb24a3f), (ax + bx) / 2, h, (az + bz) / 2);
+    bar.rotation.y = Math.atan2(bz - az, bx - ax); mast.add(bar);
+  }
+  g.add(mast);
+  // landside garden behind the slab
+  lawn(g, 40, 8, 0x6fb15a);                                          // (under the slab; cheap green base)
+  for (const tx of [-14, -4, 6, 16]) treeAt(g, tx, -7.5, 1.2);
+  return g;
 }
 
 export function makeBuilding(key, theme) {

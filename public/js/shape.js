@@ -92,6 +92,10 @@ export function landMask(size) {
   return mask;
 }
 
+// Branch geometries are size-independent given GRID_SIZE, so memoise them — they
+// are queried once per grid cell (tens of thousands of times) at build time.
+let _resCache = null, _resSize = null, _rivCache = null, _rivSize = null;
+
 // Distance test shared by the water bodies: is (x,y) within (local width + margin)
 // of any segment of any branch? Branches are polylines of {x, y, w} cell coords.
 function nearBranches(x, y, branches, margin) {
@@ -116,9 +120,10 @@ export function reservoirArea(size) {
   return { cx: size / 2, cy: size / 2 + size * 0.055, forestR: size * 0.22 };
 }
 export function reservoirBranches(size) {
+  if (_resCache && _resSize === size) return _resCache;
   const k = size / 48;
   const P = (x, y, w) => ({ x: x * k, y: y * k, w: w * k });
-  return [
+  _resCache = [
     // MacRitchie (central) — a forking dendrite
     [P(24.0, 23.5, 0.40), P(24.2, 24.8, 0.55), P(24.0, 26.0, 0.50), P(23.5, 27.0, 0.40)],
     [P(24.0, 26.0, 0.45), P(25.5, 25.8, 0.40), P(26.6, 25.2, 0.30)],
@@ -130,6 +135,8 @@ export function reservoirBranches(size) {
     [P(25.6, 27.6, 0.34), P(26.6, 28.6, 0.46), P(27.0, 29.9, 0.40), P(27.3, 31.0, 0.28)],
     [P(26.6, 28.6, 0.30), P(27.8, 28.3, 0.30), P(28.6, 27.9, 0.24)],
   ];
+  _resSize = size;
+  return _resCache;
 }
 export function inReservoir(x, y, size) {
   return pointInPolygon((x + 0.5) / size, (y + 0.5) / size) && nearBranches(x, y, reservoirBranches(size), 0.3);
@@ -139,15 +146,18 @@ export function inReservoir(x, y, size) {
 // just west of the colonial city, with a couple of canal tributaries branching
 // off. Same {x, y, w} branch format as the reservoirs.
 export function riverBranches(size) {
+  if (_rivCache && _rivSize === size) return _rivCache;
   const k = size / 48, c = size / 2;
   const P = (xc, y, w) => ({ x: c + xc * k, y: y * k, w: w * k }); // xc relative to centre (cells)
-  return [
+  _rivCache = [
     // main river — winding inland from the mouth/quay basin
     [P(-4.0, 12.2, 0.80), P(-4.4, 15.0, 0.48), P(-5.3, 18.0, 0.38), P(-6.8, 20.0, 0.32), P(-9.0, 21.0, 0.26)],
     // canal tributaries branching off
     [P(-6.8, 20.0, 0.28), P(-7.6, 19.0, 0.22), P(-8.4, 18.2, 0.18)],
     [P(-5.3, 18.0, 0.28), P(-6.1, 16.8, 0.22), P(-6.7, 15.7, 0.18)],
   ];
+  _rivSize = size;
+  return _rivCache;
 }
 export function inRiver(x, y, size) {
   return nearBranches(x, y, riverBranches(size), 0.4);

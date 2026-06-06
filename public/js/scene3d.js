@@ -345,11 +345,14 @@ export class Scene3D {
     this.natureGroup = new THREE.Group(); this.scene.add(this.natureGroup);
     this.natureCells = new Map();
     const ca = reservoirArea(N);
+    // keep the absolute tree count sane as the island grows: thin out the scatter
+    // for larger grids (the forest reserve stays comparatively dense).
+    const forestProb = 0.78 * (48 / N), openProb = 0.32 * (48 / N) * (48 / N);
     for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
       if (!this.land[y][x] || this.reserveMask?.[y]?.[x] || this.riverMask?.[y]?.[x]) continue; // not on the water
       const d = Math.hypot(x - ca.cx, y - ca.cy);
       const forest = d < ca.forestR;                                  // the nature reserve ring
-      if (Math.random() > (forest ? 0.78 : 0.32)) continue;
+      if (Math.random() > (forest ? forestProb : openProb)) continue;
       const c = cellToWorld(x, y);
       const g = new THREE.Group();
       const n = forest ? 2 + Math.floor(Math.random() * 2) : 1 + (Math.random() < 0.4 ? 1 : 0);
@@ -828,7 +831,17 @@ export class Scene3D {
     // prefer footpaths near the camera; if it's over open country, fall back to
     // the nearest roads so the streets that DO exist still feel alive.
     let list = this._edgesNear(this.cam.radius, true);
-    if (!list.length) list = this._edgesNear(Math.max(this.cam.radius * 2.6, 140), true);
+    if (!list.length) list = this._edgesNear(Math.max(this.cam.radius * 2.6, WORLD * 0.4), true);
+    if (!list.length) {                                   // nothing in range: take the nearest walkable edges
+      const all = [];
+      for (let i = 0; i < this.edgeMid.length; i++) {
+        if (!this.edgeMeta[i].walk) continue;
+        const m = this.edgeMid[i];
+        all.push([Math.hypot(m.x - this.target.x, m.z - this.target.z), i]);
+      }
+      all.sort((a, b) => a[0] - b[0]);
+      list = all.slice(0, 24).map((e) => e[1]);
+    }
     if (!list.length) return;
     const count = Math.min(42, Math.max(12, Math.floor((this.state?.population || 0) / 12000)));
     while (this.people.length < count) {

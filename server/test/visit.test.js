@@ -27,8 +27,10 @@ try {
   const b = await ctxB.newPage();
   await b.setViewport({ width:390, height:780, isMobile:true, hasTouch:true });
   const berr=[]; b.on('pageerror',e=>berr.push(e.message));
-  await b.goto(`${base}/world/${id}`, { waitUntil:'networkidle0' });
-  await b.waitForSelector('#visit-banner:not(.hidden)', { timeout:5000 });
+  // 'domcontentloaded' (not networkidle0): the heavy 3D build keeps the loop busy,
+  // so wait on the real readiness signal — the visit banner — instead.
+  await b.goto(`${base}/world/${id}`, { waitUntil:'domcontentloaded' });
+  await b.waitForSelector('#visit-banner:not(.hidden)', { timeout:30000 });
   const banner = await b.$eval('#visit-name', e=>e.textContent);
   ok(/Lion City/.test(banner) && /Alice/.test(banner), `Player B sees visit banner: "${banner}"`);
   const nation = await b.$eval('#hud-nation', e=>e.textContent);

@@ -328,6 +328,7 @@ export class Scene3D {
       if (inRiver(x, y, N)) this.riverMask[y][x] = true;
     }
     this._computeWaterDist();   // cell distance-to-water field (carves hill valleys)
+    this._computeCoastDist();   // cell distance-to-sea field (keeps hills off the coast)
     // Reservoirs are drawn as filled dendritic LAKES traced from the survey map;
     // the river is still a slim swept ribbon. One unified water colour so the
     // river, reservoirs, coastal inlets and the open sea all read as one body.
@@ -362,6 +363,27 @@ export class Scene3D {
     this.waterDist = dist;
   }
 
+  // Multi-source BFS distance (in cells) from every land cell to the nearest
+  // sea cell — used to taper the hills down to the coastline so the terrain
+  // stays strictly within the mainland.
+  _computeCoastDist() {
+    const INF = 9999;
+    const dist = Array.from({ length: N }, () => Array(N).fill(INF));
+    const q = [];
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+      if (!this.land[y][x]) { dist[y][x] = 0; q.push([x, y]); }
+    }
+    for (let head = 0; head < q.length; head++) {
+      const [x, y] = q[head], d = dist[y][x] + 1;
+      for (const [ax, ay] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nx = x + ax, ny = y + ay;
+        if (nx < 0 || ny < 0 || nx >= N || ny >= N || dist[ny][nx] <= d) continue;
+        dist[ny][nx] = d; q.push([nx, ny]);
+      }
+    }
+    this.coastDist = dist;
+  }
+
   // Terrain elevation (world units) at a normalised island point. Sum of the
   // gaussian hills, faded to flat land beyond the reserve disk and carved down
   // to ~0 around the reservoirs so the lakes keep sitting in the low ground.
@@ -379,7 +401,9 @@ export class Scene3D {
     const cy = Math.min(N - 1, Math.max(0, Math.floor(ny * N)));
     const wd = this.waterDist ? this.waterDist[cy][cx] : 99;
     const valley = smoothstep(0.5, 5.0, wd);               // 0 at water, 1 a few cells away
-    return Math.max(0, h * disk * valley);
+    const cd = this.coastDist ? this.coastDist[cy][cx] : 99;
+    const coast = smoothstep(0.5, 4.0, cd);                // 0 at the shoreline, 1 inland
+    return Math.max(0, h * disk * valley * coast);
   }
   // Elevation at the centre of grid cell (cx,cy) — for placing trees & buildings.
   terrainHeight(cx, cy) { return this._terrainHN((cx + 0.5) / N, (cy + 0.5) / N); }
@@ -391,7 +415,7 @@ export class Scene3D {
     const RES = 110;
     const x0 = HILL_CENTER[0] - HILL_R, x1 = HILL_CENTER[0] + HILL_R;
     const y0 = HILL_CENTER[1] - HILL_R, y1 = HILL_CENTER[1] + HILL_R;
-    const pos = [], col = [], idx = [], hgt = [];
+    const pos = [], col = [], idx = [], hgt = [], lnd = [];
     const lo = new THREE.Color(0x77c25a), mid = new THREE.Color(0x4f8f3e),
           hi = new THREE.Color(0x9a9a5f), top = new THREE.Color(0xb3a274), tmp = new THREE.Color();
     for (let j = 0; j <= RES; j++) {
@@ -399,6 +423,9 @@ export class Scene3D {
         const nx = x0 + (x1 - x0) * i / RES, ny = y0 + (y1 - y0) * j / RES;
         const h = this._terrainHN(nx, ny);
         hgt.push(h);
+        const cx = Math.min(N - 1, Math.max(0, Math.floor(nx * N)));
+        const cy = Math.min(N - 1, Math.max(0, Math.floor(ny * N)));
+        lnd.push(this.land[cy][cx] ? 1 : 0);
         pos.push((nx - 0.5) * WORLD, h, (0.5 - ny) * WORLD);
         const t = Math.min(1, h / HILL_MAXH);
         if (t < 0.5) tmp.copy(lo).lerp(mid, t / 0.5);
@@ -408,11 +435,13 @@ export class Scene3D {
       }
     }
     const W1 = RES + 1;
-    // Only emit quads that actually rise — the flat (h≈0) skirt is left to the
-    // island's own ground/water, so we don't paint a plateau over the lakes.
+    // Only emit quads that actually rise AND sit fully on land — the flat (h≈0)
+    // skirt is left to the island's own ground/water, and nothing is drawn over
+    // the sea, so the hills stay strictly within the mainland.
     for (let j = 0; j < RES; j++) for (let i = 0; i < RES; i++) {
       const a = j * W1 + i, b = a + 1, c = a + W1, d = c + 1;
       if (Math.max(hgt[a], hgt[b], hgt[c], hgt[d]) < 0.25) continue;
+      if (!(lnd[a] && lnd[b] && lnd[c] && lnd[d])) continue;
       idx.push(a, b, c, b, d, c);                          // upward-facing winding
     }
     const g = new THREE.BufferGeometry();

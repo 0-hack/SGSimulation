@@ -633,7 +633,7 @@ export class Scene3D {
     addCars(g, AIRPORT.carparkOff, carZ, 18, 12);
     // --- hangar group beyond the car park, the whole row tilted ~30° off the grid ---
     const hg = new THREE.Group();
-    hg.position.set(AIRPORT.hangarOff, 0, carZ - 10); hg.rotation.y = faceApron + Math.PI / 6;
+    hg.position.set(AIRPORT.hangarOff, 0, carZ - 22); hg.rotation.y = faceApron + Math.PI / 6;
     for (let i = 0; i < 3; i++) {                       // wide hangars side by side
       const h = makeHangar(); h.scale.setScalar(sc);
       h.position.set((i - 1) * 12, 0, 0); hg.add(h);

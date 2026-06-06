@@ -69,12 +69,14 @@ const AIRPORT = {
   south: { x: 0.573, y: 0.441 }, north: { x: 0.589, y: 0.497 }, // runway centreline (~8% of island, ~16° off N–S)
   rwHalfW: 4.5,        // runway half-width (world units)
   overrun: 4,          // paved overrun past each threshold
-  apronOff: 15,        // apron centre offset across the runway, inland (+localX)
+  taxiOff: 9,          // continuous parallel taxiway offset (localX, inland of runway)
+  taxiHalfW: 1.6,      // parallel-taxiway half-width
+  apronOff: 19,        // apron centre offset across the runway, inland (+localX)
   apronHalfW: 6,       // apron half-width
-  apronHalfL: 27,      // apron half-length along the runway (< runway half-length)
-  taxiCount: 5,        // connector taxiways linking the apron to the runway
-  taxiW: 2.4,          // taxiway width
-  termOff: 27,         // terminal buildings offset across the runway, inland
+  apronHalfL: 26,      // apron half-length along the runway
+  apronLinks: 5,       // short links from the apron to the parallel taxiway
+  linkW: 2.4,          // taxiway/link width
+  termOff: 29,         // terminal buildings offset across the runway, inland
   termScale: 0.6,      // terminal/hangar shrunk toward normal building scale
   planeScale: 0.5,     // airliners ~one building-length
 };
@@ -588,15 +590,22 @@ export class Scene3D {
       for (let k = -2; k <= 2; k++) slab(0.6, 3.4, 0xeae4d2, k * 1.3, sgn * (halfL - 3.5), 0.16);
       slab(halfW * 2 - 1, 0.7, 0xeae4d2, 0, sgn * (halfL - 1.2), 0.16);
     }
-    // --- rectangular apron (aircraft parking) parallel to the runway ---
+    // --- continuous parallel taxiway (the "middle road") for planes to and from the runway ---
+    const txOff = AIRPORT.taxiOff, txHW = AIRPORT.taxiHalfW;
+    slab(txHW * 2, len * 0.98, 0x3a3d43, txOff, 0, 0.13);             // full-length taxiway
+    for (let i = 0; i < Math.floor(len / 7); i++) slab(0.32, 2.0, 0xd8c463, txOff, -len / 2 + 3.5 + i * 7, 0.16); // taxi centreline
+    // end connectors joining the parallel taxiway to the runway (entry/exit)
+    const ecMid = (halfW + txOff - txHW) / 2, ecW = (txOff - txHW) - halfW;
+    for (const sgn of [-1, 1]) slab(ecW, AIRPORT.linkW, 0x3a3d43, ecMid, sgn * (halfL - 4), 0.13);
+    // --- rectangular apron (aircraft parking), inboard of the taxiway ---
     const apOff = AIRPORT.apronOff, apHW = AIRPORT.apronHalfW, apHL = AIRPORT.apronHalfL;
-    slab(apHW * 2 + 1.6, apHL * 2 + 1.6, 0x8f9c63, apOff, 0, 0.10);    // grass rim
-    slab(apHW * 2, apHL * 2, 0xb9b4a6, apOff, 0, 0.13);               // concrete apron
-    // --- five connector taxiways linking the apron to the runway ---
-    const innerEdge = apOff - apHW, linkW = innerEdge - halfW, linkMid = (halfW + innerEdge) / 2;
-    for (let i = 0; i < AIRPORT.taxiCount; i++) {
-      const t = AIRPORT.taxiCount > 1 ? i / (AIRPORT.taxiCount - 1) : 0.5;
-      slab(linkW, AIRPORT.taxiW, 0x3a3d43, linkMid, -apHL * 0.82 + t * apHL * 1.64, 0.13);
+    slab(apHW * 2 + 1.6, apHL * 2 + 1.6, 0x8f9c63, apOff, 0, 0.10);   // grass rim
+    slab(apHW * 2, apHL * 2, 0xb9b4a6, apOff, 0, 0.13);              // concrete apron
+    // short links from the apron to the parallel taxiway
+    const apEdge = apOff - apHW, lkMid = (txOff + txHW + apEdge) / 2, lkW = apEdge - (txOff + txHW);
+    for (let i = 0; i < AIRPORT.apronLinks; i++) {
+      const t = AIRPORT.apronLinks > 1 ? i / (AIRPORT.apronLinks - 1) : 0.5;
+      slab(lkW, AIRPORT.linkW, 0x3a3d43, lkMid, -apHL * 0.8 + t * apHL * 1.6, 0.13);
     }
     // --- parked airliners along the apron, noses toward the runway (-X) ---
     const rows = 4;

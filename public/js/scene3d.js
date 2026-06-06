@@ -598,9 +598,12 @@ export class Scene3D {
     const txOff = AIRPORT.taxiOff, txHW = AIRPORT.taxiHalfW;
     slab(txHW * 2, halfL * 2, 0x3a3d43, txOff, 0, 0.13);              // full-length parallel taxiway
     for (let i = 0; i < Math.floor(len / 7); i++) slab(0.32, 2.0, 0xd8c463, txOff, -len / 2 + 3.5 + i * 7, 0.16); // taxi centreline
-    // end connectors joining the parallel taxiway to the runway (entry/exit)
-    const ecMid = (halfW + txOff - txHW) / 2, ecW = (txOff - txHW) - halfW;
-    for (const sgn of [-1, 1]) slab(ecW, AIRPORT.linkW, 0x3a3d43, ecMid, sgn * (halfL - 4), 0.13);
+    // connector taxiways linking the runway to the parallel taxiway, spaced along its length
+    const ecMid = (halfW + txOff - txHW) / 2, ecW = (txOff - txHW) - halfW, nConn = 5;
+    for (let i = 0; i < nConn; i++) {
+      const z = -halfL + 5 + (i / (nConn - 1)) * (halfL * 2 - 10);
+      slab(ecW, AIRPORT.linkW + 0.4, 0x3a3d43, ecMid, z, 0.13);
+    }
     // --- compact apron (aircraft parking) set toward one end, inboard of the taxiway ---
     const apOff = AIRPORT.apronOff, apHW = AIRPORT.apronHalfW, apHL = AIRPORT.apronHalfL;
     const apCz = AIRPORT.apronCzFrac * halfL;                          // shift the parking/building cluster toward the south end

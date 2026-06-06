@@ -158,11 +158,12 @@ export function riverBranches(size) {
   const k = size / 48, c = size / 2;
   const P = (xc, y, w) => ({ x: c + xc * k, y: y * k, w: w * k }); // xc relative to centre (cells)
   _rivCache = [
-    // main river — winding inland from the mouth/quay basin
-    [P(-4.0, 12.2, 0.80), P(-4.4, 15.0, 0.48), P(-5.3, 18.0, 0.38), P(-6.8, 20.0, 0.32), P(-9.0, 21.0, 0.26)],
+    // main river — mouth sits AT the south coast (north of Sentosa) and winds
+    // inland, so it flows from the sea instead of floating over the island
+    [P(-4.2, 14.8, 0.55), P(-4.6, 16.6, 0.45), P(-5.4, 18.6, 0.38), P(-6.8, 20.2, 0.32), P(-9.0, 21.2, 0.26)],
     // canal tributaries branching off
-    [P(-6.8, 20.0, 0.28), P(-7.6, 19.0, 0.22), P(-8.4, 18.2, 0.18)],
-    [P(-5.3, 18.0, 0.28), P(-6.1, 16.8, 0.22), P(-6.7, 15.7, 0.18)],
+    [P(-6.8, 20.2, 0.28), P(-7.6, 19.2, 0.22), P(-8.4, 18.4, 0.18)],
+    [P(-5.4, 18.6, 0.28), P(-6.2, 17.4, 0.22), P(-6.8, 16.3, 0.18)],
   ];
   _rivSize = size;
   return _rivCache;

@@ -631,17 +631,17 @@ export class Scene3D {
     const carZ = apCz - 14;
     slab(20, 13, 0x6d6f74, AIRPORT.carparkOff, carZ, 0.12);
     addCars(g, AIRPORT.carparkOff, carZ, 18, 12);
-    // --- hangar group beyond the car park, the whole row tilted ~30° off the grid ---
+    // --- hangar group, well clear of the car park, the whole row tilted ~30° off the grid ---
     const hg = new THREE.Group();
-    hg.position.set(AIRPORT.hangarOff, 0, carZ - 22); hg.rotation.y = faceApron + Math.PI / 6;
-    for (let i = 0; i < 3; i++) {                       // wide hangars side by side
+    hg.position.set(AIRPORT.hangarOff + 8, 0, carZ - 24); hg.rotation.y = faceApron + Math.PI / 6;
+    for (let i = 0; i < 2; i++) {                       // wide open-door hangars side by side
       const h = makeHangar(); h.scale.setScalar(sc);
-      h.position.set((i - 1) * 12, 0, 0); hg.add(h);
+      h.position.set((i - 0.5) * 13, 0, 0); hg.add(h);
     }
-    const beside = makeAirBlock(8, 9, 22); beside.scale.setScalar(sc);   // long workshop block beside (L-shape)
-    beside.position.set(-22, 0, -4); hg.add(beside);
-    const behind = makeAirBlock(22, 7.5, 9); behind.scale.setScalar(sc); // block set back behind the hangars
-    behind.position.set(0, 0, -16); hg.add(behind);
+    const beside = makeSawtoothShed(10, 5.5, 24, 4); beside.scale.setScalar(sc); // long saw-tooth workshop beside (L-shape)
+    beside.position.set(-19, 0, -5); hg.add(beside);
+    const behind = makeAirBlock(22, 6, 9); behind.scale.setScalar(sc);   // low block set back behind the hangars
+    behind.position.set(2, 0, -15); hg.add(behind);
     g.add(hg);
 
     // --- footprint mask (unbuildable) ---
@@ -654,7 +654,7 @@ export class Scene3D {
       const lx = ox * cosr - oz * sinr, lz = ox * sinr + oz * cosr;
       const onRunway = Math.abs(lx) < halfW + 2 && Math.abs(lz) < halfL;
       const onTaxi = Math.abs(lx - txOff) < txHW + 2 && Math.abs(lz) < halfL;
-      const onComplex = lx > 1 && lx < AIRPORT.termOff + 28 && lz > apCz - 52 && lz < apCz + apHL + 6;
+      const onComplex = lx > 1 && lx < AIRPORT.termOff + 38 && lz > apCz - 62 && lz < apCz + apHL + 6;
       if (onRunway || onTaxi || onComplex) this.airportMask[y][x] = true;
     }
   }
@@ -1850,8 +1850,9 @@ function makeHangar() {
   g.add(partBox(18, 6, 13, mat(0xcfc9b8), 0, 3, 0));                // wide body (width X, depth Z)
   const roof = new THREE.Mesh(new THREE.CylinderGeometry(9.4, 9.4, 13.2, 18), mat(0x9aa0a6));
   roof.rotation.x = Math.PI / 2; roof.scale.z = 0.55; roof.position.set(0, 6, 0); roof.castShadow = true; g.add(roof); // wide shallow vault
-  g.add(partBox(16.6, 5.6, 0.5, mat(0x70757b), 0, 2.9, 6.6));        // wide arched-gable doors (apron side)
-  for (let i = -3; i <= 3; i++) g.add(partBox(0.3, 5.4, 0.1, mat(0x586066), i * 2.4, 2.8, 6.86)); // door ribs
+  g.add(partBox(14.6, 5.0, 0.8, mat(0x2a2d31), 0, 2.6, 6.4));        // dark open doorway (look inside)
+  for (const sx of [-7.7, 7.7]) g.add(partBox(0.7, 6, 0.8, mat(0xbdb7a6), sx, 3, 6.4)); // door jambs
+  g.add(partBox(16.0, 0.7, 0.8, mat(0xbdb7a6), 0, 5.4, 6.4));        // lintel above the doors
   return g;
 }
 
@@ -1860,6 +1861,20 @@ function makeAirBlock(w, ht, d, style = 'office') {
   const g = new THREE.Group();
   g.add(tower(w, ht, d, style, 0, 0));
   g.add(partBox(w + 0.4, 0.7, d + 0.4, mat(0xe6e1d2), 0, ht + 0.35, 0)); // parapet cap
+  return g;
+}
+
+// A long low workshop with a north-light saw-tooth roof, facing local +Z.
+function makeSawtoothShed(w, ht, d, bays) {
+  const g = new THREE.Group();
+  const pale = 0xddd8c8, roofc = 0xb7bcc0, glass = 0xbfe6ff;
+  g.add(partBox(w, ht, d, mat(pale), 0, ht / 2, 0));                // body
+  const bw = w / bays;
+  for (let i = 0; i < bays; i++) {
+    const bx = -w / 2 + bw * (i + 0.5);
+    const roof = partBox(bw * 1.04, 0.3, d, mat(roofc), bx, ht + 0.35, 0); roof.rotation.z = 0.5; g.add(roof);
+    g.add(partBox(0.3, bw * 0.55, d, mat(glass, { transparent: true, opacity: 0.7 }), bx - bw * 0.46, ht + bw * 0.3, 0)); // north-light glazing
+  }
   return g;
 }
 

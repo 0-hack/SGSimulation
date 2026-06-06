@@ -43,18 +43,22 @@ function smoothstep(edge0, edge1, x) {
 // and a gaussian spread (normalised). Bukit Timah — Singapore's highest point —
 // dominates the south-west, with the Bukit Panjang/Gombak ridges to its north
 // and lower rises ringing MacRitchie, Peirce and Seletar.
+// The catchment runs as a NORTH–SOUTH spine (taller than it is wide): Bukit
+// Timah anchors the south, the ridges step north past MacRitchie and the Peirce
+// reservoirs up toward Seletar.
 const SG_HILLS = [
-  { x: 0.345, y: 0.435, h: 22, s: 0.055 }, // Bukit Timah (highest)
-  { x: 0.322, y: 0.508, h: 15, s: 0.050 }, // Bukit Panjang ridge (NW)
-  { x: 0.332, y: 0.452, h: 13, s: 0.044 }, // Bukit Gombak (W)
-  { x: 0.440, y: 0.495, h: 11, s: 0.052 }, // ridge between Peirce & MacRitchie
-  { x: 0.478, y: 0.448, h: 10, s: 0.046 }, // rise north of MacRitchie
-  { x: 0.516, y: 0.556, h:  9, s: 0.050 }, // eastern rise near Seletar
-  { x: 0.388, y: 0.560, h:  9, s: 0.046 }, // hill west of Upper Peirce
+  { x: 0.382, y: 0.408, h: 22, s: 0.050 }, // Bukit Timah (south, highest)
+  { x: 0.358, y: 0.470, h: 13, s: 0.046 }, // Bukit Gombak / Panjang (west spur)
+  { x: 0.410, y: 0.445, h: 13, s: 0.050 }, // south-central ridge
+  { x: 0.420, y: 0.490, h: 12, s: 0.050 }, // central ridge (Peirce / MacRitchie)
+  { x: 0.432, y: 0.532, h: 11, s: 0.050 }, // central-north ridge
+  { x: 0.448, y: 0.572, h: 10, s: 0.048 }, // north ridge toward Seletar
+  { x: 0.452, y: 0.610, h:  8, s: 0.044 }, // far-north tail
 ];
-const HILL_CENTER = [0.43, 0.49];  // disk centre (~reservoir-cluster centre)
-const HILL_R = 0.27;               // hills fade back to flat land beyond this radius
-const HILL_MAXH = 22;              // tallest peak, for elevation colour banding
+const HILL_CENTER = [0.412, 0.498]; // ellipse centre (~reservoir-cluster centre)
+const HILL_RX = 0.135;              // east–west half-extent (narrow)
+const HILL_RY = 0.205;              // north–south half-extent (long) — N–S elongated
+const HILL_MAXH = 22;               // tallest peak, for elevation colour banding
 
 export class Scene3D {
   constructor(canvas, { onTileTap, onGroundTap } = {}) {
@@ -388,7 +392,8 @@ export class Scene3D {
   // gaussian hills, faded to flat land beyond the reserve disk and carved down
   // to ~0 around the reservoirs so the lakes keep sitting in the low ground.
   _terrainHN(nx, ny) {
-    const dr = Math.hypot(nx - HILL_CENTER[0], ny - HILL_CENTER[1]) / HILL_R;
+    // elliptical falloff: long N–S (RY), narrow E–W (RX)
+    const dr = Math.hypot((nx - HILL_CENTER[0]) / HILL_RX, (ny - HILL_CENTER[1]) / HILL_RY);
     if (dr >= 1) return 0;
     const disk = smoothstep(1.0, 0.7, dr);                 // 1 inside, 0 at the rim
     let h = 0;
@@ -413,8 +418,8 @@ export class Scene3D {
   _buildTerrain() {
     if (this.terrainMesh) { this.scene.remove(this.terrainMesh); this.terrainMesh.geometry.dispose(); }
     const RES = 110;
-    const x0 = HILL_CENTER[0] - HILL_R, x1 = HILL_CENTER[0] + HILL_R;
-    const y0 = HILL_CENTER[1] - HILL_R, y1 = HILL_CENTER[1] + HILL_R;
+    const x0 = HILL_CENTER[0] - HILL_RX, x1 = HILL_CENTER[0] + HILL_RX;
+    const y0 = HILL_CENTER[1] - HILL_RY, y1 = HILL_CENTER[1] + HILL_RY;
     const pos = [], col = [], idx = [], hgt = [], lnd = [];
     const lo = new THREE.Color(0x77c25a), mid = new THREE.Color(0x4f8f3e),
           hi = new THREE.Color(0x9a9a5f), top = new THREE.Color(0xb3a274), tmp = new THREE.Color();

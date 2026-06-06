@@ -231,7 +231,9 @@ export class Scene3D {
     cx /= poly.length; cz /= poly.length;
     const beachGeo = new THREE.ExtrudeGeometry(toShape(), { depth: 0.6, bevelEnabled: false });
     beachGeo.rotateX(-Math.PI / 2); beachGeo.computeBoundingBox();
-    beachGeo.translate(0, -beachGeo.boundingBox.max.y - 0.12, 0);
+    // drop the skirt well below the grass so the interior overlap never
+    // z-fights into view; only its 5% outer rim shows as the coastal beach.
+    beachGeo.translate(0, -beachGeo.boundingBox.max.y - 0.9, 0);
     const beach = new THREE.Mesh(beachGeo, new THREE.MeshToonMaterial({ color: 0xe6d6a6, gradientMap: toonGradient() }));
     beach.scale.set(beachScale, 1, beachScale);
     beach.position.set((1 - beachScale) * cx, 0, (1 - beachScale) * cz); // keep the scale centred on the island
@@ -448,8 +450,10 @@ export class Scene3D {
     const x0 = HILL_CENTER[0] - HILL_RX, x1 = HILL_CENTER[0] + HILL_RX;
     const y0 = HILL_CENTER[1] - HILL_RY, y1 = HILL_CENTER[1] + HILL_RY;
     const pos = [], col = [], idx = [], hgt = [], lnd = [];
+    // Bukit Timah & the Central Catchment were rainforest in 1965/66 — forested
+    // green all the way up, the canopy just deepening with altitude (never sand).
     const lo = new THREE.Color(0x77c25a), mid = new THREE.Color(0x4f8f3e),
-          hi = new THREE.Color(0x9a9a5f), top = new THREE.Color(0xb3a274), tmp = new THREE.Color();
+          hi = new THREE.Color(0x3c7a34), top = new THREE.Color(0x2f6b2c), tmp = new THREE.Color();
     for (let j = 0; j <= RES; j++) {
       for (let i = 0; i <= RES; i++) {
         const nx = x0 + (x1 - x0) * i / RES, ny = y0 + (y1 - y0) * j / RES;
@@ -712,7 +716,10 @@ export class Scene3D {
 
   // ---- camera controls (orbit / pan / pinch) --------------------------------
   _initControls() {
-    this.camera = new THREE.PerspectiveCamera(45, 1, 0.5, 2000);
+    // near pushed off 0.5 and far past MAX_R + island radius + fog: a tighter
+    // near/far ratio gives the depth buffer enough precision that the ground
+    // stops z-fighting (sand bleeding through grass) when zoomed far out.
+    this.camera = new THREE.PerspectiveCamera(45, 1, 4, WORLD * 2.6);
     this.target = new THREE.Vector3(0, 0, 0);
     this.cam = { radius: WORLD * 0.85, theta: -0.7, phi: 0.92 };
     this.MIN_R = 26;             // street-level zoom (buildings unchanged)

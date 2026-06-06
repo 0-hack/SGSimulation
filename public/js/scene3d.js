@@ -73,10 +73,11 @@ const AIRPORT = {
   taxiHalfW: 1.6,      // parallel-taxiway half-width
   apronOff: 19,        // apron centre offset across the runway, inland (+localX)
   apronHalfW: 6,       // apron half-width
-  apronHalfL: 26,      // apron half-length along the runway
-  apronLinks: 5,       // short links from the apron to the parallel taxiway
+  apronHalfL: 14,      // apron half-length (a compact parking, toward one end)
+  apronCzFrac: -0.4,   // apron/building cluster offset toward the south end (× runway half-length)
+  apronLinks: 4,       // short links from the apron to the parallel taxiway
   linkW: 2.4,          // taxiway/link width
-  termOff: 29,         // terminal buildings offset across the runway, inland
+  termOff: 30,         // terminal buildings offset across the runway, inland (set back)
   termScale: 0.6,      // terminal/hangar shrunk toward normal building scale
   planeScale: 0.5,     // airliners ~one building-length
 };
@@ -597,28 +598,29 @@ export class Scene3D {
     // end connectors joining the parallel taxiway to the runway (entry/exit)
     const ecMid = (halfW + txOff - txHW) / 2, ecW = (txOff - txHW) - halfW;
     for (const sgn of [-1, 1]) slab(ecW, AIRPORT.linkW, 0x3a3d43, ecMid, sgn * (halfL - 4), 0.13);
-    // --- rectangular apron (aircraft parking), inboard of the taxiway ---
+    // --- compact apron (aircraft parking) set toward one end, inboard of the taxiway ---
     const apOff = AIRPORT.apronOff, apHW = AIRPORT.apronHalfW, apHL = AIRPORT.apronHalfL;
-    slab(apHW * 2 + 1.6, apHL * 2 + 1.6, 0x8f9c63, apOff, 0, 0.10);   // grass rim
-    slab(apHW * 2, apHL * 2, 0xb9b4a6, apOff, 0, 0.13);              // concrete apron
+    const apCz = AIRPORT.apronCzFrac * halfL;                          // shift the parking/building cluster toward the south end
+    slab(apHW * 2 + 1.6, apHL * 2 + 1.6, 0x8f9c63, apOff, apCz, 0.10); // grass rim
+    slab(apHW * 2, apHL * 2, 0xb9b4a6, apOff, apCz, 0.13);            // concrete apron
     // short links from the apron to the parallel taxiway
     const apEdge = apOff - apHW, lkMid = (txOff + txHW + apEdge) / 2, lkW = apEdge - (txOff + txHW);
     for (let i = 0; i < AIRPORT.apronLinks; i++) {
       const t = AIRPORT.apronLinks > 1 ? i / (AIRPORT.apronLinks - 1) : 0.5;
-      slab(lkW, AIRPORT.linkW, 0x3a3d43, lkMid, -apHL * 0.8 + t * apHL * 1.6, 0.13);
+      slab(lkW, AIRPORT.linkW, 0x3a3d43, lkMid, apCz - apHL * 0.78 + t * apHL * 1.56, 0.13);
     }
     // --- parked airliners along the apron, noses toward the runway (-X) ---
-    const rows = 4;
+    const rows = 3;
     for (let i = 0; i < rows; i++) {
       const pl = makeAirliner(); pl.scale.setScalar(AIRPORT.planeScale);
-      pl.position.set(apOff, 0, -apHL * 0.6 + i * (apHL * 1.2 / (rows - 1)));
+      pl.position.set(apOff, 0, apCz - apHL * 0.55 + i * (apHL * 1.1 / (rows - 1)));
       pl.rotation.y = -Math.PI / 2; g.add(pl);
     }
-    // --- two terminal buildings set back inland, facing the apron (model +Z -> -X) ---
+    // --- two terminal buildings clustered, set back inland, facing the apron (model +Z -> -X) ---
     const term = makeTerminal(); term.scale.setScalar(AIRPORT.termScale);
-    term.position.set(AIRPORT.termOff, 0, -8); term.rotation.y = -Math.PI / 2; g.add(term);
+    term.position.set(AIRPORT.termOff, 0, apCz - 6); term.rotation.y = -Math.PI / 2; g.add(term);
     const hangar = makeHangar(); hangar.scale.setScalar(AIRPORT.termScale);
-    hangar.position.set(AIRPORT.termOff + 1, 0, 17); hangar.rotation.y = -Math.PI / 2; g.add(hangar);
+    hangar.position.set(AIRPORT.termOff + 1, 0, apCz + 11); hangar.rotation.y = -Math.PI / 2; g.add(hangar);
 
     // --- footprint mask (unbuildable) ---
     this.airportMask = Array.from({ length: N }, () => Array(N).fill(false));
@@ -629,8 +631,9 @@ export class Scene3D {
       const ox = w.x - cx, oz = w.z - cz;
       const lx = ox * cosr - oz * sinr, lz = ox * sinr + oz * cosr;
       const onRunway = Math.abs(lx) < halfW + 2 && Math.abs(lz) < halfL;
-      const onComplex = lx > 1 && lx < AIRPORT.termOff + 7 && Math.abs(lz) < apHL + 3;
-      if (onRunway || onComplex) this.airportMask[y][x] = true;
+      const onTaxi = Math.abs(lx - txOff) < txHW + 2 && Math.abs(lz) < halfL;
+      const onComplex = lx > 1 && lx < AIRPORT.termOff + 7 && lz > apCz - apHL - 4 && lz < apCz + apHL + 4;
+      if (onRunway || onTaxi || onComplex) this.airportMask[y][x] = true;
     }
   }
 

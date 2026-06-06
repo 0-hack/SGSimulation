@@ -65,12 +65,14 @@ const HILL_MAXH = 22;               // tallest peak, for elevation colour bandin
 // runs diagonally across the eastern land), with the terminal/apron on its
 // inland (west) flank.
 const AIRPORT = {
-  sw: { x: 0.603, y: 0.397 }, ne: { x: 0.716, y: 0.497 }, // runway centreline (normalised)
-  rwHalfW: 6,          // runway half-width (world units)
-  overrun: 8,          // paved overrun past each threshold
-  termOff: 19,         // terminal offset across the runway, toward inland (+localX)
-  apronX: [4, 15],     // apron spans this localX band (between runway and terminal)
-  apronHalfL: 34,      // apron/terminal half-length along the runway axis
+  sw: { x: 0.6267, y: 0.418 }, ne: { x: 0.6923, y: 0.476 }, // runway centreline (normalised) — ~12% of island width
+  rwHalfW: 5,          // runway half-width (world units)
+  overrun: 6,          // paved overrun past each threshold
+  termOff: 15,         // terminal offset across the runway, toward inland (+localX)
+  apronX: [3, 12],     // apron spans this localX band (between runway and terminal)
+  apronHalfL: 24,      // apron/terminal half-length along the runway axis
+  termScale: 0.82,     // terminal shrunk toward normal building scale
+  planeScale: 0.6,     // airliners ~one building-length, not two
 };
 
 export class Scene3D {
@@ -595,13 +597,15 @@ export class Scene3D {
     // parked airliners on the apron, noses out toward the runway
     for (let i = -1; i <= 1; i++) {
       const pl = makeAirliner();
-      pl.position.set(apX, 0, i * 13);
+      pl.scale.setScalar(AIRPORT.planeScale);
+      pl.position.set(apX, 0, i * 9);
       pl.rotation.y = -Math.PI / 2;             // fuselage along the runway, nose to -X
       g.add(pl);
     }
 
     // terminal complex on the inland side, front (+Z of the model) facing the apron
     const term = makeTerminal();
+    term.scale.setScalar(AIRPORT.termScale);
     term.position.set(AIRPORT.termOff, 0, 0);
     term.rotation.y = -Math.PI / 2;             // model +Z -> parent -X (toward the apron)
     g.add(term);

@@ -596,7 +596,7 @@ export class Scene3D {
     }
     // --- continuous parallel taxiway (the "middle road") for planes to and from the runway ---
     const txOff = AIRPORT.taxiOff, txHW = AIRPORT.taxiHalfW;
-    slab(txHW * 2, len * 0.98, 0x3a3d43, txOff, 0, 0.13);             // full-length taxiway
+    slab(txHW * 2, halfL * 2, 0x3a3d43, txOff, 0, 0.13);              // full-length parallel taxiway
     for (let i = 0; i < Math.floor(len / 7); i++) slab(0.32, 2.0, 0xd8c463, txOff, -len / 2 + 3.5 + i * 7, 0.16); // taxi centreline
     // end connectors joining the parallel taxiway to the runway (entry/exit)
     const ecMid = (halfW + txOff - txHW) / 2, ecW = (txOff - txHW) - halfW;
@@ -642,6 +642,13 @@ export class Scene3D {
     beside.position.set(-19, 0, -5); hg.add(beside);
     const behind = makeAirBlock(22, 6, 9); behind.scale.setScalar(sc);   // low block set back behind the hangars
     behind.position.set(2, 0, -15); hg.add(behind);
+    // apron + a couple of aircraft parked outside the hangars
+    const ha = new THREE.Mesh(new THREE.BoxGeometry(30, 0.24, 12), toon(0xb9b4a6));
+    ha.position.set(0, 0.12, 13); ha.receiveShadow = true; hg.add(ha);
+    for (const px of [-8, 8]) {
+      const pl = makeAirliner(); pl.scale.setScalar(AIRPORT.planeScale);
+      pl.position.set(px, 0, 14); pl.rotation.y = 0; hg.add(pl);
+    }
     g.add(hg);
     // --- on the terminal's far (+Z) side, past an open space: a long low wide hall ---
     const hall = makeLowHall(34, 5, 14); hall.scale.setScalar(sc);
@@ -652,12 +659,12 @@ export class Scene3D {
     slab(4.2, roadZ0 - roadZ1, 0x44474d, roadX, (roadZ0 + roadZ1) / 2, 0.135);        // main frontage road
     const rdN = Math.floor((roadZ0 - roadZ1) / 6);
     for (let i = 0; i < rdN; i++) slab(0.4, 2.6, 0xe7dfca, roadX, roadZ1 + 3 + i * 6, 0.17); // dashes
-    slab(AIRPORT.hangarOff + 8 - roadX, 4.0, 0x44474d, (roadX + AIRPORT.hangarOff + 8) / 2, carZ - 24, 0.135); // spur to the hangars
-    // a couple of airliners parked on the open apron right outside the terminal
-    for (const pz of [apCz + 16, apCz - 16]) {
-      const pl = makeAirliner(); pl.scale.setScalar(AIRPORT.planeScale);
-      pl.position.set(11, 0, pz); pl.rotation.y = -Math.PI / 2 + 0.22; g.add(pl);
-    }
+    // taxi lane spur from the parallel taxiway out to the hangar apron
+    slab(34 - txOff, 6, 0x3a3d43, (txOff + 34) / 2, carZ - 24, 0.125);
+    // an aircraft parked on its own apron beside the low hall
+    slab(11, 12, 0xb9b4a6, 14, apCz + 26, 0.12);
+    const plHall = makeAirliner(); plHall.scale.setScalar(AIRPORT.planeScale);
+    plHall.position.set(14, 0, apCz + 26); plHall.rotation.y = -Math.PI / 2; g.add(plHall);
 
     // --- footprint mask (unbuildable) ---
     this.airportMask = Array.from({ length: N }, () => Array(N).fill(false));

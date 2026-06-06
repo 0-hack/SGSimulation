@@ -71,13 +71,16 @@ const AIRPORT = {
   overrun: 4,          // paved overrun past each threshold
   taxiOff: 9,          // continuous parallel taxiway offset (localX, inland of runway)
   taxiHalfW: 1.6,      // parallel-taxiway half-width
-  apronOff: 19,        // apron centre offset across the runway, inland (+localX)
-  apronHalfW: 6,       // apron half-width
-  apronHalfL: 14,      // apron half-length (a compact parking, toward one end)
+  apronOff: 18,        // apron centre offset across the runway, inland (+localX)
+  apronHalfW: 8,       // apron half-width
+  apronHalfL: 15,      // apron half-length (a compact parking, toward one end)
   apronCzFrac: -0.4,   // apron/building cluster offset toward the south end (× runway half-length)
   apronLinks: 4,       // short links from the apron to the parallel taxiway
   linkW: 2.4,          // taxiway/link width
-  termOff: 30,         // terminal buildings offset across the runway, inland (set back)
+  pierOff: 21,         // finger-pier offset (aircraft dock against it)
+  termOff: 31,         // terminal building offset across the runway, inland (set back)
+  hangarOff: 34,       // maintenance hangars offset, inland
+  carparkOff: 43,      // landside car park offset
   termScale: 0.6,      // terminal/hangar shrunk toward normal building scale
   planeScale: 0.5,     // airliners ~one building-length
 };
@@ -609,18 +612,28 @@ export class Scene3D {
       const t = AIRPORT.apronLinks > 1 ? i / (AIRPORT.apronLinks - 1) : 0.5;
       slab(lkW, AIRPORT.linkW, 0x3a3d43, lkMid, apCz - apHL * 0.78 + t * apHL * 1.56, 0.13);
     }
-    // --- parked airliners along the apron, noses toward the runway (-X) ---
-    const rows = 3;
-    for (let i = 0; i < rows; i++) {
+    // --- finger pier reaching into the apron; aircraft dock nose-in along it ---
+    const sc = AIRPORT.termScale, faceApron = -Math.PI / 2; // model +Z -> parent -X (apron/runway side)
+    const pier = makePier(); pier.scale.setScalar(sc);
+    pier.position.set(AIRPORT.pierOff, 0, apCz); pier.rotation.y = faceApron; g.add(pier);
+    // airliners docked at the pier, noses toward the runway (-X)
+    const gates = 3;
+    for (let i = 0; i < gates; i++) {
       const pl = makeAirliner(); pl.scale.setScalar(AIRPORT.planeScale);
-      pl.position.set(apOff, 0, apCz - apHL * 0.55 + i * (apHL * 1.1 / (rows - 1)));
-      pl.rotation.y = -Math.PI / 2; g.add(pl);
+      pl.position.set(AIRPORT.pierOff - 9, 0, apCz - apHL * 0.5 + i * (apHL / (gates - 1)));
+      pl.rotation.y = faceApron; g.add(pl);
     }
-    // --- two terminal buildings clustered, set back inland, facing the apron (model +Z -> -X) ---
-    const term = makeTerminal(); term.scale.setScalar(AIRPORT.termScale);
-    term.position.set(AIRPORT.termOff, 0, apCz - 5); term.rotation.y = -Math.PI / 2; g.add(term);
-    const hangar = makeHangar(); hangar.scale.setScalar(AIRPORT.termScale);
-    hangar.position.set(AIRPORT.termOff + 2, 0, apCz + 14); hangar.rotation.y = -Math.PI / 2; g.add(hangar);
+    // --- terminal: multi-storey block + control tower, set back behind the pier ---
+    const term = makeTerminal(); term.scale.setScalar(sc);
+    term.position.set(AIRPORT.termOff, 0, apCz); term.rotation.y = faceApron; g.add(term);
+    // --- a row of maintenance hangars off to one end (north of the terminal) ---
+    for (let i = 0; i < 3; i++) {
+      const h = makeHangar(); h.scale.setScalar(sc);
+      h.position.set(AIRPORT.hangarOff, 0, apCz + 22 + i * 11); h.rotation.y = faceApron; g.add(h);
+    }
+    // --- landside car park behind the terminal ---
+    slab(15, apHL * 1.5, 0x6d6f74, AIRPORT.carparkOff, apCz - 2, 0.12);
+    addCars(g, AIRPORT.carparkOff, apCz - 2, 13, apHL * 1.4);
 
     // --- footprint mask (unbuildable) ---
     this.airportMask = Array.from({ length: N }, () => Array(N).fill(false));
@@ -632,7 +645,7 @@ export class Scene3D {
       const lx = ox * cosr - oz * sinr, lz = ox * sinr + oz * cosr;
       const onRunway = Math.abs(lx) < halfW + 2 && Math.abs(lz) < halfL;
       const onTaxi = Math.abs(lx - txOff) < txHW + 2 && Math.abs(lz) < halfL;
-      const onComplex = lx > 1 && lx < AIRPORT.termOff + 9 && lz > apCz - apHL - 8 && lz < apCz + apHL + 10;
+      const onComplex = lx > 1 && lx < AIRPORT.carparkOff + 9 && lz > apCz - apHL - 8 && lz < apCz + apHL + 36;
       if (onRunway || onTaxi || onComplex) this.airportMask[y][x] = true;
     }
   }
@@ -1825,13 +1838,41 @@ function makeTerminal() {
 // barrel roof and big doors, facing local +Z (the apron side).
 function makeHangar() {
   const g = new THREE.Group();
-  g.add(partBox(22, 8, 13, mat(0xcfc9b8), 0, 4, 0));                 // body
-  const roof = new THREE.Mesh(new THREE.CylinderGeometry(6.8, 6.8, 22.2, 18), mat(0x9aa0a6));
-  roof.rotation.z = Math.PI / 2; roof.position.set(0, 8, 0); roof.castShadow = true; g.add(roof);
-  g.add(partBox(18, 6.6, 0.5, mat(0x70757b), 0, 3.5, 6.6));          // hangar doors (apron side)
-  for (let i = -3; i <= 3; i++) g.add(partBox(0.3, 6.4, 0.1, mat(0x586066), i * 2.6, 3.4, 6.86)); // door ribs
-  for (const dx of [-9.2, 9.2]) g.add(partBox(0.6, 8, 13, mat(0xc2bcaa), dx, 4, 0)); // end pilasters
+  g.add(partBox(12, 7, 14, mat(0xcfc9b8), 0, 3.5, 0));              // body (width X, depth Z)
+  const roof = new THREE.Mesh(new THREE.CylinderGeometry(6.4, 6.4, 14.2, 16), mat(0x9aa0a6));
+  roof.rotation.x = Math.PI / 2; roof.position.set(0, 7, 0); roof.castShadow = true; g.add(roof); // ridge runs front-to-back
+  g.add(partBox(11, 6.2, 0.5, mat(0x70757b), 0, 3.2, 7.1));          // arched-gable doors face the apron (+Z)
+  for (let i = -2; i <= 2; i++) g.add(partBox(0.3, 6.0, 0.1, mat(0x586066), i * 2.2, 3.1, 7.36)); // door ribs
   return g;
+}
+
+// The departure finger pier the aircraft dock against: a long single-storey hall
+// with a continuous glazed apron-side wall and a boarding canopy on columns.
+// Modelled along local X (faces local +Z, the apron side).
+function makePier() {
+  const g = new THREE.Group();
+  const pale = 0xe6e1d2, glass = 0xbfe6ff, roofc = 0xb7bcc0;
+  g.add(partBox(30, 4.2, 6.5, mat(pale), 0, 2.1, 0));               // long low hall
+  g.add(partBox(30.6, 0.5, 7.2, mat(roofc), 0, 4.45, 0));           // flat roof
+  g.add(partBox(30, 2.4, 0.3, mat(glass, { transparent: true, opacity: 0.6 }), 0, 2.4, 3.35)); // apron-side glazing
+  g.add(partBox(30, 0.3, 2.6, mat(pale), 0, 4.4, 4.9));             // boarding canopy
+  for (let i = -4; i <= 4; i++) g.add(cyl(0.15, 0.15, 4.3, 0xcfcabb, i * 3.2, 2.1, 5.1)); // canopy columns
+  return g;
+}
+
+// Scatter parked cars over a landside lot (local coords; added to the rotated
+// airport group). Small two-tone boxes in rows.
+function addCars(g, lx, lz, w, d) {
+  const cols = [0x9aa0a6, 0xc9c2b4, 0x7d848b, 0xb0b4b8, 0x8a5048, 0x4f5a66, 0xcdc7b8];
+  const rows = 5, perRow = 7;
+  for (let r = 0; r < rows; r++) for (let c = 0; c < perRow; c++) {
+    if (Math.random() < 0.3) continue;
+    const cxp = lx - w / 2 + 1.4 + c * (w - 2.8) / (perRow - 1);
+    const czp = lz - d / 2 + 2 + r * (d - 4) / (rows - 1);
+    const col = cols[Math.floor(Math.random() * cols.length)];
+    g.add(partBox(1.5, 0.7, 2.5, mat(col), cxp, 0.5, czp));
+    g.add(partBox(1.1, 0.45, 1.2, mat(0x23262b), cxp, 1.05, czp - 0.1));
+  }
 }
 
 export function makeBuilding(key, theme) {

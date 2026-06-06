@@ -31,6 +31,30 @@ function segPointDist(px, pz, ax, az, bx, bz) {
   t = Math.max(0, Math.min(1, t));
   return Math.hypot(px - (ax + t * dx), pz - (az + t * dz));
 }
+// Hermite smoothstep; edge0 may be > edge1 (gives a falling ramp).
+function smoothstep(edge0, edge1, x) {
+  const t = Math.min(1, Math.max(0, (x - edge0) / (edge1 - edge0)));
+  return t * t * (3 - 2 * t);
+}
+
+// Central Catchment terrain: the nature-reserve hills wrapping the reservoirs,
+// traced from the 1965 topographic survey (IMG_3358). Each hill centre is in
+// normalised island coords (x east, y north) with a peak height (world units)
+// and a gaussian spread (normalised). Bukit Timah — Singapore's highest point —
+// dominates the south-west, with the Bukit Panjang/Gombak ridges to its north
+// and lower rises ringing MacRitchie, Peirce and Seletar.
+const SG_HILLS = [
+  { x: 0.345, y: 0.435, h: 22, s: 0.055 }, // Bukit Timah (highest)
+  { x: 0.322, y: 0.508, h: 15, s: 0.050 }, // Bukit Panjang ridge (NW)
+  { x: 0.332, y: 0.452, h: 13, s: 0.044 }, // Bukit Gombak (W)
+  { x: 0.440, y: 0.495, h: 11, s: 0.052 }, // ridge between Peirce & MacRitchie
+  { x: 0.478, y: 0.448, h: 10, s: 0.046 }, // rise north of MacRitchie
+  { x: 0.516, y: 0.556, h:  9, s: 0.050 }, // eastern rise near Seletar
+  { x: 0.388, y: 0.560, h:  9, s: 0.046 }, // hill west of Upper Peirce
+];
+const HILL_CENTER = [0.43, 0.49];  // disk centre (~reservoir-cluster centre)
+const HILL_R = 0.27;               // hills fade back to flat land beyond this radius
+const HILL_MAXH = 22;              // tallest peak, for elevation colour banding
 
 export class Scene3D {
   constructor(canvas, { onTileTap, onGroundTap } = {}) {
@@ -117,6 +141,7 @@ export class Scene3D {
     this._buildIsland();
     this.roadEdges = [];     // 1965 Singapore had no dense road grid — players build roads
     this._buildCatchment();  // Central Catchment reservoir + nature reserve (centre of island)
+    this._buildTerrain();    // the nature-reserve hills (Bukit Timah massif) around the reservoirs
     this._buildNature();     // scatter rural greenery across the undeveloped island
     this._buildNavGraph();   // traffic graph (freeform roads only; added on setState)
     this._initBoats();
@@ -302,6 +327,7 @@ export class Scene3D {
       if (inReservoir(x, y, N)) this.reserveMask[y][x] = true;
       if (inRiver(x, y, N)) this.riverMask[y][x] = true;
     }
+    this._computeWaterDist();   // cell distance-to-water field (carves hill valleys)
     // Reservoirs are drawn as filled dendritic LAKES traced from the survey map;
     // the river is still a slim swept ribbon. One unified water colour so the
     // river, reservoirs, coastal inlets and the open sea all read as one body.
@@ -313,6 +339,90 @@ export class Scene3D {
     const branches = riverBranches(N);
     for (const br of branches) this._waterRibbon(br, 2.0, 0.1, sMat);   // river banks first (lower)
     for (const br of branches) this._waterRibbon(br, 0, 0.18, wMat);    // river water on top
+  }
+
+  // Multi-source BFS distance (in cells) from every cell to the nearest water
+  // (reservoir/river). Used to carve valleys so the hills slope down to the
+  // lakes instead of walling them in.
+  _computeWaterDist() {
+    const INF = 9999;
+    const dist = Array.from({ length: N }, () => Array(N).fill(INF));
+    const q = [];
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+      if (this.reserveMask[y][x] || this.riverMask[y][x]) { dist[y][x] = 0; q.push([x, y]); }
+    }
+    for (let head = 0; head < q.length; head++) {
+      const [x, y] = q[head], d = dist[y][x] + 1;
+      for (const [ax, ay] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nx = x + ax, ny = y + ay;
+        if (nx < 0 || ny < 0 || nx >= N || ny >= N || dist[ny][nx] <= d) continue;
+        dist[ny][nx] = d; q.push([nx, ny]);
+      }
+    }
+    this.waterDist = dist;
+  }
+
+  // Terrain elevation (world units) at a normalised island point. Sum of the
+  // gaussian hills, faded to flat land beyond the reserve disk and carved down
+  // to ~0 around the reservoirs so the lakes keep sitting in the low ground.
+  _terrainHN(nx, ny) {
+    const dr = Math.hypot(nx - HILL_CENTER[0], ny - HILL_CENTER[1]) / HILL_R;
+    if (dr >= 1) return 0;
+    const disk = smoothstep(1.0, 0.7, dr);                 // 1 inside, 0 at the rim
+    let h = 0;
+    for (const hl of SG_HILLS) {
+      const d2 = (nx - hl.x) ** 2 + (ny - hl.y) ** 2;
+      h += hl.h * Math.exp(-d2 / (2 * hl.s * hl.s));
+    }
+    h += 1.4 * Math.sin(nx * 90) * Math.sin(ny * 85);      // gentle rolling texture
+    const cx = Math.min(N - 1, Math.max(0, Math.floor(nx * N)));
+    const cy = Math.min(N - 1, Math.max(0, Math.floor(ny * N)));
+    const wd = this.waterDist ? this.waterDist[cy][cx] : 99;
+    const valley = smoothstep(0.5, 5.0, wd);               // 0 at water, 1 a few cells away
+    return Math.max(0, h * disk * valley);
+  }
+  // Elevation at the centre of grid cell (cx,cy) — for placing trees & buildings.
+  terrainHeight(cx, cy) { return this._terrainHN((cx + 0.5) / N, (cy + 0.5) / N); }
+
+  // Build the central-catchment hill surface: a displaced grid over the reserve
+  // disk, cel-shaded and tinted by elevation (forest green → olive → bare tan).
+  _buildTerrain() {
+    if (this.terrainMesh) { this.scene.remove(this.terrainMesh); this.terrainMesh.geometry.dispose(); }
+    const RES = 110;
+    const x0 = HILL_CENTER[0] - HILL_R, x1 = HILL_CENTER[0] + HILL_R;
+    const y0 = HILL_CENTER[1] - HILL_R, y1 = HILL_CENTER[1] + HILL_R;
+    const pos = [], col = [], idx = [], hgt = [];
+    const lo = new THREE.Color(0x77c25a), mid = new THREE.Color(0x4f8f3e),
+          hi = new THREE.Color(0x9a9a5f), top = new THREE.Color(0xb3a274), tmp = new THREE.Color();
+    for (let j = 0; j <= RES; j++) {
+      for (let i = 0; i <= RES; i++) {
+        const nx = x0 + (x1 - x0) * i / RES, ny = y0 + (y1 - y0) * j / RES;
+        const h = this._terrainHN(nx, ny);
+        hgt.push(h);
+        pos.push((nx - 0.5) * WORLD, h, (0.5 - ny) * WORLD);
+        const t = Math.min(1, h / HILL_MAXH);
+        if (t < 0.5) tmp.copy(lo).lerp(mid, t / 0.5);
+        else if (t < 0.8) tmp.copy(mid).lerp(hi, (t - 0.5) / 0.3);
+        else tmp.copy(hi).lerp(top, (t - 0.8) / 0.2);
+        col.push(tmp.r, tmp.g, tmp.b);
+      }
+    }
+    const W1 = RES + 1;
+    // Only emit quads that actually rise — the flat (h≈0) skirt is left to the
+    // island's own ground/water, so we don't paint a plateau over the lakes.
+    for (let j = 0; j < RES; j++) for (let i = 0; i < RES; i++) {
+      const a = j * W1 + i, b = a + 1, c = a + W1, d = c + 1;
+      if (Math.max(hgt[a], hgt[b], hgt[c], hgt[d]) < 0.25) continue;
+      idx.push(a, b, c, b, d, c);                          // upward-facing winding
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    g.setIndex(idx); g.computeVertexNormals();
+    const m = new THREE.MeshToonMaterial({ vertexColors: true, gradientMap: toonGradient() });
+    const mesh = new THREE.Mesh(g, m);
+    mesh.receiveShadow = true; mesh.castShadow = true;
+    this.terrainMesh = mesh; this.scene.add(mesh);
   }
 
   // A filled reservoir lake from a normalised polygon: a flat water surface with
@@ -379,7 +489,7 @@ export class Scene3D {
       const g = new THREE.Group();
       const n = forest ? 2 + Math.floor(Math.random() * 2) : 1 + (Math.random() < 0.4 ? 1 : 0);
       for (let k = 0; k < n; k++) treeAt(g, (Math.random() - 0.5) * 6, (Math.random() - 0.5) * 6, 0.8 + Math.random() * 0.9);
-      g.position.set(c.x, 0, c.z); g.rotation.y = Math.random() * Math.PI;
+      g.position.set(c.x, this.terrainHeight(x, y), c.z); g.rotation.y = Math.random() * Math.PI;
       g.traverse((m) => { if (m.isMesh) m.castShadow = false; });
       this.natureGroup.add(g);
       this.natureCells.set(x + ',' + y, g);
@@ -609,7 +719,7 @@ export class Scene3D {
     if (!this.ghost || !this.hoverCell) { if (this.ghost) this.ghost.visible = false; return; }
     const { x, y } = this.hoverCell;
     const c = cellToWorld(x, y);
-    this.ghost.position.set(c.x, 0, c.z);
+    this.ghost.position.set(c.x, this.terrainHeight(x, y), c.z);
     this.ghost.visible = true;
     const ok = this.isLand(x, y) && !this.buildings.has(`${x},${y}`);
     this.ghost.traverse((o) => { if (o.material) o.material.color.set(ok ? 0x9be15d : 0xff5a5a); });
@@ -635,7 +745,7 @@ export class Scene3D {
     const b = BUILDINGS[key];
     const group = makeBuilding(key, theme);
     const c = cellToWorld(x, y);
-    group.position.set(c.x, 0, c.z);
+    group.position.set(c.x, this.terrainHeight(x, y), c.z);
     group.rotation.y = (Math.floor(Math.random() * 4)) * Math.PI / 2;
     group.castShadow = true;
     this.scene.add(group);
@@ -664,7 +774,7 @@ export class Scene3D {
     const entry = this.buildings.get(id);
     if (!entry) return;
     this.buildings.delete(id);
-    this.anims.push({ group: entry.group, t: 0, dur: 0.8, type: 'demolish' });
+    this.anims.push({ group: entry.group, t: 0, dur: 0.8, type: 'demolish', baseY: entry.group.position.y });
     const c = cellToWorld(x, y);
     this._spawnDust(c.x, c.z, 0xbfb09a, 26);
     const g = this.natureCells?.get(x + ',' + y); if (g) g.visible = true;   // greenery returns
@@ -1322,7 +1432,7 @@ export class Scene3D {
       } else {
         a.group.scale.y = Math.max(0.001, 1 - k);
         a.group.rotation.z = k * 0.4;
-        a.group.position.y = -k * 2;
+        a.group.position.y = (a.baseY || 0) - k * 2;
         if (k >= 1) this.scene.remove(a.group);
       }
       if (k >= 1) this.anims.splice(i, 1);

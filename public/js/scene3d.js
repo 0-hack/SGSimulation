@@ -628,16 +628,20 @@ export class Scene3D {
     const term = makeTerminal(); term.scale.setScalar(sc);
     term.position.set(AIRPORT.termOff, 0, apCz); term.rotation.y = 0; g.add(term);
     // --- car park inline on the terminal's left side (−Z) ---
-    const carZ = apCz - 15;
+    const carZ = apCz - 14;
     slab(20, 13, 0x6d6f74, AIRPORT.carparkOff, carZ, 0.12);
     addCars(g, AIRPORT.carparkOff, carZ, 18, 12);
-    // --- maintenance hangars beyond the car park, the row tilted ~30° off the grid ---
+    // --- hangar group beyond the car park, the whole row tilted ~30° off the grid ---
     const hg = new THREE.Group();
-    hg.position.set(AIRPORT.hangarOff, 0, carZ - 16); hg.rotation.y = faceApron + Math.PI / 6;
-    for (let i = 0; i < 3; i++) {
+    hg.position.set(AIRPORT.hangarOff, 0, carZ - 10); hg.rotation.y = faceApron + Math.PI / 6;
+    for (let i = 0; i < 3; i++) {                       // wide hangars side by side
       const h = makeHangar(); h.scale.setScalar(sc);
-      h.position.set(0, 0, (i - 1) * 11); hg.add(h);
+      h.position.set((i - 1) * 12, 0, 0); hg.add(h);
     }
+    const beside = makeAirBlock(8, 9, 22); beside.scale.setScalar(sc);   // long workshop block beside (L-shape)
+    beside.position.set(-22, 0, -4); hg.add(beside);
+    const behind = makeAirBlock(22, 7.5, 9); behind.scale.setScalar(sc); // block set back behind the hangars
+    behind.position.set(0, 0, -16); hg.add(behind);
     g.add(hg);
 
     // --- footprint mask (unbuildable) ---
@@ -650,7 +654,7 @@ export class Scene3D {
       const lx = ox * cosr - oz * sinr, lz = ox * sinr + oz * cosr;
       const onRunway = Math.abs(lx) < halfW + 2 && Math.abs(lz) < halfL;
       const onTaxi = Math.abs(lx - txOff) < txHW + 2 && Math.abs(lz) < halfL;
-      const onComplex = lx > 1 && lx < AIRPORT.termOff + 22 && lz > apCz - 50 && lz < apCz + apHL + 6;
+      const onComplex = lx > 1 && lx < AIRPORT.termOff + 28 && lz > apCz - 52 && lz < apCz + apHL + 6;
       if (onRunway || onTaxi || onComplex) this.airportMask[y][x] = true;
     }
   }
@@ -1843,11 +1847,19 @@ function makeTerminal() {
 // barrel roof and big doors, facing local +Z (the apron side).
 function makeHangar() {
   const g = new THREE.Group();
-  g.add(partBox(12, 7, 14, mat(0xcfc9b8), 0, 3.5, 0));              // body (width X, depth Z)
-  const roof = new THREE.Mesh(new THREE.CylinderGeometry(6.4, 6.4, 14.2, 16), mat(0x9aa0a6));
-  roof.rotation.x = Math.PI / 2; roof.position.set(0, 7, 0); roof.castShadow = true; g.add(roof); // ridge runs front-to-back
-  g.add(partBox(11, 6.2, 0.5, mat(0x70757b), 0, 3.2, 7.1));          // arched-gable doors face the apron (+Z)
-  for (let i = -2; i <= 2; i++) g.add(partBox(0.3, 6.0, 0.1, mat(0x586066), i * 2.2, 3.1, 7.36)); // door ribs
+  g.add(partBox(18, 6, 13, mat(0xcfc9b8), 0, 3, 0));                // wide body (width X, depth Z)
+  const roof = new THREE.Mesh(new THREE.CylinderGeometry(9.4, 9.4, 13.2, 18), mat(0x9aa0a6));
+  roof.rotation.x = Math.PI / 2; roof.scale.z = 0.55; roof.position.set(0, 6, 0); roof.castShadow = true; g.add(roof); // wide shallow vault
+  g.add(partBox(16.6, 5.6, 0.5, mat(0x70757b), 0, 2.9, 6.6));        // wide arched-gable doors (apron side)
+  for (let i = -3; i <= 3; i++) g.add(partBox(0.3, 5.4, 0.1, mat(0x586066), i * 2.4, 2.8, 6.86)); // door ribs
+  return g;
+}
+
+// A plain flat-roofed airport block (workshop / admin), facing local +Z.
+function makeAirBlock(w, ht, d, style = 'office') {
+  const g = new THREE.Group();
+  g.add(tower(w, ht, d, style, 0, 0));
+  g.add(partBox(w + 0.4, 0.7, d + 0.4, mat(0xe6e1d2), 0, ht + 0.35, 0)); // parapet cap
   return g;
 }
 

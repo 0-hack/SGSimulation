@@ -82,7 +82,8 @@ const AIRPORT = {
   carparkOff: 36,      // landside car park offset
   hangarOff: 33,       // maintenance hangars offset, inland
   termScale: 0.6,      // terminal/hangar shrunk toward normal building scale
-  planeScale: 0.5,     // airliners ~one building-length
+  planeScale: 0.46,    // airliners ~one building-length (a touch smaller than the terminals)
+  scale: 0.62,         // master shrink: the 1955/66 field was tiny next to the island, so the whole complex is scaled down
 };
 
 export class Scene3D {
@@ -575,9 +576,10 @@ export class Scene3D {
     const cx = (s.x + n.x) / 2, cz = (s.z + n.z) / 2;
     const dx = n.x - s.x, dz = n.z - s.z, len = Math.hypot(dx, dz);
     const rot = Math.atan2(dx, dz);             // local +Z = south→north runway axis
-    const g = new THREE.Group(); g.position.set(cx, 0, cz); g.rotation.y = rot;
+    const SC = AIRPORT.scale;                   // uniform shrink of the whole complex
+    const g = new THREE.Group(); g.position.set(cx, 0, cz); g.rotation.y = rot; g.scale.setScalar(SC);
     this.scene.add(g); this.airportGroup = g;
-    this._airportCenter = { cx, cz, rot, len };
+    this._airportCenter = { cx, cz, rot, len: len * SC };
 
     // local frame: +Z = runway long axis (N), +X = inland (west) toward terminals
     const halfW = AIRPORT.rwHalfW, over = AIRPORT.overrun, halfL = len / 2 + over;
@@ -676,7 +678,8 @@ export class Scene3D {
       if (!this.land[y][x]) continue;
       const w = cellToWorld(x, y);
       const ox = w.x - cx, oz = w.z - cz;
-      const lx = ox * cosr - oz * sinr, lz = ox * sinr + oz * cosr;
+      // back out the group's uniform scale so thresholds stay in the model's local units
+      const lx = (ox * cosr - oz * sinr) / SC, lz = (ox * sinr + oz * cosr) / SC;
       const onRunway = Math.abs(lx) < halfW + 2 && Math.abs(lz) < halfL;
       const onTaxi = Math.abs(lx - txOff) < txHW + 2 && Math.abs(lz) < halfL;
       const onComplex = lx > 1 && lx < AIRPORT.termOff + 38 && lz > apCz - 62 && lz < apCz + 42;
@@ -727,7 +730,10 @@ export class Scene3D {
       c.setPointerCapture(e.pointerId);
       this._pointers.set(e.pointerId, pos(e));
       this._moved = false; this._down = pos(e); this._downTime = performance.now(); this._last = pos(e);
+      // right / middle mouse button, or shift+left, drags to pan the view
+      this._panDrag = e.pointerType === 'mouse' && (e.button === 1 || e.button === 2 || (e.button === 0 && e.shiftKey));
     });
+    c.addEventListener('contextmenu', (e) => e.preventDefault()); // free the right button for panning
     c.addEventListener('pointermove', (e) => {
       if (!this._pointers.has(e.pointerId)) { this._hover(pos(e)); return; }
       const p = pos(e);
@@ -746,6 +752,7 @@ export class Scene3D {
       const dx = p.x - this._last.x, dy = p.y - this._last.y;
       this._last = p;
       if (Math.abs(p.x - this._down.x) > 5 || Math.abs(p.y - this._down.y) > 5) this._moved = true;
+      if (this._panDrag) { this._pan(dx, dy); this._hover(p); return; } // drag to shift the view
       this.cam.theta -= dx * 0.005;
       this.cam.phi = THREE.MathUtils.clamp(this.cam.phi - dy * 0.005, 0.22, 1.28);
       this._hover(p);
@@ -764,6 +771,7 @@ export class Scene3D {
       }
       this._pointers.delete(e.pointerId);
       if (this._pointers.size < 2) { this._lastPinch = 0; this._lastMid = null; }
+      if (this._pointers.size === 0) this._panDrag = false;
     };
     c.addEventListener('pointerup', end);
     c.addEventListener('pointercancel', end);
@@ -772,6 +780,25 @@ export class Scene3D {
       e.preventDefault();
       this.cam.radius = THREE.MathUtils.clamp(this.cam.radius * (e.deltaY < 0 ? 0.92 : 1.08), this.MIN_R, this.MAX_R);
     }, { passive: false });
+    // keyboard: arrows / WASD pan the view, Q/E rotate, R recentres
+    window.addEventListener('keydown', (e) => {
+      if (this.disposed) return;
+      const t = e.target;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      const step = 36; // screen-pixels-equivalent nudge
+      let used = true;
+      switch (e.key) {
+        case 'ArrowLeft': case 'a': case 'A': this._pan(step, 0); break;
+        case 'ArrowRight': case 'd': case 'D': this._pan(-step, 0); break;
+        case 'ArrowUp': case 'w': case 'W': this._pan(0, step); break;
+        case 'ArrowDown': case 's': case 'S': this._pan(0, -step); break;
+        case 'q': case 'Q': this.cam.theta += 0.12; break;
+        case 'e': case 'E': this.cam.theta -= 0.12; break;
+        case 'r': case 'R': this.centerCamera(); break;
+        default: used = false;
+      }
+      if (used) e.preventDefault();
+    });
     window.addEventListener('resize', () => this.resize());
   }
 
@@ -1335,6 +1362,8 @@ export class Scene3D {
 
   // Sample an edge's centre-line into world points (with bridge elevation).
   _sampleEdge(roads, e) {
+    // a traced road carries its own smoothed polyline (curves through the map)
+    if (e.poly && e.poly.length >= 2) return e.poly.map((p) => ({ x: p.x, y: 0.16, z: p.z }));
     const a = roads.nodes[e.a], b = roads.nodes[e.b];
     if (!a || !b) return [];
     const pts = [];
@@ -1406,6 +1435,16 @@ export class Scene3D {
       const T = ROAD_TYPES[e.type] || ROAD_TYPES.street;
       const pts = this._sampleEdge(roads, e);
       if (pts.length < 2) return;
+      if (e.traced) {
+        // a traced historical road: a slim, smoothly-curving carriageway. Real
+        // 1966 roads were narrow, so we render a thin ribbon, no stop lines at
+        // every joint, and just a centre line for two-way streets.
+        const hw = 0.95;
+        ribbon(pave, pts, hw + 0.4, 0.0);
+        ribbon(road, pts, hw, 0.03);
+        if (!e.oneway) markLine(pts, 0, false, 0.06);   // single solid centre line
+        return;
+      }
       const hw = T.width / 2, L = e.lanes || T.lanes, lw = T.width / L;
       ribbon(pave, pts, hw + 0.7, 0.0);
       ribbon(road, pts, hw, 0.03);

@@ -102,6 +102,16 @@ function showGameShell(playing = true) {
   }
   G.view.resize();
   if (playing) setSpeed(1);
+  // surface the camera controls once per session, then fade it out
+  if (!sessionStorage.getItem('camHintSeen')) {
+    const hint = $('cam-hint');
+    if (hint) {
+      hint.classList.remove('hidden');
+      setTimeout(() => hint.classList.add('fade'), 6500);
+      setTimeout(() => hint.classList.add('hidden'), 7600);
+      sessionStorage.setItem('camHintSeen', '1');
+    }
+  }
 }
 
 function startNew() {

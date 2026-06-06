@@ -5,7 +5,7 @@ import {
   HISTORICAL_EVENTS, RANDOM_EVENTS,
 } from './data.js';
 import { pointInPolygon, inReservoir, inRiver } from './shape.js';
-import { ROAD_NODES_1966, ROAD_EDGES_1966 } from './roads1966.js';
+import { ROAD_NODES_1966, ROAD_CHAINS_1966 } from './roads1966.js';
 
 // Is grid cell (x,y) on the island (land), not in the reservoir, not in the river?
 function isLandCell(x, y) {
@@ -85,8 +85,13 @@ function seed1965(state) {
   // One-way streets carry a `oneway` flag (lanes: 1). The old houses/roads are gone.
   const roads = state.roads;
   for (const [x, z] of ROAD_NODES_1966) roads.nodes.push({ x, z, y: 0 });
-  for (const [a, b, ow] of ROAD_EDGES_1966)
-    roads.edges.push({ a, b, ctrl: null, type: 'street', lanes: ow ? 1 : 2, elevated: false, oneway: !!ow });
+  // each chain is a smoothed polyline (real roads curve); `poly` carries the
+  // full centre-line so the renderer/traffic follow the curve, not a straight a→b.
+  for (const [a, b, ow, pts] of ROAD_CHAINS_1966)
+    roads.edges.push({
+      a, b, ctrl: null, poly: pts.map(([x, z]) => ({ x, z, y: 0 })),
+      type: 'street', lanes: ow ? 1 : 2, elevated: false, oneway: !!ow, traced: true,
+    });
 
   // a handful of rural kampongs still dotted across the otherwise-undeveloped island
   let placed = 0;

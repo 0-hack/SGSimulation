@@ -643,6 +643,9 @@ export class Scene3D {
     const behind = makeAirBlock(22, 6, 9); behind.scale.setScalar(sc);   // low block set back behind the hangars
     behind.position.set(2, 0, -15); hg.add(behind);
     g.add(hg);
+    // --- on the terminal's far (+Z) side, past an open space: a long low wide hall ---
+    const hall = makeLowHall(34, 5, 14); hall.scale.setScalar(sc);
+    hall.position.set(24, 0, apCz + 26); hall.rotation.y = faceApron; g.add(hall);
 
     // --- footprint mask (unbuildable) ---
     this.airportMask = Array.from({ length: N }, () => Array(N).fill(false));
@@ -654,7 +657,7 @@ export class Scene3D {
       const lx = ox * cosr - oz * sinr, lz = ox * sinr + oz * cosr;
       const onRunway = Math.abs(lx) < halfW + 2 && Math.abs(lz) < halfL;
       const onTaxi = Math.abs(lx - txOff) < txHW + 2 && Math.abs(lz) < halfL;
-      const onComplex = lx > 1 && lx < AIRPORT.termOff + 38 && lz > apCz - 62 && lz < apCz + apHL + 6;
+      const onComplex = lx > 1 && lx < AIRPORT.termOff + 38 && lz > apCz - 62 && lz < apCz + 42;
       if (onRunway || onTaxi || onComplex) this.airportMask[y][x] = true;
     }
   }
@@ -1861,6 +1864,19 @@ function makeAirBlock(w, ht, d, style = 'office') {
   const g = new THREE.Group();
   g.add(tower(w, ht, d, style, 0, 0));
   g.add(partBox(w + 0.4, 0.7, d + 0.4, mat(0xe6e1d2), 0, ht + 0.35, 0)); // parapet cap
+  return g;
+}
+
+// A long, low, wide single-storey hall (arrivals / transit shed) with a flat
+// roof and a covered walkway on columns along its apron side. Faces local +Z.
+function makeLowHall(len, ht, d) {
+  const g = new THREE.Group();
+  const pale = 0xe6e1d2, roofc = 0xcdc7b8;
+  g.add(tower(len, ht, d, 'office', 0, 0));                          // low windowed body
+  g.add(partBox(len + 0.6, 0.6, d + 0.6, mat(roofc), 0, ht + 0.3, 0)); // flat roof
+  g.add(partBox(len, 0.3, 2.6, mat(pale), 0, ht * 0.72, d / 2 + 1.4)); // covered walkway canopy
+  const n = Math.max(1, Math.floor(len / 6));
+  for (let i = -n; i <= n; i++) g.add(cyl(0.18, 0.18, ht * 0.72, 0xcfcabb, i * (len / (2 * n)), ht * 0.36, d / 2 + 2.5));
   return g;
 }
 

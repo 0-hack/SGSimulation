@@ -618,9 +618,9 @@ export class Scene3D {
     }
     // --- two terminal buildings clustered, set back inland, facing the apron (model +Z -> -X) ---
     const term = makeTerminal(); term.scale.setScalar(AIRPORT.termScale);
-    term.position.set(AIRPORT.termOff, 0, apCz - 6); term.rotation.y = -Math.PI / 2; g.add(term);
+    term.position.set(AIRPORT.termOff, 0, apCz - 5); term.rotation.y = -Math.PI / 2; g.add(term);
     const hangar = makeHangar(); hangar.scale.setScalar(AIRPORT.termScale);
-    hangar.position.set(AIRPORT.termOff + 1, 0, apCz + 11); hangar.rotation.y = -Math.PI / 2; g.add(hangar);
+    hangar.position.set(AIRPORT.termOff + 2, 0, apCz + 14); hangar.rotation.y = -Math.PI / 2; g.add(hangar);
 
     // --- footprint mask (unbuildable) ---
     this.airportMask = Array.from({ length: N }, () => Array(N).fill(false));
@@ -632,7 +632,7 @@ export class Scene3D {
       const lx = ox * cosr - oz * sinr, lz = ox * sinr + oz * cosr;
       const onRunway = Math.abs(lx) < halfW + 2 && Math.abs(lz) < halfL;
       const onTaxi = Math.abs(lx - txOff) < txHW + 2 && Math.abs(lz) < halfL;
-      const onComplex = lx > 1 && lx < AIRPORT.termOff + 7 && lz > apCz - apHL - 4 && lz < apCz + apHL + 4;
+      const onComplex = lx > 1 && lx < AIRPORT.termOff + 9 && lz > apCz - apHL - 8 && lz < apCz + apHL + 10;
       if (onRunway || onTaxi || onComplex) this.airportMask[y][x] = true;
     }
   }
@@ -1777,46 +1777,47 @@ function glassPanes(glassMat) {
   m.position.set(0, 2.3, 6.6); return m;
 }
 
-// The 1955 Singapore (Paya Lebar) terminal: a long six-storey office slab, a
-// tall square control tower with a glazed cab, a saw-tooth-roofed concourse
-// wing, and a lattice radio mast — modelled facing local +Z (the apron side).
+// The 1955 Singapore (Paya Lebar) terminal, modelled to the postcard elevation
+// (facing local +Z, the apron side): from left to right — the square control
+// tower with its glazed cab and flat overhanging roof, the clean multi-storey
+// office slab beside it, then the single-storey saw-tooth concourse hall.
 function makeTerminal() {
   const g = new THREE.Group();
-  const concrete = 0xd8d3c4, pale = 0xe6e1d2, grey = 0x9aa0a6, glassBlue = 0xbfe6ff;
-  // main six-storey slab
-  g.add(tower(34, 20, 8, 'office', 0, -1));
-  g.add(partBox(34.6, 1.2, 8.6, mat(pale), 0, 20.4, -1));            // parapet cap
-  // glazed ground-floor entrance + cantilevered canopy on the apron side
-  g.add(partBox(34, 4.4, 0.4, mat(glassBlue, { transparent: true, opacity: 0.7 }), 0, 2.2, 3.2));
-  g.add(partBox(34, 0.4, 4.0, mat(pale), 0, 4.5, 5.0));
-  for (const cx of [-15, -7.5, 0, 7.5, 15]) g.add(cyl(0.22, 0.22, 4.4, 0xcfcabb, cx, 2.2, 6.8));
-  // control tower (right end), stepped forward of the slab
-  g.add(tower(7, 33, 7, 'office', 15, 2));
-  for (const fx of [-3.5, 3.5]) { g.add(partBox(0.5, 33, 0.4, mat(concrete), 15 + fx, 16.5, 5.4)); g.add(partBox(0.4, 33, 0.5, mat(concrete), 15 + fx, 16.5, 2)); } // vertical fins
-  g.add(partBox(9, 3.6, 9, mat(glassBlue, { transparent: true, opacity: 0.8 }), 15, 34.8, 2)); // glazed cab
-  g.add(partBox(10, 0.7, 10, mat(grey), 15, 37.0, 2));              // cab roof overhang
-  g.add(cyl(0.18, 0.22, 6, 0xd23b32, 15, 40.3, 2));                 // radio mast (red)
-  g.add(cyl(0.1, 0.1, 1.6, 0xf2efe6, 15, 44.0, 2));                 // white tip
-  // saw-tooth concourse wing (left end), single-storey
-  const baseX = -25;
-  g.add(partBox(18, 6, 10, mat(pale), baseX, 3, 0));
-  for (let i = 0; i < 6; i++) {
-    const sx = baseX - 7.5 + i * 3.0;
-    const roof = partBox(3.0, 0.3, 6.6, mat(0xc9c4b4), sx, 7.0, -1.2); roof.rotation.z = 0.5; g.add(roof);
-    g.add(partBox(0.3, 1.7, 6.6, mat(glassBlue, { transparent: true, opacity: 0.75 }), sx - 1.3, 6.7, -1.2)); // north-light glazing
+  const concrete = 0xc9c2b0, pale = 0xe6e1d2, grey = 0x9aa0a6, glassBlue = 0xbfe6ff;
+
+  // (left) square control tower — shaft, corner pilasters, glazed cab, flat roof
+  const tx = -11;
+  g.add(tower(6.5, 26, 6.5, 'office', tx, 1));
+  for (const [fxs, fzs] of [[-1, -1], [1, -1], [-1, 1], [1, 1]])
+    g.add(partBox(0.6, 26.4, 0.6, mat(concrete), tx + fxs * 3.3, 13.2, 1 + fzs * 3.3)); // corner frame
+  g.add(partBox(8.8, 3.6, 8.8, mat(glassBlue, { transparent: true, opacity: 0.8 }), tx, 27.8, 1)); // glazed cab
+  g.add(partBox(10.2, 0.7, 10.2, mat(grey), tx, 30.0, 1));           // flat overhanging roof
+  g.add(cyl(0.16, 0.2, 4.4, 0xd23b32, tx, 32.5, 1));                 // radio mast
+  g.add(cyl(0.09, 0.09, 1.4, 0xf2efe6, tx, 35.2, 1));               // white tip
+  g.add(partBox(11, 4, 6, mat(pale), tx + 1.6, 2, 3.6));            // low entrance hall at the base
+
+  // (centre) the clean multi-storey office slab BESIDE the tower — regular grid
+  const sx0 = 4;
+  g.add(tower(20, 16, 8, 'office', sx0, 0));
+  g.add(partBox(20.6, 1.0, 8.6, mat(pale), sx0, 16.4, 0));           // parapet cap
+  g.add(partBox(5, 2.4, 4.6, mat(pale), sx0 + 4, 17.6, 0));          // rooftop penthouse
+  g.add(cyl(0.1, 0.1, 3, mat(grey), sx0 + 4, 19.6, 0));            // roof emblem pole
+  g.add(partBox(20, 4, 0.4, mat(glassBlue, { transparent: true, opacity: 0.65 }), sx0, 2, 4.2)); // glazed frontage
+  g.add(partBox(21.5, 0.4, 3.2, mat(pale), sx0, 4.2, 5.4));          // entrance canopy
+  for (const cx of [-7, -2, 3, 8]) g.add(cyl(0.2, 0.2, 4, 0xcfcabb, sx0 + cx, 2, 6.8));
+
+  // (right) single-storey saw-tooth concourse hall
+  const baseX = 18;
+  g.add(partBox(12, 6, 9, mat(pale), baseX, 3, 0));
+  for (let i = 0; i < 5; i++) {
+    const rx = baseX - 4.8 + i * 2.4;
+    const roof = partBox(2.4, 0.3, 9, mat(concrete), rx, 7.0, 0); roof.rotation.z = 0.5; g.add(roof);
+    g.add(partBox(0.3, 1.6, 9, mat(glassBlue, { transparent: true, opacity: 0.75 }), rx - 1.05, 6.7, 0)); // north-light glazing
   }
-  // lattice radio mast beside the slab
-  const mast = new THREE.Group(); mast.position.set(24, 0, -5);
-  for (const [mx, mz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) mast.add(cyl(0.12, 0.16, 26, 0xb24a3f, mx, 13, mz));
-  for (let h = 3; h < 26; h += 3.2) for (const [a, b] of [[[-1, -1], [1, -1]], [[1, -1], [1, 1]], [[1, 1], [-1, 1]], [[-1, 1], [-1, -1]]]) {
-    const ax = a[0], az = a[1], bx = b[0], bz = b[1];
-    const bar = partBox(Math.hypot(bx - ax, bz - az) + 0.1, 0.12, 0.12, mat(0xb24a3f), (ax + bx) / 2, h, (az + bz) / 2);
-    bar.rotation.y = Math.atan2(bz - az, bx - ax); mast.add(bar);
-  }
-  g.add(mast);
-  // landside garden behind the slab
-  lawn(g, 40, 8, 0x6fb15a);                                          // (under the slab; cheap green base)
-  for (const tx of [-14, -4, 6, 16]) treeAt(g, tx, -7.5, 1.2);
+
+  // landside garden behind the complex
+  lawn(g, 44, 8, 0x6fb15a);
+  for (const tt of [-13, -4, 5, 14, 21]) treeAt(g, tt, -7.5, 1.2);
   return g;
 }
 

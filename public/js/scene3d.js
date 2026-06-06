@@ -137,7 +137,7 @@ export class Scene3D {
   _buildIsland() {
     // Main island, then the smaller outlying islands (decorative).
     this._landmass(SG_OUTLINE, { depth: 8, bevel: 1.5, beachScale: 1.05, main: true });
-    for (const poly of SG_ISLANDS) this._landmass(poly, { depth: 5, bevel: 1.0, beachScale: 1.12, palms: true });
+    for (const poly of SG_ISLANDS) this._landmass(poly, { depth: 5, bevel: 1.0, beachScale: 1.08, palms: true });
 
     // Invisible pick plane at ground level for raycasting taps.
     this.pickPlane = new THREE.Mesh(
@@ -167,17 +167,21 @@ export class Scene3D {
     land.receiveShadow = true; this.scene.add(land);
     if (main) this.island = land;
 
-    // a thin sandy beach skirt just below the grass so roads/grass aren't covered
+    // a thin sandy beach skirt just below the grass so roads/grass aren't covered.
+    // Scale it about the island's own centroid (NOT the world origin) so offshore
+    // islands get a concentric sand ring instead of an offset/oversized blob.
+    let cx = 0, cz = 0;
+    for (const [nx, ny] of poly) { cx += (nx - 0.5) * WORLD; cz += (0.5 - ny) * WORLD; }
+    cx /= poly.length; cz /= poly.length;
     const beachGeo = new THREE.ExtrudeGeometry(toShape(), { depth: 0.6, bevelEnabled: false });
     beachGeo.rotateX(-Math.PI / 2); beachGeo.computeBoundingBox();
     beachGeo.translate(0, -beachGeo.boundingBox.max.y - 0.12, 0);
     const beach = new THREE.Mesh(beachGeo, new THREE.MeshToonMaterial({ color: 0xe6d6a6, gradientMap: toonGradient() }));
-    beach.scale.set(beachScale, 1, beachScale); beach.receiveShadow = true; this.scene.add(beach);
+    beach.scale.set(beachScale, 1, beachScale);
+    beach.position.set((1 - beachScale) * cx, 0, (1 - beachScale) * cz); // keep the scale centred on the island
+    beach.receiveShadow = true; this.scene.add(beach);
 
     if (palms) {
-      let cx = 0, cz = 0;
-      for (const [nx, ny] of poly) { cx += (nx - 0.5) * WORLD; cz += (0.5 - ny) * WORLD; }
-      cx /= poly.length; cz /= poly.length;
       const gmat = new THREE.MeshToonMaterial({ color: 0x3fae57, gradientMap: toonGradient() });
       const tmat = new THREE.MeshToonMaterial({ color: 0x8a6b43, gradientMap: toonGradient() });
       for (const [dx, dz] of [[-5, -2], [4, 2], [0, 4]]) {

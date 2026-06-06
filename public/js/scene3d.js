@@ -66,7 +66,7 @@ const HILL_MAXH = 22;               // tallest peak, for elevation colour bandin
 // with two terminal buildings set back on the inland (west) side. Centreline
 // endpoints in NORMALISED island coords (south → north).
 const AIRPORT = {
-  south: { x: 0.573, y: 0.441 }, north: { x: 0.589, y: 0.497 }, // runway centreline (~8% of island, ~16° off N–S)
+  south: { x: 0.565, y: 0.413 }, north: { x: 0.597, y: 0.525 }, // runway centreline (long, ~16° off N–S; taxiway ≥ 2× the building span)
   rwHalfW: 4.5,        // runway half-width (world units)
   overrun: 4,          // paved overrun past each threshold
   taxiOff: 9,          // continuous parallel taxiway offset (localX, inland of runway)
@@ -633,13 +633,13 @@ export class Scene3D {
     addCars(g, AIRPORT.carparkOff, carZ, 18, 12);
     // --- hangar group, well clear of the car park, the whole row tilted ~30° off the grid ---
     const hg = new THREE.Group();
-    hg.position.set(AIRPORT.hangarOff + 8, 0, carZ - 24); hg.rotation.y = faceApron + Math.PI / 6;
+    hg.position.set(AIRPORT.hangarOff + 8, 0, carZ - 22); hg.rotation.y = faceApron + Math.PI / 6;
     for (let i = 0; i < 2; i++) {                       // wide open-door hangars side by side
       const h = makeHangar(); h.scale.setScalar(sc);
       h.position.set((i - 0.5) * 13, 0, 0); hg.add(h);
     }
-    const beside = makeSawtoothShed(10, 5.5, 24, 4); beside.scale.setScalar(sc); // long saw-tooth workshop beside (L-shape)
-    beside.position.set(-19, 0, -5); hg.add(beside);
+    const beside = makeSawtoothShed(10, 5.5, 18, 3); beside.scale.setScalar(sc); // saw-tooth workshop beside (L-shape)
+    beside.position.set(-12, 0, -3); hg.add(beside);
     const behind = makeAirBlock(22, 6, 9); behind.scale.setScalar(sc);   // low block set back behind the hangars
     behind.position.set(2, 0, -15); hg.add(behind);
     // apron + a couple of aircraft parked outside the hangars
@@ -652,19 +652,19 @@ export class Scene3D {
     g.add(hg);
     // --- on the terminal's far (+Z) side, past an open space: a long low wide hall ---
     const hall = makeLowHall(34, 5, 14); hall.scale.setScalar(sc);
-    hall.position.set(24, 0, apCz + 26); hall.rotation.y = faceApron; g.add(hall);
+    hall.position.set(24, 0, apCz + 20); hall.rotation.y = faceApron; g.add(hall);
 
     // --- service road running in front of the buildings, linked through to the hangars ---
-    const roadX = 16, roadZ0 = apCz + 33, roadZ1 = carZ - 26;
+    const roadX = 16, roadZ0 = apCz + 28, roadZ1 = carZ - 24;
     slab(4.2, roadZ0 - roadZ1, 0x44474d, roadX, (roadZ0 + roadZ1) / 2, 0.135);        // main frontage road
     const rdN = Math.floor((roadZ0 - roadZ1) / 6);
     for (let i = 0; i < rdN; i++) slab(0.4, 2.6, 0xe7dfca, roadX, roadZ1 + 3 + i * 6, 0.17); // dashes
     // taxi lane spur from the parallel taxiway out to the hangar apron
-    slab(34 - txOff, 6, 0x3a3d43, (txOff + 34) / 2, carZ - 24, 0.125);
+    slab(34 - txOff, 6, 0x3a3d43, (txOff + 34) / 2, carZ - 22, 0.125);
     // an aircraft parked on its own apron beside the low hall
-    slab(11, 12, 0xb9b4a6, 14, apCz + 26, 0.12);
+    slab(11, 12, 0xb9b4a6, 14, apCz + 20, 0.12);
     const plHall = makeAirliner(); plHall.scale.setScalar(AIRPORT.planeScale);
-    plHall.position.set(14, 0, apCz + 26); plHall.rotation.y = -Math.PI / 2; g.add(plHall);
+    plHall.position.set(14, 0, apCz + 20); plHall.rotation.y = -Math.PI / 2; g.add(plHall);
 
     // --- footprint mask (unbuildable) ---
     this.airportMask = Array.from({ length: N }, () => Array(N).fill(false));

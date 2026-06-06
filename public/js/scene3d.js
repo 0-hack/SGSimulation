@@ -647,6 +647,18 @@ export class Scene3D {
     const hall = makeLowHall(34, 5, 14); hall.scale.setScalar(sc);
     hall.position.set(24, 0, apCz + 26); hall.rotation.y = faceApron; g.add(hall);
 
+    // --- service road running in front of the buildings, linked through to the hangars ---
+    const roadX = 16, roadZ0 = apCz + 33, roadZ1 = carZ - 26;
+    slab(4.2, roadZ0 - roadZ1, 0x44474d, roadX, (roadZ0 + roadZ1) / 2, 0.135);        // main frontage road
+    const rdN = Math.floor((roadZ0 - roadZ1) / 6);
+    for (let i = 0; i < rdN; i++) slab(0.4, 2.6, 0xe7dfca, roadX, roadZ1 + 3 + i * 6, 0.17); // dashes
+    slab(AIRPORT.hangarOff + 8 - roadX, 4.0, 0x44474d, (roadX + AIRPORT.hangarOff + 8) / 2, carZ - 24, 0.135); // spur to the hangars
+    // a couple of airliners parked on the open apron right outside the terminal
+    for (const pz of [apCz + 16, apCz - 16]) {
+      const pl = makeAirliner(); pl.scale.setScalar(AIRPORT.planeScale);
+      pl.position.set(11, 0, pz); pl.rotation.y = -Math.PI / 2 + 0.22; g.add(pl);
+    }
+
     // --- footprint mask (unbuildable) ---
     this.airportMask = Array.from({ length: N }, () => Array(N).fill(false));
     const cosr = Math.cos(rot), sinr = Math.sin(rot);

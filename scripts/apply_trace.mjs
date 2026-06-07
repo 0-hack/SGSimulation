@@ -11,6 +11,9 @@
 //   airport    [[...]]        -> public/js/scene3d.js      AIRPORT south/north (runway)
 //   buildings  [{type,cx,cy,w,h,rot,hgt}] -> scene3d.js    AIRPORT.buildings (hand-placed)
 //   houses     [{type,cx,cy,w,h,rot,hgt}] -> custom1966.js  CUSTOM_HOUSES (free-placed)
+//   railway    [[...]]        -> custom1966.js  CUSTOM_RAILWAYS
+//   sands      [[...]]        -> custom1966.js  CUSTOM_SANDS
+//   (the Coast layer's longest loop = SG_OUTLINE, the rest = SG_ISLANDS)
 import { readFileSync, writeFileSync } from 'node:fs';
 
 const WORLD = 1600, STEP = 9, MERGE = 7;
@@ -27,6 +30,8 @@ const foreignIn = (t.foreign || []).filter(p => p.length >= 3);
 const airportIn = (t.airport || []).map(a => a.pts || a).filter(p => p.length >= 2);
 const buildingsIn = (t.buildings || []).filter(b => b && b.type && b.w > 0 && b.h > 0);
 const housesIn = (t.houses || []).filter(b => b && b.type && b.w > 0 && b.h > 0);
+const railwayIn = (t.railway || []).map(a => a.pts || a).filter(p => p.length >= 2);
+const sandsIn = (t.sands || []).map(a => a.pts || a).filter(p => p.length >= 2);
 
 const cur = await import('../public/js/roads1966.js');
 const shapeURL = new URL('../public/js/shape.js', import.meta.url);
@@ -114,11 +119,14 @@ if (mainlandIn.length || islandsIn.length || foreignIn.length) {
     return txt.replace(re, () => `export const ${name} = ${value};`);
   };
   if (mainlandIn.length) {
-    const main = decimateN(mainlandIn.sort((a, b) => b.length - a.length)[0], 0.004);
-    s = replExport(s, 'SG_OUTLINE', '[' + main.map(([x, y]) => `[${x}, ${y}]`).join(', ') + ']');
-    did.push(`mainland -> SG_OUTLINE (${main.length} pts)`);
-  }
-  if (islandsIn.length) {
+    // the Coast layer carries every landmass: longest loop = mainland, the rest
+    // = surrounding islands (only overwrite islands when the player drew some).
+    const loops = mainlandIn.map(p => decimateN(p, 0.004)).sort((a, b) => b.length - a.length);
+    s = replExport(s, 'SG_OUTLINE', '[' + loops[0].map(([x, y]) => `[${x}, ${y}]`).join(', ') + ']');
+    did.push(`coast -> SG_OUTLINE (${loops[0].length} pts)`);
+    const isles = loops.slice(1).concat(islandsIn.map(p => decimateN(p, 0.004)));
+    if (isles.length) { s = replExport(s, 'SG_ISLANDS', arr(isles)); did.push(`coast -> SG_ISLANDS (${isles.length})`); }
+  } else if (islandsIn.length) {
     s = replExport(s, 'SG_ISLANDS', arr(islandsIn.map(p => decimateN(p, 0.004))));
     did.push(`islands -> SG_ISLANDS (${islandsIn.length})`);
   }
@@ -151,15 +159,18 @@ if (airportIn.length || buildingsIn.length) {
   writeFileSync(sceneURL, sc);
 }
 
-// ---------------- custom1966.js: hand-placed houses ----------------
-if (housesIn.length) {
-  const hstr = housesIn.map(b => `{ type: '${b.type}', cx: ${r3(b.cx)}, cy: ${r3(b.cy)}, w: ${r4(b.w)}, h: ${r4(b.h)}, rot: ${r3((b.rot || 0) * Math.PI / 180)}, hgt: ${r2(b.hgt || 1)} }`).join(', ');
+// ---------------- custom1966.js: houses / railways / sands ----------------
+if (housesIn.length || railwayIn.length || sandsIn.length) {
   let cs = readFileSync(customURL, 'utf8');
-  const re = /export const CUSTOM_HOUSES = \[[\s\S]*?\];/;
-  if (!re.test(cs)) throw new Error('could not find CUSTOM_HOUSES in custom1966.js');
-  cs = cs.replace(re, () => `export const CUSTOM_HOUSES = [${hstr}];`);
+  const replC = (name, value) => { const re = new RegExp(`export const ${name} = \\[[\\s\\S]*?\\];`); if (!re.test(cs)) throw new Error(`could not find ${name} in custom1966.js`); cs = cs.replace(re, () => `export const ${name} = ${value};`); };
+  const polyN = p => '[' + decimateN(p, 0.003).map(([x, y]) => `[${x},${y}]`).join(',') + ']';
+  if (housesIn.length) {
+    const hstr = housesIn.map(b => `{ type: '${b.type}', cx: ${r3(b.cx)}, cy: ${r3(b.cy)}, w: ${r4(b.w)}, h: ${r4(b.h)}, rot: ${r3((b.rot || 0) * Math.PI / 180)}, hgt: ${r2(b.hgt || 1)} }`).join(', ');
+    replC('CUSTOM_HOUSES', `[${hstr}]`); did.push(`houses -> ${housesIn.length} placed`);
+  }
+  if (railwayIn.length) { replC('CUSTOM_RAILWAYS', '[' + railwayIn.map(polyN).join(', ') + ']'); did.push(`railway -> ${railwayIn.length} line(s)`); }
+  if (sandsIn.length) { replC('CUSTOM_SANDS', '[' + sandsIn.map(polyN).join(', ') + ']'); did.push(`sands -> ${sandsIn.length} section(s)`); }
   writeFileSync(customURL, cs);
-  did.push(`houses -> ${housesIn.length} placed`);
 }
 
 if (!did.length) console.log('nothing to apply (no recognised layers in the trace file).');

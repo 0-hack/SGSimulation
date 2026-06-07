@@ -6,7 +6,7 @@
 import * as THREE from './vendor/three.module.js';
 import { BUILDINGS, GRID_SIZE, ROAD_TYPES } from './data.js';
 import { SG_OUTLINE, SG_ISLANDS, SG_FOREIGN, SG_RESERVOIRS, pointInPolygon, landMask, inReservoir, reservoirArea, inRiver, reservoirBranches, riverBranches } from './shape.js';
-import { CUSTOM_HOUSES } from './custom1966.js';
+import { CUSTOM_HOUSES, CUSTOM_RAILWAYS, CUSTOM_SANDS } from './custom1966.js';
 
 const N = GRID_SIZE;
 const WORLD = N * 10;         // world units across the bounding box (TILE stays ~10)
@@ -179,6 +179,8 @@ export class Scene3D {
     this._buildTerrain();    // the nature-reserve hills (Bukit Timah massif) around the reservoirs
     this._buildAirport();    // Singapore (Paya Lebar) Airport on the east side
     this._placeStructures(CUSTOM_HOUSES, 'houseGroup'); // hand-traced houses (free-placed)
+    this._buildSands(CUSTOM_SANDS);       // sandy coast sections (hand-traced)
+    this._buildRailways(CUSTOM_RAILWAYS); // railway lines (hand-traced)
     this._buildNature();     // scatter rural greenery across the undeveloped island
     this._buildNavGraph();   // traffic graph (freeform roads only; added on setState)
     this._initBoats();
@@ -742,6 +744,52 @@ export class Scene3D {
       const m = this._makeStructure(b);
       m.position.set((b.cx - 0.5) * WORLD, 0, (0.5 - b.cy) * WORLD); m.rotation.y = b.rot || 0;
       grp.add(m);
+    }
+  }
+
+  // A flat ribbon mesh following a world-space polyline (used for sands/rails).
+  _addRibbon(group, pts, halfW, color, yy) {
+    if (pts.length < 2) return;
+    const v = [], idx = [];
+    for (let i = 0; i < pts.length; i++) {
+      const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)];
+      let tx = b.x - a.x, tz = b.z - a.z; const l = Math.hypot(tx, tz) || 1; tx /= l; tz /= l;
+      const nx = -tz, nz = tx, p = pts[i];
+      v.push(p.x + nx * halfW, yy, p.z + nz * halfW, p.x - nx * halfW, yy, p.z - nz * halfW);
+    }
+    for (let i = 0; i < pts.length - 1; i++) { const a = i * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(v, 3)); geo.setIndex(idx); geo.computeVertexNormals();
+    const m = new THREE.Mesh(geo, toon(color, { side: THREE.DoubleSide })); m.receiveShadow = true; group.add(m); return m;
+  }
+
+  // Sandy coast sections: a sand-coloured strip just above the beach skirt.
+  _buildSands(list) {
+    if (this.sandGroup) this.scene.remove(this.sandGroup);
+    const g = new THREE.Group(); this.scene.add(g); this.sandGroup = g;
+    const W2 = (p) => new THREE.Vector3((p[0] - 0.5) * WORLD, 0, (0.5 - p[1]) * WORLD);
+    for (const poly of (list || [])) { if (poly.length < 2) continue; this._addRibbon(g, poly.map(W2), 7, 0xeadbab, 0.05); }
+  }
+
+  // Railway lines: a ballast strip with two steel rails and timber sleepers.
+  _buildRailways(list) {
+    if (this.railGroup) this.scene.remove(this.railGroup);
+    const g = new THREE.Group(); this.scene.add(g); this.railGroup = g;
+    const W2 = (p) => new THREE.Vector3((p[0] - 0.5) * WORLD, 0, (0.5 - p[1]) * WORLD);
+    for (const poly of (list || [])) {
+      if (poly.length < 2) continue;
+      const pts = poly.map(W2);
+      this._addRibbon(g, pts, 1.7, 0x5b5040, 0.13);          // ballast bed
+      const nrm = pts.map((p, i) => { const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)]; let tx = b.x - a.x, tz = b.z - a.z; const l = Math.hypot(tx, tz) || 1; return [-tz / l, tx / l]; });
+      for (const sgn of [-1, 1]) this._addRibbon(g, pts.map((p, i) => new THREE.Vector3(p.x + nrm[i][0] * 0.7 * sgn, 0, p.z + nrm[i][1] * 0.7 * sgn)), 0.13, 0xb8c0c8, 0.18);
+      let acc = 99;
+      for (let i = 0; i < pts.length - 1; i++) {
+        const p = pts[i], q = pts[i + 1]; acc += Math.hypot(q.x - p.x, q.z - p.z);
+        if (acc >= 3.5) { acc = 0;
+          const slp = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.18, 2.6), toon(0x3a3128));
+          slp.position.set((p.x + q.x) / 2, 0.15, (p.z + q.z) / 2); slp.rotation.y = Math.atan2(nrm[i][0], nrm[i][1]); g.add(slp);
+        }
+      }
     }
   }
 

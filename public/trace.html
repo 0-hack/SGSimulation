@@ -137,7 +137,7 @@ function toScreen(nx, ny) { return [nx * view.unit * view.zoom + view.offX, (1 -
 function toGame(sx, sy) { return [(sx - view.offX) / (view.unit * view.zoom), 1 - (sy - view.offY) / (view.unit * view.zoom)]; }
 function nearPx(a, b, px) { return Math.hypot(a[0] - b[0], a[1] - b[1]) <= px / (view.unit * view.zoom); }
 function fitView() {
-  const x0 = -0.02, x1 = 0.82, y0 = 0.14, y1 = 0.82, w = cv.width, h = cv.height - 50;
+  const x0 = -0.02, x1 = 0.94, y0 = 0.14, y1 = 0.82, w = cv.width, h = cv.height - 50;
   view.unit = 1000; view.zoom = Math.min(w / (x1 - x0), h / (y1 - y0)) / 1000;
   const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
   view.offX = cv.width / 2 - cx * view.unit * view.zoom; view.offY = (cv.height + 50) / 2 - (1 - cy) * view.unit * view.zoom; draw();

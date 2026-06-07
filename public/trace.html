@@ -198,7 +198,7 @@ function draw() {
     if (RECT(k)) { data[k].forEach(b => drawRect(b, L.c)); continue; }
     ctx.lineWidth = k === 'mainland' ? 2.6 : 2.2;
     if (k === 'roads') { for (const r of data.roads) { ctx.strokeStyle = r.oneway ? ONEWAY_COLOR : L.c; strokePoly(r.pts, false); if (r.oneway) drawArrows(r.pts); } }
-    else { ctx.strokeStyle = L.c; for (const p of data[k]) strokePoly(p, L.closed); }
+    else { ctx.strokeStyle = L.c; for (const p of data[k]) strokePoly(p, false); } // open: never auto-close ends (trace part by part; the game closes polygons itself)
   }
   if (sel && RECT(sel.layer) && data[sel.layer][sel.idx] && vis[sel.layer]) drawHandles(data[sel.layer][sel.idx]);
   if (cur) { ctx.lineWidth = 2.6; ctx.strokeStyle = (active === 'roads' && oneway) ? ONEWAY_COLOR : LAYERS[active].c; ctx.globalAlpha = 0.9; strokePoly(cur, RECT(active)); dots(cur); ctx.globalAlpha = 1; }

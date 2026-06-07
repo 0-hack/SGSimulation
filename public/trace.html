@@ -21,7 +21,9 @@
   button.vis { padding: 5px 7px; font-size: 11.5px; border-left: 6px solid var(--c); opacity: .45; }
   button.vis.on { opacity: 1; }
   input[type=range] { width: 74px; vertical-align: middle; }
-  #hint { position: fixed; left: 8px; bottom: 8px; background: #000b; padding: 6px 10px; border-radius: 8px; z-index: 10; max-width: 60ch; }
+  #hint { position: fixed; left: 8px; bottom: 8px; background: #000b; padding: 6px 10px; border-radius: 8px; z-index: 10; max-width: 62ch; }
+  #toast { position: fixed; bottom: 58px; left: 50%; transform: translateX(-50%); background: #2ecc71; color: #052915;
+           padding: 8px 16px; border-radius: 8px; font-weight: 700; z-index: 20; opacity: 0; transition: opacity .4s; pointer-events: none; }
   #stat { margin-left: auto; opacity: .85; text-align: right; font-size: 11.5px; }
   #stat b { color: #fff; }
   canvas { display: block; position: fixed; inset: 0; touch-action: none; cursor: crosshair; }
@@ -37,10 +39,10 @@
   <div class="grp" id="layers" title="What you're tracing. Draw/Erase act on this layer."><small>trace</small></div>
   <div class="grp">
     <button id="oneway" title="Tag roads as ONE-WAY (drawn in the direction of travel)">➔ One-way</button>
-    <button id="freehand" class="on" title="Freehand: hold &amp; drag. Click: tap vertices, double-click/Enter to finish.">Freehand</button>
+    <button id="freehand" class="on" title="Freehand: hold &amp; drag. Click: tap each point/corner; Esc, double-click or click the first dot to finish.">Freehand</button>
     <span><small>brush</small> <input id="brush" type="range" min="4" max="40" value="14"></span>
   </div>
-  <div class="grp" id="bldgrp" title="Buildings/Houses — drag a box to add. Click one to select, then drag it, its corners (resize) or the top dot (rotate). Sliders also edit the selection.">
+  <div class="grp" id="bldgrp" title="Buildings/Houses. Freehand: drag a box. Click mode: tap the corners (4 dots) then close. Click a placed one to move / resize (corner) / rotate (green dot).">
     <small>place</small>
     <select id="btype"></select>
     <span><small>rot</small> <input id="brot" type="range" min="-180" max="180" value="0"></span>
@@ -59,21 +61,22 @@
     <button id="clear" style="background:#5a2a2a;border-color:#7a3a3a">Clear layer</button>
   </div>
   <div class="grp">
-    <button id="save">💾 Save</button>
+    <button id="save" title="Save the working state in this browser (also autosaves)">💾 Save</button>
+    <button id="export" title="Download the trace as a JSON file to send back">⬇ Export</button>
     <label class="btn">📂 Load<input id="load" type="file" accept="application/json" hidden></label>
   </div>
   <div id="stat"></div>
 </div>
 <canvas id="c"></canvas>
+<div id="toast"></div>
 <div id="hint">Loading map…</div>
 
 <script>
 const cv = document.getElementById('c'), ctx = cv.getContext('2d');
 const $ = id => document.getElementById(id);
-const PI = Math.PI;
+const PI = Math.PI, LS = 'sg1966-trace-autosave';
 let DATA = null, bgImg = new Image();
 
-// kind: 'line' polylines, 'rect' rotated footprints (buildings / houses).
 const LAYERS = {
   roads:      { c: '#37d0ff', name: 'Roads',     kind: 'line' },
   mainland:   { c: '#7CFC8A', name: 'Mainland',  kind: 'line', closed: true },
@@ -90,14 +93,15 @@ const TYPES = {
   houses: [['kampong', 'Kampong'], ['shophouse', 'Shophouse'], ['hdb_flat', 'HDB flat']],
 };
 const ONEWAY_COLOR = '#ff9f43';
-let data = { roads: [], mainland: [], islands: [], reservoirs: [], airport: [], buildings: [], houses: [], foreign: [] };
+const blank = () => ({ roads: [], mainland: [], islands: [], reservoirs: [], airport: [], buildings: [], houses: [], foreign: [] });
+let data = blank();
 let active = 'roads', oneway = false, freehand = true, mode = 'draw';
 let vis = {}; KEYS.forEach(k => vis[k] = true); vis.guide = true;
 let opacity = 0.55, brush = 14, bType = 'terminal', bRot = 0, bHgt = 1.0;
 let view = { zoom: 1, offX: 0, offY: 0, unit: 1000 };
 let bg = { offX: 0, offY: 0, scaleX: 1, scaleY: 1 };
-let cur = null, history = [], rectStart = null, rectNow = null;
-let sel = null, act = null, grab = null;   // selection + active transform for rect layers
+let cur = null, curItem = null, resumable = null, history = [], rectStart = null, rectNow = null;
+let sel = null, act = null, grab = null;
 
 for (const k of KEYS) {
   const b = document.createElement('button'); b.className = 'lay' + (k === 'roads' ? ' on' : ''); b.style.setProperty('--c', LAYERS[k].c);
@@ -111,13 +115,21 @@ for (const k of [...KEYS, 'guide']) {
 const RECT = k => LAYERS[k].kind === 'rect';
 function refreshTypes() { if (!RECT(active)) return; const list = TYPES[active] || []; $('btype').innerHTML = list.map(([v, n]) => `<option value="${v}">${n}</option>`).join(''); bType = list[0] && list[0][0]; }
 
-function snapshot() { history.push(JSON.stringify(data)); if (history.length > 80) history.shift(); }
-function undo() { if (history.length) { data = JSON.parse(history.pop()); cur = null; rectStart = null; sel = null; draw(); updateStat(); } }
+function toast(msg, bad) { const t = $('toast'); t.textContent = msg; t.style.background = bad ? '#e2503b' : '#2ecc71'; t.style.color = bad ? '#fff' : '#052915'; t.style.opacity = 1; clearTimeout(t._t); t._t = setTimeout(() => t.style.opacity = 0, 1300); }
+function autosave(explicit) { try { localStorage.setItem(LS, JSON.stringify({ version: 3, bg, ...data })); if (explicit) toast('Saved in browser'); } catch (e) { if (explicit) toast('Save failed: ' + e.message, true); } }
+function applyLoaded(d) { if (d.bg) bg = d.bg; const nd = blank();
+  nd.roads = (d.roads || []).map(r => Array.isArray(r) ? { pts: r, oneway: false } : r);
+  nd.mainland = d.mainland || d.coast || []; nd.islands = d.islands || []; nd.reservoirs = d.reservoirs || d.resv || [];
+  nd.airport = d.airport || []; nd.buildings = d.buildings || []; nd.houses = d.houses || []; nd.foreign = d.foreign || []; data = nd; }
+
+function snapshot() { history.push(JSON.stringify(data)); if (history.length > 120) history.shift(); }
+function undo() { if (history.length) { data = JSON.parse(history.pop()); cur = null; curItem = null; rectStart = null; sel = null; draw(); updateStat(); } }
 function resize() { cv.width = innerWidth; cv.height = innerHeight; draw(); }
 addEventListener('resize', resize);
 
 function toScreen(nx, ny) { return [nx * view.unit * view.zoom + view.offX, (1 - ny) * view.unit * view.zoom + view.offY]; }
 function toGame(sx, sy) { return [(sx - view.offX) / (view.unit * view.zoom), 1 - (sy - view.offY) / (view.unit * view.zoom)]; }
+function nearPx(a, b, px) { return Math.hypot(a[0] - b[0], a[1] - b[1]) <= px / (view.unit * view.zoom); }
 function fitView() {
   const x0 = -0.02, x1 = 0.82, y0 = 0.14, y1 = 0.82, w = cv.width, h = cv.height - 50;
   view.unit = 1000; view.zoom = Math.min(w / (x1 - x0), h / (y1 - y0)) / 1000;
@@ -137,6 +149,7 @@ function strokePoly(pts, close) {
   if (pts.length === 1) { const [x, y] = toScreen(pts[0][0], pts[0][1]); ctx.arc(x, y, 2, 0, 7); }
   ctx.stroke();
 }
+function dots(pts) { ctx.fillStyle = '#fff'; for (const [nx, ny] of pts) { const [x, y] = toScreen(nx, ny); ctx.beginPath(); ctx.arc(x, y, 3, 0, 7); ctx.fill(); } }
 function drawArrows(pts) {
   let acc = 0;
   for (let i = 1; i < pts.length; i++) {
@@ -151,7 +164,7 @@ function bCorners(b) {
   const r = (b.rot || 0) * PI / 180, c = Math.cos(r), s = Math.sin(r), hw = b.w / 2, hh = b.h / 2;
   return [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]].map(([dx, dy]) => [b.cx + dx * c - dy * s, b.cy + dx * s + dy * c]);
 }
-function rotHandle(b) { // screen-space point above the building's top edge
+function rotHandle(b) {
   const r = (b.rot || 0) * PI / 180, gx = b.cx - Math.sin(r) * (b.h / 2), gy = b.cy + Math.cos(r) * (b.h / 2);
   const [sx, sy] = toScreen(gx, gy), [cx, cy] = toScreen(b.cx, b.cy);
   let ux = sx - cx, uy = sy - cy; const l = Math.hypot(ux, uy) || 1; ux /= l; uy /= l;
@@ -163,9 +176,7 @@ function drawRect(b, color) {
   ctx.fillText((b.type[0] || '?').toUpperCase() + (b.type === 'plane' ? '✈' : ''), lx, ly + 4);
 }
 function drawHandles(b) {
-  const cs = bCorners(b).map(([x, y]) => toScreen(x, y));
-  ctx.fillStyle = '#fff'; ctx.strokeStyle = '#000';
-  for (const [x, y] of cs) { ctx.beginPath(); ctx.rect(x - 4, y - 4, 8, 8); ctx.fill(); ctx.stroke(); }
+  for (const [x, y] of bCorners(b).map(([x, y]) => toScreen(x, y))) { ctx.fillStyle = '#fff'; ctx.strokeStyle = '#000'; ctx.beginPath(); ctx.rect(x - 4, y - 4, 8, 8); ctx.fill(); ctx.stroke(); }
   const [hx, hy] = rotHandle(b), [cx, cy] = toScreen(b.cx, b.cy);
   ctx.strokeStyle = '#fff'; ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(hx, hy); ctx.stroke();
   ctx.fillStyle = '#7CFC8A'; ctx.beginPath(); ctx.arc(hx, hy, 5, 0, 7); ctx.fill(); ctx.stroke();
@@ -184,22 +195,44 @@ function draw() {
     else { ctx.strokeStyle = L.c; for (const p of data[k]) strokePoly(p, L.closed); }
   }
   if (sel && RECT(sel.layer) && data[sel.layer][sel.idx] && vis[sel.layer]) drawHandles(data[sel.layer][sel.idx]);
-  if (cur) { ctx.lineWidth = 2.6; ctx.strokeStyle = (active === 'roads' && oneway) ? ONEWAY_COLOR : LAYERS[active].c; ctx.globalAlpha = 0.85; strokePoly(cur, false); ctx.globalAlpha = 1; }
+  if (cur) { ctx.lineWidth = 2.6; ctx.strokeStyle = (active === 'roads' && oneway) ? ONEWAY_COLOR : LAYERS[active].c; ctx.globalAlpha = 0.9; strokePoly(cur, RECT(active)); dots(cur); ctx.globalAlpha = 1; }
   if (rectStart && rectNow) drawRect(rectToBldg(rectStart, rectNow), LAYERS[active].c + '99');
   if (mode === 'erase' && lastPt) { ctx.strokeStyle = '#e2503b'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(lastPt.sx, lastPt.sy, brush, 0, 7); ctx.stroke(); }
 }
 function rectToBldg(a, b) { return { type: bType, cx: (a[0] + b[0]) / 2, cy: (a[1] + b[1]) / 2, w: Math.abs(a[0] - b[0]), h: Math.abs(a[1] - b[1]), rot: bRot, hgt: bHgt }; }
+// fit an oriented rectangle to clicked corner points (orientation = first edge)
+function fitRect(pts) {
+  if (pts.length < 3) return null;
+  const r = Math.atan2(pts[1][1] - pts[0][1], pts[1][0] - pts[0][0]);
+  const c = Math.cos(-r), s = Math.sin(-r);
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const [x, y] of pts) { const lx = x * c - y * s, ly = x * s + y * c; minX = Math.min(minX, lx); maxX = Math.max(maxX, lx); minY = Math.min(minY, ly); maxY = Math.max(maxY, ly); }
+  const w = Math.max(0.002, maxX - minX), h = Math.max(0.002, maxY - minY), lcx = (minX + maxX) / 2, lcy = (minY + maxY) / 2;
+  return { type: bType, cx: lcx * Math.cos(r) - lcy * Math.sin(r), cy: lcx * Math.sin(r) + lcy * Math.cos(r), w, h, rot: r * 180 / PI, hgt: bHgt };
+}
 function inBldg(b, gp) {
   const r = (b.rot || 0) * PI / 180, c = Math.cos(-r), s = Math.sin(-r), ox = gp[0] - b.cx, oy = gp[1] - b.cy;
-  const lx = ox * c - oy * s, ly = ox * s + oy * c;
-  return Math.abs(lx) <= b.w / 2 && Math.abs(ly) <= b.h / 2;
+  return Math.abs(ox * c - oy * s) <= b.w / 2 && Math.abs(ox * s + oy * c) <= b.h / 2;
 }
-function layerList() { return data[active]; }
-function ptsOf(item) { return active === 'roads' ? item.pts : item; }
-function wrap(run, item) { return active === 'roads' ? { pts: run, oneway: item ? item.oneway : oneway } : run; }
+function lineOf(item) { return active === 'roads' ? item.pts : item; }
+function commitLine() { if (active === 'roads') data.roads.push({ pts: cur, oneway: curItem ? curItem.oneway : oneway }); else data[active].push(cur); resumable = { layer: active, idx: data[active].length - 1 }; }
+function finishCur() {
+  if (!cur) return;
+  if (RECT(active)) { if (cur.length >= 3) { const b = fitRect(cur); if (b) { data[active].push(b); sel = { layer: active, idx: data[active].length - 1 }; syncToolbar(b); } } }
+  else if (cur.length >= 2) commitLine();
+  cur = null; curItem = null;
+}
+// try to continue the most-recently-drawn line by clicking near its end
+function tryResume(g) {
+  if (!resumable || resumable.layer !== active) return false;
+  const item = data[active][resumable.idx]; if (!item) return false;
+  const pts = lineOf(item); if (!nearPx(g, pts[pts.length - 1], 16)) return false;
+  snapshot(); curItem = item; cur = pts; data[active].splice(resumable.idx, 1); resumable = null; cur.push(g); return true;
+}
 function syncToolbar(b) { bType = b.type; bRot = b.rot || 0; bHgt = b.hgt || 1; $('btype').value = b.type; $('brot').value = bRot; $('bhgt').value = Math.round(bHgt * 10); }
 function updateStat() {
   $('stat').innerHTML = KEYS.map(k => { const n = data[k].length; const ow = k === 'roads' ? ` (${data.roads.filter(r => r.oneway).length}→)` : ''; return `<b>${n}</b> ${LAYERS[k].name.slice(0, 4)}${ow}`; }).join(' · ');
+  autosave();
 }
 
 let drawing = false, panning = false, panStart = null, lastPt = null; const keys = {};
@@ -210,46 +243,45 @@ function hitHandle(b, p) {
   return null;
 }
 cv.addEventListener('pointerdown', e => {
-  cv.setPointerCapture(e.pointerId); const p = evPos(e); lastPt = p;
+  cv.setPointerCapture(e.pointerId); const p = evPos(e); lastPt = p; const g = toGame(p.sx, p.sy);
   if (mode === 'pan' || e.button === 1 || e.button === 2 || keys[' ']) { panning = true; panStart = { ...p, offX: view.offX, offY: view.offY }; return; }
-  if (mode === 'draw' && RECT(active)) {
-    const gp = toGame(p.sx, p.sy);
+  if (mode === 'erase') { snapshot(); drawing = true; eraseAt(p); return; }
+  if (RECT(active)) {
     if (sel && sel.layer === active && data[active][sel.idx]) { const h = hitHandle(data[active][sel.idx], p); if (h) { snapshot(); act = h; drawing = true; return; } }
-    for (let i = data[active].length - 1; i >= 0; i--) if (inBldg(data[active][i], gp)) { sel = { layer: active, idx: i }; snapshot(); act = 'move'; grab = [gp[0] - data[active][i].cx, gp[1] - data[active][i].cy]; syncToolbar(data[active][i]); drawing = true; draw(); return; }
-    sel = null; snapshot(); rectStart = gp; rectNow = gp; act = 'new'; drawing = true; draw(); return;
+    if (!cur) { for (let i = data[active].length - 1; i >= 0; i--) if (inBldg(data[active][i], g)) { sel = { layer: active, idx: i }; snapshot(); act = 'move'; grab = [g[0] - data[active][i].cx, g[1] - data[active][i].cy]; syncToolbar(data[active][i]); drawing = true; draw(); return; } }
+    if (freehand) { sel = null; snapshot(); rectStart = g; rectNow = g; act = 'new'; drawing = true; draw(); }
+    else { sel = null; if (cur && cur.length >= 3 && nearPx(g, cur[0], 14)) { finishCur(); draw(); updateStat(); return; } if (!cur) { snapshot(); cur = []; } cur.push(g); draw(); }
+    return;
   }
-  if (mode === 'draw') {
-    const g = toGame(p.sx, p.sy);
-    if (freehand) { snapshot(); cur = [g]; drawing = true; } else { if (!cur) { snapshot(); cur = []; } cur.push(g); draw(); }
-  } else if (mode === 'erase') { snapshot(); drawing = true; eraseAt(p); }
+  // line layers
+  if (freehand) { if (!tryResume(g)) { snapshot(); cur = [g]; curItem = null; } drawing = true; }
+  else { if (!cur) { if (!tryResume(g)) { snapshot(); cur = [g]; curItem = null; } } else cur.push(g); draw(); }
 });
 cv.addEventListener('pointermove', e => {
   const p = evPos(e); lastPt = p;
   if (panning) { view.offX = panStart.offX + (p.sx - panStart.sx); view.offY = panStart.offY + (p.sy - panStart.sy); draw(); return; }
+  const g = toGame(p.sx, p.sy);
   if (mode === 'draw' && RECT(active) && drawing) {
-    const gp = toGame(p.sx, p.sy);
-    if (act === 'new') { rectNow = gp; draw(); return; }
+    if (act === 'new') { rectNow = g; draw(); return; }
     const b = data[sel.layer][sel.idx];
-    if (act === 'move') { b.cx = gp[0] - grab[0]; b.cy = gp[1] - grab[1]; }
-    else if (act === 'rotate') { b.rot = Math.atan2(-(gp[0] - b.cx), gp[1] - b.cy) * 180 / PI; syncToolbar(b); }
-    else if (act === 'resize') { const r = (b.rot || 0) * PI / 180, c = Math.cos(-r), s = Math.sin(-r), ox = gp[0] - b.cx, oy = gp[1] - b.cy; b.w = Math.max(0.002, 2 * Math.abs(ox * c - oy * s)); b.h = Math.max(0.002, 2 * Math.abs(ox * s + oy * c)); }
+    if (act === 'move') { b.cx = g[0] - grab[0]; b.cy = g[1] - grab[1]; }
+    else if (act === 'rotate') { b.rot = Math.atan2(-(g[0] - b.cx), g[1] - b.cy) * 180 / PI; syncToolbar(b); }
+    else if (act === 'resize') { const r = (b.rot || 0) * PI / 180, c = Math.cos(-r), s = Math.sin(-r), ox = g[0] - b.cx, oy = g[1] - b.cy; b.w = Math.max(0.002, 2 * Math.abs(ox * c - oy * s)); b.h = Math.max(0.002, 2 * Math.abs(ox * s + oy * c)); }
     draw(); return;
   }
-  if (mode === 'draw' && freehand && drawing && cur) { const g = toGame(p.sx, p.sy), last = cur[cur.length - 1];
-    if (Math.hypot(g[0] - last[0], g[1] - last[1]) > 0.0015) { cur.push(g); draw(); } }
+  if (mode === 'draw' && freehand && drawing && cur && !RECT(active)) { const last = cur[cur.length - 1]; if (Math.hypot(g[0] - last[0], g[1] - last[1]) > 0.0015) { cur.push(g); draw(); } }
   else if (mode === 'erase' && drawing) eraseAt(p);
   else if (mode === 'draw' && !freehand && cur) { draw(); const [x0, y0] = toScreen(...cur[cur.length - 1]); ctx.strokeStyle = '#fff8'; ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(p.sx, p.sy); ctx.stroke(); }
   else if (mode === 'erase') draw();
 });
-function finishCur() { if (cur && cur.length >= 2) layerList().push(wrap(cur, null)); cur = null; }
 function endStroke() {
-  if (mode === 'draw' && RECT(active) && act === 'new') { const b = rectToBldg(rectStart, rectNow); if (b.w > 0.001 && b.h > 0.001) { data[active].push(b); sel = { layer: active, idx: data[active].length - 1 }; } rectStart = rectNow = null; }
-  else if (mode === 'draw' && freehand && drawing && !RECT(active)) finishCur();
+  if (act === 'new') { const b = rectToBldg(rectStart, rectNow); if (b.w > 0.001 && b.h > 0.001) { data[active].push(b); sel = { layer: active, idx: data[active].length - 1 }; } rectStart = rectNow = null; }
+  else if (mode === 'draw' && freehand && drawing && !RECT(active)) finishCur();   // freehand line stroke commits
   act = null; drawing = false; panning = false; draw(); updateStat();
 }
 cv.addEventListener('pointerup', endStroke); cv.addEventListener('pointercancel', endStroke);
 cv.addEventListener('contextmenu', e => e.preventDefault());
-cv.addEventListener('dblclick', () => { if (mode === 'draw' && !freehand && !RECT(active)) { finishCur(); draw(); updateStat(); } });
+cv.addEventListener('dblclick', () => { if (mode === 'draw' && !freehand) { finishCur(); draw(); updateStat(); } });
 cv.addEventListener('wheel', e => { e.preventDefault(); const p = evPos(e), g = toGame(p.sx, p.sy);
   view.zoom = Math.max(0.1, Math.min(140, view.zoom * (e.deltaY < 0 ? 1.12 : 1 / 1.12)));
   view.offX = p.sx - g[0] * view.unit * view.zoom; view.offY = p.sy - (1 - g[1]) * view.unit * view.zoom; draw(); }, { passive: false });
@@ -257,57 +289,58 @@ function eraseAt(p) {
   const gp = toGame(p.sx, p.sy);
   if (RECT(active)) { data[active] = data[active].filter(b => !inBldg(b, gp)); sel = null; draw(); updateStat(); return; }
   const radG = brush / (view.unit * view.zoom), out = [];
-  for (const item of layerList()) { let run = [];
-    for (const pt of ptsOf(item)) { if (Math.hypot(pt[0] - gp[0], pt[1] - gp[1]) <= radG) { if (run.length >= 2) out.push(wrap(run, item)); run = []; } else run.push(pt); }
-    if (run.length >= 2) out.push(wrap(run, item)); }
-  data[active] = out; draw(); updateStat();
+  for (const item of data[active]) { const pts = lineOf(item); let run = [];
+    for (const pt of pts) { if (Math.hypot(pt[0] - gp[0], pt[1] - gp[1]) <= radG) { if (run.length >= 2) out.push(active === 'roads' ? { pts: run, oneway: item.oneway } : run); run = []; } else run.push(pt); }
+    if (run.length >= 2) out.push(active === 'roads' ? { pts: run, oneway: item.oneway } : run); }
+  data[active] = out; resumable = null; draw(); updateStat();
 }
-addEventListener('keydown', e => { keys[e.key] = true;
-  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); undo(); }
+addEventListener('keydown', e => { keys[e.key] = true; const tag = (e.target.tagName || '');
+  if (tag === 'INPUT' || tag === 'SELECT') return;
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); undo(); return; }
   if ((e.key === 'Delete' || e.key === 'Backspace') && sel && data[sel.layer][sel.idx]) { snapshot(); data[sel.layer].splice(sel.idx, 1); sel = null; draw(); updateStat(); }
-  if (e.key === 'Enter' && mode === 'draw' && !freehand && !RECT(active)) { finishCur(); draw(); updateStat(); }
-  if (e.key === 'Escape') { cur = null; rectStart = null; sel = null; draw(); }
+  if (e.key === 'Enter') { finishCur(); draw(); updateStat(); }
+  if (e.key === 'Escape') { finishCur(); draw(); updateStat(); toast('Paused — click near the end to continue'); }   // commit + pause, do NOT discard
   if (e.key === 'd') setMode('draw'); if (e.key === 'e') setMode('erase'); if (e.key === 'p') setMode('pan'); });
 addEventListener('keyup', e => { keys[e.key] = false; });
 
-function setMode(m) { mode = m; cv.style.cursor = m === 'pan' ? 'grab' : (m === 'erase' ? 'cell' : 'crosshair');
-  ['draw', 'erase', 'pan'].forEach(x => $('m-' + x).classList.toggle('on', x === m)); cur = null; rectStart = null; draw(); }
-function setLayer(l) { finishCur(); active = l; sel = null; KEYS.forEach(x => $('L-' + x).classList.toggle('on', x === l)); refreshTypes(); draw(); }
+function setMode(m) { finishCur(); mode = m; cv.style.cursor = m === 'pan' ? 'grab' : (m === 'erase' ? 'cell' : 'crosshair');
+  ['draw', 'erase', 'pan'].forEach(x => $('m-' + x).classList.toggle('on', x === m)); rectStart = null; draw(); updateStat(); }
+function setLayer(l) { finishCur(); active = l; sel = null; resumable = null; KEYS.forEach(x => $('L-' + x).classList.toggle('on', x === l)); refreshTypes(); draw(); }
 $('m-draw').onclick = () => setMode('draw'); $('m-erase').onclick = () => setMode('erase'); $('m-pan').onclick = () => setMode('pan');
 $('oneway').onclick = () => { oneway = !oneway; $('oneway').classList.toggle('on', oneway); draw(); };
-$('freehand').onclick = () => { freehand = !freehand; $('freehand').classList.toggle('on', freehand); $('freehand').textContent = freehand ? 'Freehand' : 'Click pts'; cur = null; draw(); };
+$('freehand').onclick = () => { finishCur(); freehand = !freehand; $('freehand').classList.toggle('on', freehand); $('freehand').textContent = freehand ? 'Freehand' : 'Click pts'; draw(); };
 $('opacity').oninput = e => { opacity = e.target.value / 100; draw(); };
 $('brush').oninput = e => { brush = +e.target.value; draw(); };
 function selBldg() { return sel && RECT(sel.layer) ? data[sel.layer][sel.idx] : null; }
-$('btype').onchange = e => { bType = e.target.value; const b = selBldg(); if (b) { b.type = bType; draw(); } };
-$('brot').oninput = e => { bRot = +e.target.value; const b = selBldg(); if (b) { b.rot = bRot; } draw(); };
-$('bhgt').oninput = e => { bHgt = e.target.value / 10; const b = selBldg(); if (b) { b.hgt = bHgt; } };
+$('btype').onchange = e => { bType = e.target.value; const b = selBldg(); if (b) { b.type = bType; draw(); updateStat(); } };
+$('brot').oninput = e => { bRot = +e.target.value; const b = selBldg(); if (b) b.rot = bRot; draw(); };
+$('brot').onchange = () => updateStat();
+$('bhgt').oninput = e => { bHgt = e.target.value / 10; const b = selBldg(); if (b) b.hgt = bHgt; };
+$('bhgt').onchange = () => updateStat();
 $('undo').onclick = undo; $('fit').onclick = fitView;
-$('clear').onclick = () => { if (confirm('Clear the "' + LAYERS[active].name + '" layer?')) { snapshot(); data[active] = []; cur = null; sel = null; draw(); updateStat(); } };
+$('clear').onclick = () => { if (confirm('Clear the "' + LAYERS[active].name + '" layer?')) { snapshot(); data[active] = []; cur = null; sel = null; resumable = null; draw(); updateStat(); } };
 const NUDGE = 0.004, SCL = 1.01;
 $('al').onclick = () => { bg.offX -= NUDGE; draw(); }; $('ar').onclick = () => { bg.offX += NUDGE; draw(); };
 $('au').onclick = () => { bg.offY += NUDGE; draw(); }; $('ad').onclick = () => { bg.offY -= NUDGE; draw(); };
 $('sxp').onclick = () => { bg.scaleX *= SCL; draw(); }; $('sxm').onclick = () => { bg.scaleX /= SCL; draw(); };
 $('syp').onclick = () => { bg.scaleY *= SCL; draw(); }; $('sym').onclick = () => { bg.scaleY /= SCL; draw(); };
 $('areset').onclick = () => { bg = { offX: 0, offY: 0, scaleX: 1, scaleY: 1 }; draw(); };
-$('save').onclick = () => { finishCur();
+$('save').onclick = () => { finishCur(); autosave(true); draw(); updateStat(); };
+$('export').onclick = () => { finishCur();
   const blob = new Blob([JSON.stringify({ version: 3, bg, ...data })], { type: 'application/json' });
-  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'sg1966-trace.json'; a.click(); updateStat(); };
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'sg1966-trace.json'; a.click(); draw(); updateStat(); };
 $('load').onchange = e => { const f = e.target.files[0]; if (!f) return; const rd = new FileReader();
-  rd.onload = () => { try { const d = JSON.parse(rd.result); if (d.bg) bg = d.bg;
-      const nd = { roads: [], mainland: [], islands: [], reservoirs: [], airport: [], buildings: [], houses: [], foreign: [] };
-      nd.roads = (d.roads || []).map(r => Array.isArray(r) ? { pts: r, oneway: false } : r);
-      nd.mainland = d.mainland || d.coast || []; nd.islands = d.islands || []; nd.reservoirs = d.reservoirs || d.resv || [];
-      nd.airport = d.airport || []; nd.buildings = d.buildings || []; nd.houses = d.houses || []; nd.foreign = d.foreign || [];
-      data = nd; sel = null; snapshot(); draw(); updateStat();
-    } catch (err) { alert('Bad file: ' + err.message); } };
-  rd.readAsText(f); };
+  rd.onload = () => { try { applyLoaded(JSON.parse(rd.result)); sel = null; resumable = null; snapshot(); draw(); updateStat(); toast('Loaded'); } catch (err) { toast('Bad file: ' + err.message, true); } }; rd.readAsText(f); };
+setInterval(() => autosave(), 5000);
+addEventListener('beforeunload', () => autosave());
 
 fetch('/trace-data.json').then(r => r.json()).then(d => {
   DATA = d; bgImg.src = d.bg.img; refreshTypes();
-  const boot = () => { resize(); fitView(); updateStat(); $('hint').innerHTML =
-    '<b>Buildings/Houses:</b> drag a box to add; <b>click to select</b>, then drag it, a corner (resize) or the green dot (rotate) — sliders &amp; Delete also work. <b>Airport</b> = runway line · <b>Roads</b> One-way toggle.<br>' +
-    'Zoom (wheel) for detail — the map is high-res. Dashed <span style="color:#ffd23f">yellow</span> = current game coast (it\'s wrong; trace the real one in <span style="color:#7CFC8A">green</span>). <b>Save</b> sends it all back.'; };
+  let restored = false; try { const s = localStorage.getItem(LS); if (s) { applyLoaded(JSON.parse(s)); restored = true; } } catch (e) {}
+  const boot = () => { resize(); fitView(); updateStat(); if (restored) toast('Restored your last session');
+    $('hint').innerHTML =
+    '<b>Pause anytime:</b> press <b>Esc</b> (or switch tools) — your trace is kept &amp; autosaved. To continue, click near the line\'s end. <b>Buildings/Houses:</b> Freehand = drag a box; Click mode = tap the 4 corners then click the first dot (or Esc) to close.<br>' +
+    '<b>Save</b> = keep state in this browser · <b>Export</b> = download JSON to send back. Dashed <span style="color:#ffd23f">yellow</span> = current game coast (trace the real one in <span style="color:#7CFC8A">green</span>).'; };
   bgImg.onload = boot; bgImg.onerror = () => { $('hint').textContent = 'Could not load /trace-map.jpg'; boot(); };
 }).catch(err => { $('hint').textContent = 'Could not load /trace-data.json — ' + err.message; });
 </script>

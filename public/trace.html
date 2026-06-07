@@ -20,8 +20,8 @@
   button.lay.on { background: #344056; border-color: var(--c); }
   button.vis { padding: 5px 7px; font-size: 11.5px; border-left: 6px solid var(--c); opacity: .45; }
   button.vis.on { opacity: 1; }
-  input[type=range] { width: 76px; vertical-align: middle; }
-  #hint { position: fixed; left: 8px; bottom: 8px; background: #000b; padding: 6px 10px; border-radius: 8px; z-index: 10; max-width: 58ch; }
+  input[type=range] { width: 74px; vertical-align: middle; }
+  #hint { position: fixed; left: 8px; bottom: 8px; background: #000b; padding: 6px 10px; border-radius: 8px; z-index: 10; max-width: 60ch; }
   #stat { margin-left: auto; opacity: .85; text-align: right; font-size: 11.5px; }
   #stat b { color: #fff; }
   canvas { display: block; position: fixed; inset: 0; touch-action: none; cursor: crosshair; }
@@ -40,16 +40,11 @@
     <button id="freehand" class="on" title="Freehand: hold &amp; drag. Click: tap vertices, double-click/Enter to finish.">Freehand</button>
     <span><small>brush</small> <input id="brush" type="range" min="4" max="40" value="14"></span>
   </div>
-  <div class="grp" id="bldgrp" title="Airport buildings — active on the Buildings layer. Drag a box for the footprint.">
-    <small>bldg</small>
-    <select id="btype">
-      <option value="terminal">Terminal</option><option value="hangar">Hangar</option>
-      <option value="pier">Pier</option><option value="hall">Low hall</option>
-      <option value="block">Block</option><option value="shed">Workshop</option>
-      <option value="carpark">Car park</option><option value="plane">Aircraft</option>
-    </select>
+  <div class="grp" id="bldgrp" title="Buildings/Houses — drag a box to add. Click one to select, then drag it, its corners (resize) or the top dot (rotate). Sliders also edit the selection.">
+    <small>place</small>
+    <select id="btype"></select>
     <span><small>rot</small> <input id="brot" type="range" min="-180" max="180" value="0"></span>
-    <span><small>tall</small> <input id="bhgt" type="range" min="3" max="30" value="10"></span>
+    <span><small>tall</small> <input id="bhgt" type="range" min="3" max="40" value="10"></span>
   </div>
   <div class="grp" id="vis" title="Show / hide layers"><small>show</small></div>
   <div class="grp"><span><small>map</small> <input id="opacity" type="range" min="0" max="100" value="55"></span></div>
@@ -75,9 +70,10 @@
 <script>
 const cv = document.getElementById('c'), ctx = cv.getContext('2d');
 const $ = id => document.getElementById(id);
+const PI = Math.PI;
 let DATA = null, bgImg = new Image();
 
-// kind: 'line' polylines, 'rect' rotated building footprints.
+// kind: 'line' polylines, 'rect' rotated footprints (buildings / houses).
 const LAYERS = {
   roads:      { c: '#37d0ff', name: 'Roads',     kind: 'line' },
   mainland:   { c: '#7CFC8A', name: 'Mainland',  kind: 'line', closed: true },
@@ -85,18 +81,23 @@ const LAYERS = {
   reservoirs: { c: '#c85cff', name: 'Reservoir', kind: 'line', closed: true },
   airport:    { c: '#ff5a5a', name: 'Airport',   kind: 'line' },
   buildings:  { c: '#ff6ec7', name: 'Buildings', kind: 'rect' },
+  houses:     { c: '#b6ff5c', name: 'Houses',    kind: 'rect' },
   foreign:    { c: '#c9a06a', name: 'Malaysia',  kind: 'line', closed: true },
 };
 const KEYS = Object.keys(LAYERS);
+const TYPES = {
+  buildings: [['terminal', 'Terminal'], ['hangar', 'Hangar'], ['pier', 'Pier'], ['hall', 'Low hall'], ['block', 'Block'], ['shed', 'Workshop'], ['carpark', 'Car park'], ['plane', 'Aircraft']],
+  houses: [['kampong', 'Kampong'], ['shophouse', 'Shophouse'], ['hdb_flat', 'HDB flat']],
+};
 const ONEWAY_COLOR = '#ff9f43';
-// roads:[{pts,oneway}]; buildings:[{type,cx,cy,w,h,rot,hgt}]; others:[ [[nx,ny]...] ]
-let data = { roads: [], mainland: [], islands: [], reservoirs: [], airport: [], buildings: [], foreign: [] };
+let data = { roads: [], mainland: [], islands: [], reservoirs: [], airport: [], buildings: [], houses: [], foreign: [] };
 let active = 'roads', oneway = false, freehand = true, mode = 'draw';
 let vis = {}; KEYS.forEach(k => vis[k] = true); vis.guide = true;
 let opacity = 0.55, brush = 14, bType = 'terminal', bRot = 0, bHgt = 1.0;
 let view = { zoom: 1, offX: 0, offY: 0, unit: 1000 };
 let bg = { offX: 0, offY: 0, scaleX: 1, scaleY: 1 };
 let cur = null, history = [], rectStart = null, rectNow = null;
+let sel = null, act = null, grab = null;   // selection + active transform for rect layers
 
 for (const k of KEYS) {
   const b = document.createElement('button'); b.className = 'lay' + (k === 'roads' ? ' on' : ''); b.style.setProperty('--c', LAYERS[k].c);
@@ -107,9 +108,11 @@ for (const k of [...KEYS, 'guide']) {
   b.textContent = k === 'guide' ? 'Guide' : LAYERS[k].name.slice(0, 4); b.id = 'v-' + k;
   b.onclick = () => { vis[k] = !vis[k]; b.classList.toggle('on', vis[k]); draw(); }; $('vis').appendChild(b);
 }
+const RECT = k => LAYERS[k].kind === 'rect';
+function refreshTypes() { if (!RECT(active)) return; const list = TYPES[active] || []; $('btype').innerHTML = list.map(([v, n]) => `<option value="${v}">${n}</option>`).join(''); bType = list[0] && list[0][0]; }
 
 function snapshot() { history.push(JSON.stringify(data)); if (history.length > 80) history.shift(); }
-function undo() { if (history.length) { data = JSON.parse(history.pop()); cur = null; rectStart = null; draw(); updateStat(); } }
+function undo() { if (history.length) { data = JSON.parse(history.pop()); cur = null; rectStart = null; sel = null; draw(); updateStat(); } }
 function resize() { cv.width = innerWidth; cv.height = innerHeight; draw(); }
 addEventListener('resize', resize);
 
@@ -128,8 +131,8 @@ function bgRect() {
   return { x: x0, y: yTop, w: x1 - x0, h: yBot - yTop };
 }
 function strokePoly(pts, close) {
-  if (!pts.length) return;
-  ctx.beginPath(); pts.forEach(([nx, ny], i) => { const [x, y] = toScreen(nx, ny); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+  if (!pts.length) return; ctx.beginPath();
+  pts.forEach(([nx, ny], i) => { const [x, y] = toScreen(nx, ny); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
   if (close) ctx.closePath();
   if (pts.length === 1) { const [x, y] = toScreen(pts[0][0], pts[0][1]); ctx.arc(x, y, 2, 0, 7); }
   ctx.stroke();
@@ -145,17 +148,27 @@ function drawArrows(pts) {
   }
 }
 function bCorners(b) {
-  const r = (b.rot || 0) * Math.PI / 180, c = Math.cos(r), s = Math.sin(r), hw = b.w / 2, hh = b.h / 2;
+  const r = (b.rot || 0) * PI / 180, c = Math.cos(r), s = Math.sin(r), hw = b.w / 2, hh = b.h / 2;
   return [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]].map(([dx, dy]) => [b.cx + dx * c - dy * s, b.cy + dx * s + dy * c]);
 }
-function drawBuilding(b, ghost) {
-  ctx.strokeStyle = ghost ? '#ff6ec788' : LAYERS.buildings.c; ctx.lineWidth = 2;
-  strokePoly(bCorners(b), true);
-  const [lx, ly] = toScreen(b.cx, b.cy); ctx.fillStyle = LAYERS.buildings.c; ctx.font = '11px sans-serif'; ctx.textAlign = 'center';
-  ctx.fillText(b.type[0].toUpperCase() + (b.type === 'plane' ? '✈' : ''), lx, ly + 4);
-  // a short tick on the +Z (facing) edge so orientation is visible
-  const r = (b.rot || 0) * Math.PI / 180; const [fx, fy] = toScreen(b.cx - Math.sin(r) * b.h * 0.5, b.cy + Math.cos(r) * b.h * 0.5);
-  ctx.beginPath(); ctx.arc(fx, fy, 3, 0, 7); ctx.stroke();
+function rotHandle(b) { // screen-space point above the building's top edge
+  const r = (b.rot || 0) * PI / 180, gx = b.cx - Math.sin(r) * (b.h / 2), gy = b.cy + Math.cos(r) * (b.h / 2);
+  const [sx, sy] = toScreen(gx, gy), [cx, cy] = toScreen(b.cx, b.cy);
+  let ux = sx - cx, uy = sy - cy; const l = Math.hypot(ux, uy) || 1; ux /= l; uy /= l;
+  return [sx + ux * 22, sy + uy * 22];
+}
+function drawRect(b, color) {
+  ctx.strokeStyle = color; ctx.lineWidth = 2; strokePoly(bCorners(b), true);
+  const [lx, ly] = toScreen(b.cx, b.cy); ctx.fillStyle = color; ctx.font = '11px sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText((b.type[0] || '?').toUpperCase() + (b.type === 'plane' ? '✈' : ''), lx, ly + 4);
+}
+function drawHandles(b) {
+  const cs = bCorners(b).map(([x, y]) => toScreen(x, y));
+  ctx.fillStyle = '#fff'; ctx.strokeStyle = '#000';
+  for (const [x, y] of cs) { ctx.beginPath(); ctx.rect(x - 4, y - 4, 8, 8); ctx.fill(); ctx.stroke(); }
+  const [hx, hy] = rotHandle(b), [cx, cy] = toScreen(b.cx, b.cy);
+  ctx.strokeStyle = '#fff'; ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(hx, hy); ctx.stroke();
+  ctx.fillStyle = '#7CFC8A'; ctx.beginPath(); ctx.arc(hx, hy, 5, 0, 7); ctx.fill(); ctx.stroke();
 }
 function draw() {
   ctx.clearRect(0, 0, cv.width, cv.height); ctx.fillStyle = '#0e1118'; ctx.fillRect(0, 0, cv.width, cv.height);
@@ -163,33 +176,49 @@ function draw() {
   ctx.lineCap = 'round'; ctx.lineJoin = 'round';
   if (vis.guide && DATA) { ctx.lineWidth = 1.3; ctx.strokeStyle = '#ffd23f'; ctx.setLineDash([5, 5]);
     strokePoly(DATA.outline, true); ctx.strokeStyle = '#ffd23f55'; DATA.islands.forEach(p => strokePoly(p, true)); ctx.setLineDash([]); }
-  for (const k of ['foreign', 'reservoirs', 'islands', 'mainland', 'airport', 'roads', 'buildings']) {
+  for (const k of ['foreign', 'reservoirs', 'islands', 'mainland', 'airport', 'roads', 'houses', 'buildings']) {
     if (!vis[k]) continue; const L = LAYERS[k];
-    if (k === 'buildings') { data.buildings.forEach(b => drawBuilding(b, false)); continue; }
+    if (RECT(k)) { data[k].forEach(b => drawRect(b, L.c)); continue; }
     ctx.lineWidth = k === 'mainland' ? 2.6 : 2.2;
     if (k === 'roads') { for (const r of data.roads) { ctx.strokeStyle = r.oneway ? ONEWAY_COLOR : L.c; strokePoly(r.pts, false); if (r.oneway) drawArrows(r.pts); } }
     else { ctx.strokeStyle = L.c; for (const p of data[k]) strokePoly(p, L.closed); }
   }
+  if (sel && RECT(sel.layer) && data[sel.layer][sel.idx] && vis[sel.layer]) drawHandles(data[sel.layer][sel.idx]);
   if (cur) { ctx.lineWidth = 2.6; ctx.strokeStyle = (active === 'roads' && oneway) ? ONEWAY_COLOR : LAYERS[active].c; ctx.globalAlpha = 0.85; strokePoly(cur, false); ctx.globalAlpha = 1; }
-  if (rectStart && rectNow) drawBuilding(rectToBldg(rectStart, rectNow), true);
+  if (rectStart && rectNow) drawRect(rectToBldg(rectStart, rectNow), LAYERS[active].c + '99');
   if (mode === 'erase' && lastPt) { ctx.strokeStyle = '#e2503b'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(lastPt.sx, lastPt.sy, brush, 0, 7); ctx.stroke(); }
 }
 function rectToBldg(a, b) { return { type: bType, cx: (a[0] + b[0]) / 2, cy: (a[1] + b[1]) / 2, w: Math.abs(a[0] - b[0]), h: Math.abs(a[1] - b[1]), rot: bRot, hgt: bHgt }; }
+function inBldg(b, gp) {
+  const r = (b.rot || 0) * PI / 180, c = Math.cos(-r), s = Math.sin(-r), ox = gp[0] - b.cx, oy = gp[1] - b.cy;
+  const lx = ox * c - oy * s, ly = ox * s + oy * c;
+  return Math.abs(lx) <= b.w / 2 && Math.abs(ly) <= b.h / 2;
+}
 function layerList() { return data[active]; }
 function ptsOf(item) { return active === 'roads' ? item.pts : item; }
 function wrap(run, item) { return active === 'roads' ? { pts: run, oneway: item ? item.oneway : oneway } : run; }
+function syncToolbar(b) { bType = b.type; bRot = b.rot || 0; bHgt = b.hgt || 1; $('btype').value = b.type; $('brot').value = bRot; $('bhgt').value = Math.round(bHgt * 10); }
 function updateStat() {
   $('stat').innerHTML = KEYS.map(k => { const n = data[k].length; const ow = k === 'roads' ? ` (${data.roads.filter(r => r.oneway).length}→)` : ''; return `<b>${n}</b> ${LAYERS[k].name.slice(0, 4)}${ow}`; }).join(' · ');
 }
 
 let drawing = false, panning = false, panStart = null, lastPt = null; const keys = {};
 function evPos(e) { const r = cv.getBoundingClientRect(); return { sx: e.clientX - r.left, sy: e.clientY - r.top }; }
-function isRect() { return LAYERS[active].kind === 'rect'; }
+function hitHandle(b, p) {
+  const [hx, hy] = rotHandle(b); if (Math.hypot(p.sx - hx, p.sy - hy) <= 9) return 'rotate';
+  for (const [x, y] of bCorners(b).map(([x, y]) => toScreen(x, y))) if (Math.hypot(p.sx - x, p.sy - y) <= 9) return 'resize';
+  return null;
+}
 cv.addEventListener('pointerdown', e => {
   cv.setPointerCapture(e.pointerId); const p = evPos(e); lastPt = p;
   if (mode === 'pan' || e.button === 1 || e.button === 2 || keys[' ']) { panning = true; panStart = { ...p, offX: view.offX, offY: view.offY }; return; }
+  if (mode === 'draw' && RECT(active)) {
+    const gp = toGame(p.sx, p.sy);
+    if (sel && sel.layer === active && data[active][sel.idx]) { const h = hitHandle(data[active][sel.idx], p); if (h) { snapshot(); act = h; drawing = true; return; } }
+    for (let i = data[active].length - 1; i >= 0; i--) if (inBldg(data[active][i], gp)) { sel = { layer: active, idx: i }; snapshot(); act = 'move'; grab = [gp[0] - data[active][i].cx, gp[1] - data[active][i].cy]; syncToolbar(data[active][i]); drawing = true; draw(); return; }
+    sel = null; snapshot(); rectStart = gp; rectNow = gp; act = 'new'; drawing = true; draw(); return;
+  }
   if (mode === 'draw') {
-    if (isRect()) { snapshot(); rectStart = toGame(p.sx, p.sy); rectNow = rectStart; drawing = true; return; }
     const g = toGame(p.sx, p.sy);
     if (freehand) { snapshot(); cur = [g]; drawing = true; } else { if (!cur) { snapshot(); cur = []; } cur.push(g); draw(); }
   } else if (mode === 'erase') { snapshot(); drawing = true; eraseAt(p); }
@@ -197,7 +226,15 @@ cv.addEventListener('pointerdown', e => {
 cv.addEventListener('pointermove', e => {
   const p = evPos(e); lastPt = p;
   if (panning) { view.offX = panStart.offX + (p.sx - panStart.sx); view.offY = panStart.offY + (p.sy - panStart.sy); draw(); return; }
-  if (mode === 'draw' && isRect() && rectStart) { rectNow = toGame(p.sx, p.sy); draw(); return; }
+  if (mode === 'draw' && RECT(active) && drawing) {
+    const gp = toGame(p.sx, p.sy);
+    if (act === 'new') { rectNow = gp; draw(); return; }
+    const b = data[sel.layer][sel.idx];
+    if (act === 'move') { b.cx = gp[0] - grab[0]; b.cy = gp[1] - grab[1]; }
+    else if (act === 'rotate') { b.rot = Math.atan2(-(gp[0] - b.cx), gp[1] - b.cy) * 180 / PI; syncToolbar(b); }
+    else if (act === 'resize') { const r = (b.rot || 0) * PI / 180, c = Math.cos(-r), s = Math.sin(-r), ox = gp[0] - b.cx, oy = gp[1] - b.cy; b.w = Math.max(0.002, 2 * Math.abs(ox * c - oy * s)); b.h = Math.max(0.002, 2 * Math.abs(ox * s + oy * c)); }
+    draw(); return;
+  }
   if (mode === 'draw' && freehand && drawing && cur) { const g = toGame(p.sx, p.sy), last = cur[cur.length - 1];
     if (Math.hypot(g[0] - last[0], g[1] - last[1]) > 0.0015) { cur.push(g); draw(); } }
   else if (mode === 'erase' && drawing) eraseAt(p);
@@ -206,26 +243,19 @@ cv.addEventListener('pointermove', e => {
 });
 function finishCur() { if (cur && cur.length >= 2) layerList().push(wrap(cur, null)); cur = null; }
 function endStroke() {
-  if (mode === 'draw' && isRect() && rectStart) { const b = rectToBldg(rectStart, rectNow); if (b.w > 0.001 && b.h > 0.001) data.buildings.push(b); rectStart = rectNow = null; }
-  else if (mode === 'draw' && freehand && drawing) finishCur();
-  drawing = false; panning = false; draw(); updateStat();
+  if (mode === 'draw' && RECT(active) && act === 'new') { const b = rectToBldg(rectStart, rectNow); if (b.w > 0.001 && b.h > 0.001) { data[active].push(b); sel = { layer: active, idx: data[active].length - 1 }; } rectStart = rectNow = null; }
+  else if (mode === 'draw' && freehand && drawing && !RECT(active)) finishCur();
+  act = null; drawing = false; panning = false; draw(); updateStat();
 }
 cv.addEventListener('pointerup', endStroke); cv.addEventListener('pointercancel', endStroke);
 cv.addEventListener('contextmenu', e => e.preventDefault());
-cv.addEventListener('dblclick', () => { if (mode === 'draw' && !freehand && !isRect()) { finishCur(); draw(); updateStat(); } });
+cv.addEventListener('dblclick', () => { if (mode === 'draw' && !freehand && !RECT(active)) { finishCur(); draw(); updateStat(); } });
 cv.addEventListener('wheel', e => { e.preventDefault(); const p = evPos(e), g = toGame(p.sx, p.sy);
-  view.zoom = Math.max(0.1, Math.min(120, view.zoom * (e.deltaY < 0 ? 1.12 : 1 / 1.12)));
+  view.zoom = Math.max(0.1, Math.min(140, view.zoom * (e.deltaY < 0 ? 1.12 : 1 / 1.12)));
   view.offX = p.sx - g[0] * view.unit * view.zoom; view.offY = p.sy - (1 - g[1]) * view.unit * view.zoom; draw(); }, { passive: false });
 function eraseAt(p) {
   const gp = toGame(p.sx, p.sy);
-  if (isRect()) { // remove buildings whose centre is near, or that contain the point
-    data.buildings = data.buildings.filter(b => {
-      const r = (b.rot || 0) * Math.PI / 180, c = Math.cos(-r), s = Math.sin(-r), ox = gp[0] - b.cx, oy = gp[1] - b.cy;
-      const lx = ox * c - oy * s, ly = ox * s + oy * c;
-      return !(Math.abs(lx) <= b.w / 2 && Math.abs(ly) <= b.h / 2);
-    });
-    draw(); updateStat(); return;
-  }
+  if (RECT(active)) { data[active] = data[active].filter(b => !inBldg(b, gp)); sel = null; draw(); updateStat(); return; }
   const radG = brush / (view.unit * view.zoom), out = [];
   for (const item of layerList()) { let run = [];
     for (const pt of ptsOf(item)) { if (Math.hypot(pt[0] - gp[0], pt[1] - gp[1]) <= radG) { if (run.length >= 2) out.push(wrap(run, item)); run = []; } else run.push(pt); }
@@ -234,24 +264,26 @@ function eraseAt(p) {
 }
 addEventListener('keydown', e => { keys[e.key] = true;
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); undo(); }
-  if (e.key === 'Enter' && mode === 'draw' && !freehand && !isRect()) { finishCur(); draw(); updateStat(); }
-  if (e.key === 'Escape') { cur = null; rectStart = null; draw(); }
+  if ((e.key === 'Delete' || e.key === 'Backspace') && sel && data[sel.layer][sel.idx]) { snapshot(); data[sel.layer].splice(sel.idx, 1); sel = null; draw(); updateStat(); }
+  if (e.key === 'Enter' && mode === 'draw' && !freehand && !RECT(active)) { finishCur(); draw(); updateStat(); }
+  if (e.key === 'Escape') { cur = null; rectStart = null; sel = null; draw(); }
   if (e.key === 'd') setMode('draw'); if (e.key === 'e') setMode('erase'); if (e.key === 'p') setMode('pan'); });
 addEventListener('keyup', e => { keys[e.key] = false; });
 
 function setMode(m) { mode = m; cv.style.cursor = m === 'pan' ? 'grab' : (m === 'erase' ? 'cell' : 'crosshair');
   ['draw', 'erase', 'pan'].forEach(x => $('m-' + x).classList.toggle('on', x === m)); cur = null; rectStart = null; draw(); }
-function setLayer(l) { finishCur(); active = l; KEYS.forEach(x => $('L-' + x).classList.toggle('on', x === l)); draw(); }
+function setLayer(l) { finishCur(); active = l; sel = null; KEYS.forEach(x => $('L-' + x).classList.toggle('on', x === l)); refreshTypes(); draw(); }
 $('m-draw').onclick = () => setMode('draw'); $('m-erase').onclick = () => setMode('erase'); $('m-pan').onclick = () => setMode('pan');
 $('oneway').onclick = () => { oneway = !oneway; $('oneway').classList.toggle('on', oneway); draw(); };
 $('freehand').onclick = () => { freehand = !freehand; $('freehand').classList.toggle('on', freehand); $('freehand').textContent = freehand ? 'Freehand' : 'Click pts'; cur = null; draw(); };
 $('opacity').oninput = e => { opacity = e.target.value / 100; draw(); };
 $('brush').oninput = e => { brush = +e.target.value; draw(); };
-$('btype').onchange = e => { bType = e.target.value; };
-$('brot').oninput = e => { bRot = +e.target.value; draw(); };
-$('bhgt').oninput = e => { bHgt = e.target.value / 10; };
+function selBldg() { return sel && RECT(sel.layer) ? data[sel.layer][sel.idx] : null; }
+$('btype').onchange = e => { bType = e.target.value; const b = selBldg(); if (b) { b.type = bType; draw(); } };
+$('brot').oninput = e => { bRot = +e.target.value; const b = selBldg(); if (b) { b.rot = bRot; } draw(); };
+$('bhgt').oninput = e => { bHgt = e.target.value / 10; const b = selBldg(); if (b) { b.hgt = bHgt; } };
 $('undo').onclick = undo; $('fit').onclick = fitView;
-$('clear').onclick = () => { if (confirm('Clear the "' + LAYERS[active].name + '" layer?')) { snapshot(); data[active] = []; cur = null; draw(); updateStat(); } };
+$('clear').onclick = () => { if (confirm('Clear the "' + LAYERS[active].name + '" layer?')) { snapshot(); data[active] = []; cur = null; sel = null; draw(); updateStat(); } };
 const NUDGE = 0.004, SCL = 1.01;
 $('al').onclick = () => { bg.offX -= NUDGE; draw(); }; $('ar').onclick = () => { bg.offX += NUDGE; draw(); };
 $('au').onclick = () => { bg.offY += NUDGE; draw(); }; $('ad').onclick = () => { bg.offY -= NUDGE; draw(); };
@@ -263,19 +295,19 @@ $('save').onclick = () => { finishCur();
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'sg1966-trace.json'; a.click(); updateStat(); };
 $('load').onchange = e => { const f = e.target.files[0]; if (!f) return; const rd = new FileReader();
   rd.onload = () => { try { const d = JSON.parse(rd.result); if (d.bg) bg = d.bg;
-      const nd = { roads: [], mainland: [], islands: [], reservoirs: [], airport: [], buildings: [], foreign: [] };
+      const nd = { roads: [], mainland: [], islands: [], reservoirs: [], airport: [], buildings: [], houses: [], foreign: [] };
       nd.roads = (d.roads || []).map(r => Array.isArray(r) ? { pts: r, oneway: false } : r);
       nd.mainland = d.mainland || d.coast || []; nd.islands = d.islands || []; nd.reservoirs = d.reservoirs || d.resv || [];
-      nd.airport = d.airport || []; nd.buildings = d.buildings || []; nd.foreign = d.foreign || [];
-      data = nd; snapshot(); draw(); updateStat();
+      nd.airport = d.airport || []; nd.buildings = d.buildings || []; nd.houses = d.houses || []; nd.foreign = d.foreign || [];
+      data = nd; sel = null; snapshot(); draw(); updateStat();
     } catch (err) { alert('Bad file: ' + err.message); } };
   rd.readAsText(f); };
 
 fetch('/trace-data.json').then(r => r.json()).then(d => {
-  DATA = d; bgImg.src = d.bg.img;
+  DATA = d; bgImg.src = d.bg.img; refreshTypes();
   const boot = () => { resize(); fitView(); updateStat(); $('hint').innerHTML =
-    '<b>Pick a layer</b>, hold &amp; drag to trace. <b>Buildings</b>: drag a box for the footprint (pick a type, set <b>rot</b>/<b>tall</b>); the small ring marks the front. <b>Airport</b> = runway line · <b>Roads</b> have a One-way toggle.<br>' +
-    'Zoom in (wheel) for detail — the map is high-res. Dashed <span style="color:#ffd23f">yellow</span> = current game coast (it\'s wrong; trace the real one in <span style="color:#7CFC8A">green</span>). <b>Erase</b> fixes mistakes · <b>Save</b> sends it all back.'; };
+    '<b>Buildings/Houses:</b> drag a box to add; <b>click to select</b>, then drag it, a corner (resize) or the green dot (rotate) — sliders &amp; Delete also work. <b>Airport</b> = runway line · <b>Roads</b> One-way toggle.<br>' +
+    'Zoom (wheel) for detail — the map is high-res. Dashed <span style="color:#ffd23f">yellow</span> = current game coast (it\'s wrong; trace the real one in <span style="color:#7CFC8A">green</span>). <b>Save</b> sends it all back.'; };
   bgImg.onload = boot; bgImg.onerror = () => { $('hint').textContent = 'Could not load /trace-map.jpg'; boot(); };
 }).catch(err => { $('hint').textContent = 'Could not load /trace-data.json — ' + err.message; });
 </script>

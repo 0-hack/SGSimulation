@@ -6,6 +6,7 @@
 import * as THREE from './vendor/three.module.js';
 import { BUILDINGS, GRID_SIZE, ROAD_TYPES } from './data.js';
 import { SG_OUTLINE, SG_ISLANDS, SG_FOREIGN, SG_RESERVOIRS, pointInPolygon, landMask, inReservoir, reservoirArea, inRiver, reservoirBranches, riverBranches } from './shape.js';
+import { CUSTOM_HOUSES } from './custom1966.js';
 
 const N = GRID_SIZE;
 const WORLD = N * 10;         // world units across the bounding box (TILE stays ~10)
@@ -177,6 +178,7 @@ export class Scene3D {
     this._buildCatchment();  // Central Catchment reservoir + nature reserve (centre of island)
     this._buildTerrain();    // the nature-reserve hills (Bukit Timah massif) around the reservoirs
     this._buildAirport();    // Singapore (Paya Lebar) Airport on the east side
+    this._placeStructures(CUSTOM_HOUSES, 'houseGroup'); // hand-traced houses (free-placed)
     this._buildNature();     // scatter rural greenery across the undeveloped island
     this._buildNavGraph();   // traffic graph (freeform roads only; added on setState)
     this._initBoats();
@@ -687,7 +689,7 @@ export class Scene3D {
     plHall.position.set(14, 0, apCz + 20); plHall.rotation.y = -Math.PI / 2; g.add(plHall);
     } // end procedural cluster
 
-    if (handPlaced) this._placeAirportBuildings(AIRPORT.buildings);
+    if (handPlaced) this._placeStructures(AIRPORT.buildings, 'airportBuildings');
 
     // --- footprint mask (unbuildable) ---
     this.airportMask = Array.from({ length: N }, () => Array(N).fill(false));
@@ -706,35 +708,40 @@ export class Scene3D {
     if (handPlaced) this._maskAirportBuildings(AIRPORT.buildings);
   }
 
-  // Build the player's hand-placed airport buildings (from the tracer) in world
-  // space. Each: { type, cx, cy, w, h, rot, hgt }. Sizes are normalised; we map
-  // them to world units and fit/parametrise each model to the drawn footprint.
-  _placeAirportBuildings(list) {
-    if (this.airportBuildings) this.scene.remove(this.airportBuildings);
-    const grp = new THREE.Group(); this.scene.add(grp); this.airportBuildings = grp;
-    const fit = (m, bw, bd, nomW, nomD, ht) => { m.scale.set(bw / nomW, ht, bd / nomD); return m; };
-    for (const b of list) {
-      const x = (b.cx - 0.5) * WORLD, z = (0.5 - b.cy) * WORLD;
-      const bw = Math.max(3, (b.w || 0.01) * WORLD), bd = Math.max(3, (b.h || 0.01) * WORLD), ht = b.hgt || 1;
-      let m;
-      switch (b.type) {
-        case 'terminal': m = fit(makeTerminal(), bw, bd, 38, 14, ht); break;
-        case 'hangar':   m = fit(makeHangar(), bw, bd, 18, 13, ht); break;
-        case 'pier':     m = fit(makePier(), bw, bd, 30, 6.5, ht); break;
-        case 'plane':    m = fit(makeAirliner(), bw, bd, 22, 16, ht); break;
-        case 'hall':     m = makeLowHall(bw, 5 * ht, bd); break;
-        case 'block':    m = makeAirBlock(bw, 6 * ht, bd); break;
-        case 'shed':     m = makeSawtoothShed(bw, 5.5 * ht, bd, Math.max(2, Math.round(bw / 6))); break;
-        case 'carpark': {
-          m = new THREE.Group();
-          const slab = new THREE.Mesh(new THREE.BoxGeometry(bw, 0.24, bd), toon(0x6d6f74));
-          slab.position.y = 0.12; slab.receiveShadow = true; m.add(slab);
-          addCars(m, 0, 0, bw - 3, bd - 3);
-          break;
-        }
-        default:         m = makeAirBlock(bw, 6 * ht, bd);
+  // Build one hand-placed structure (airport building OR house) fitted to its
+  // drawn footprint. b: { type, w, h, hgt } — w/h normalised, hgt height mult.
+  _makeStructure(b) {
+    const bw = Math.max(3, (b.w || 0.01) * WORLD), bd = Math.max(3, (b.h || 0.01) * WORLD), ht = b.hgt || 1;
+    const fit = (m, nomW, nomD) => { m.scale.set(bw / nomW, ht, bd / nomD); return m; };
+    switch (b.type) {
+      case 'terminal': return fit(makeTerminal(), 38, 14);
+      case 'hangar':   return fit(makeHangar(), 18, 13);
+      case 'pier':     return fit(makePier(), 30, 6.5);
+      case 'plane':    return fit(makeAirliner(), 22, 16);
+      case 'hall':     return makeLowHall(bw, 5 * ht, bd);
+      case 'block':    return makeAirBlock(bw, 6 * ht, bd);
+      case 'shed':     return makeSawtoothShed(bw, 5.5 * ht, bd, Math.max(2, Math.round(bw / 6)));
+      case 'carpark': {
+        const m = new THREE.Group();
+        const slab = new THREE.Mesh(new THREE.BoxGeometry(bw, 0.24, bd), toon(0x6d6f74));
+        slab.position.y = 0.12; slab.receiveShadow = true; m.add(slab);
+        addCars(m, 0, 0, bw - 3, bd - 3);
+        return m;
       }
-      m.position.set(x, 0, z); m.rotation.y = b.rot || 0; grp.add(m);
+      case 'kampong': case 'shophouse': case 'hdb_flat': case 'hdb_newtown': case 'condo': case 'condo_estate':
+        return fit(makeBuilding(b.type), 9, 9);
+      default:         return makeAirBlock(bw, 6 * ht, bd);
+    }
+  }
+
+  // Place a list of hand-placed structures in world space, into this[prop].
+  _placeStructures(list, prop) {
+    if (this[prop]) this.scene.remove(this[prop]);
+    const grp = new THREE.Group(); this.scene.add(grp); this[prop] = grp;
+    for (const b of (list || [])) {
+      const m = this._makeStructure(b);
+      m.position.set((b.cx - 0.5) * WORLD, 0, (0.5 - b.cy) * WORLD); m.rotation.y = b.rot || 0;
+      grp.add(m);
     }
   }
 

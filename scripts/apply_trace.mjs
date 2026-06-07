@@ -10,6 +10,7 @@
 //   foreign    [[...]]        -> public/js/shape.js        SG_FOREIGN  (grey Malaysia)
 //   airport    [[...]]        -> public/js/scene3d.js      AIRPORT south/north (runway)
 //   buildings  [{type,cx,cy,w,h,rot,hgt}] -> scene3d.js    AIRPORT.buildings (hand-placed)
+//   houses     [{type,cx,cy,w,h,rot,hgt}] -> custom1966.js  CUSTOM_HOUSES (free-placed)
 import { readFileSync, writeFileSync } from 'node:fs';
 
 const WORLD = 1600, STEP = 9, MERGE = 7;
@@ -25,11 +26,13 @@ const reservoirsIn = (t.reservoirs || t.resv || []).filter(p => p.length >= 3);
 const foreignIn = (t.foreign || []).filter(p => p.length >= 3);
 const airportIn = (t.airport || []).map(a => a.pts || a).filter(p => p.length >= 2);
 const buildingsIn = (t.buildings || []).filter(b => b && b.type && b.w > 0 && b.h > 0);
+const housesIn = (t.houses || []).filter(b => b && b.type && b.w > 0 && b.h > 0);
 
 const cur = await import('../public/js/roads1966.js');
 const shapeURL = new URL('../public/js/shape.js', import.meta.url);
 const sceneURL = new URL('../public/js/scene3d.js', import.meta.url);
 const roadsURL = new URL('../public/js/roads1966.js', import.meta.url);
+const customURL = new URL('../public/js/custom1966.js', import.meta.url);
 
 const r1 = v => Math.round(v * 10) / 10;        // world coords: 0.1 precision
 const r2 = v => Math.round(v * 100) / 100;
@@ -146,6 +149,17 @@ if (airportIn.length || buildingsIn.length) {
     did.push(`airport buildings -> ${buildingsIn.length} placed`);
   }
   writeFileSync(sceneURL, sc);
+}
+
+// ---------------- custom1966.js: hand-placed houses ----------------
+if (housesIn.length) {
+  const hstr = housesIn.map(b => `{ type: '${b.type}', cx: ${r3(b.cx)}, cy: ${r3(b.cy)}, w: ${r4(b.w)}, h: ${r4(b.h)}, rot: ${r3((b.rot || 0) * Math.PI / 180)}, hgt: ${r2(b.hgt || 1)} }`).join(', ');
+  let cs = readFileSync(customURL, 'utf8');
+  const re = /export const CUSTOM_HOUSES = \[[\s\S]*?\];/;
+  if (!re.test(cs)) throw new Error('could not find CUSTOM_HOUSES in custom1966.js');
+  cs = cs.replace(re, () => `export const CUSTOM_HOUSES = [${hstr}];`);
+  writeFileSync(customURL, cs);
+  did.push(`houses -> ${housesIn.length} placed`);
 }
 
 if (!did.length) console.log('nothing to apply (no recognised layers in the trace file).');

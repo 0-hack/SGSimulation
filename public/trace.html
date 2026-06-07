@@ -3,25 +3,26 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
-<title>SG 1966 Road Tracer</title>
+<title>SG 1966 Map Tracer</title>
 <style>
-  :root { --bar: #1d2330; --accent: #4c8bf5; --ok: #2ecc71; --bad: #e2503b; }
+  :root { --bar: #1d2330; --accent: #4c8bf5; }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body { margin: 0; height: 100%; overflow: hidden; font: 13px/1.4 system-ui, sans-serif; background: #0e1118; color: #e7ebf2; }
   #bar { position: fixed; top: 0; left: 0; right: 0; display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
          padding: 6px 8px; background: var(--bar); border-bottom: 1px solid #000; z-index: 10; }
-  #bar .grp { display: flex; gap: 4px; align-items: center; padding: 2px 6px; border-right: 1px solid #333a; }
+  .grp { display: flex; gap: 4px; align-items: center; padding: 2px 6px; border-right: 1px solid #333a; }
+  .grp > small { opacity: .65; }
   button, label.btn { background: #2a3243; color: #e7ebf2; border: 1px solid #3a4356; border-radius: 6px;
            padding: 6px 9px; cursor: pointer; font-size: 12.5px; }
   button:hover { background: #344056; }
   button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
   button.danger { background: #5a2a2a; border-color: #7a3a3a; }
-  input[type=range] { width: 96px; vertical-align: middle; }
-  #hint { position: fixed; left: 8px; bottom: 8px; background: #000a; padding: 6px 10px; border-radius: 8px; z-index: 10; max-width: 46ch; }
-  #stat { margin-left: auto; opacity: .85; }
+  button.lay { border-left: 5px solid var(--c); }
+  input[type=range] { width: 90px; vertical-align: middle; }
+  #hint { position: fixed; left: 8px; bottom: 8px; background: #000b; padding: 6px 10px; border-radius: 8px; z-index: 10; max-width: 52ch; }
+  #stat { margin-left: auto; opacity: .85; text-align: right; }
+  #stat b { color: #fff; }
   canvas { display: block; position: fixed; inset: 0; touch-action: none; cursor: crosshair; }
-  .sep { flex-basis: 100%; height: 0; }
-  small { opacity: .7; }
 </style>
 </head>
 <body>
@@ -31,15 +32,28 @@
     <button id="m-erase">🧽 Erase</button>
     <button id="m-pan">✋ Pan</button>
   </div>
+  <div class="grp" title="Which thing you're tracing. Draw/Erase act on this layer.">
+    <small>layer</small>
+    <button id="L-roads" class="lay on" style="--c:#37d0ff">Roads</button>
+    <button id="L-coast" class="lay" style="--c:#7CFC8A">Coast</button>
+    <button id="L-resv"  class="lay" style="--c:#c85cff">Reservoir</button>
+  </div>
   <div class="grp">
-    <button id="freehand" class="on" title="Freehand: hold & drag. Click mode: tap each vertex, double-click/Enter to finish.">Freehand</button>
+    <button id="oneway" title="Tag roads you draw as ONE-WAY (drawn in the direction of travel)">➔ One-way</button>
+    <button id="freehand" class="on" title="Freehand: hold &amp; drag. Click: tap vertices, double-click/Enter to finish.">Freehand</button>
     <span><small>brush</small> <input id="brush" type="range" min="4" max="40" value="14"></span>
+  </div>
+  <div class="grp" title="Show / hide each layer">
+    <small>show</small>
+    <button id="v-roads" class="on">Roads</button>
+    <button id="v-coast" class="on">Coast</button>
+    <button id="v-resv"  class="on">Resv</button>
+    <button id="v-guide" class="on" title="The current game coastline, for reference">Guide</button>
   </div>
   <div class="grp">
     <span><small>map</small> <input id="opacity" type="range" min="0" max="100" value="55"></span>
-    <button id="coast" class="on" title="Show the game coastline guide">Coastline</button>
   </div>
-  <div class="grp" title="Nudge the background map to line its coast up with the guide">
+  <div class="grp" title="Nudge the background map to line its coast up with your trace">
     <small>align</small>
     <button id="al">◀</button><button id="ar">▶</button><button id="au">▲</button><button id="ad">▼</button>
     <button id="sxm">－X</button><button id="sxp">＋X</button><button id="sym">－Y</button><button id="syp">＋Y</button>
@@ -48,13 +62,13 @@
   <div class="grp">
     <button id="undo">↶ Undo</button>
     <button id="fit">Fit</button>
-    <button id="clear" class="danger">Clear all</button>
+    <button id="clear" class="danger">Clear layer</button>
   </div>
   <div class="grp">
     <button id="save">💾 Save</button>
     <label class="btn">📂 Load<input id="load" type="file" accept="application/json" hidden></label>
   </div>
-  <div id="stat">0 roads · 0 pts</div>
+  <div id="stat"></div>
 </div>
 <canvas id="c"></canvas>
 <div id="hint">Loading map…</div>
@@ -63,212 +77,200 @@
 const cv = document.getElementById('c'), ctx = cv.getContext('2d');
 const $ = id => document.getElementById(id);
 let DATA = null, bgImg = new Image();
-// view: game-normalized -> screen.  screenX = nx*unit*zoom + offX ; screenY = (1-ny)*unit*zoom + offY
-let view = { zoom: 1, offX: 0, offY: 0, unit: 1000 };
-let bg = { offX: 0, offY: 0, scaleX: 1, scaleY: 1 };  // background alignment nudge (game units / factor)
-let roads = [];           // each: array of [nx,ny]
-let cur = null;           // road being drawn
-let mode = 'draw', freehand = true, showCoast = true, opacity = 0.55, brush = 14;
-let history = [];
 
-function snapshot() { history.push(JSON.stringify(roads)); if (history.length > 80) history.shift(); }
-function undo() { if (history.length) { roads = JSON.parse(history.pop()); cur = null; draw(); updateStat(); } }
+const LAYERS = { roads: '#37d0ff', coast: '#7CFC8A', resv: '#c85cff' };
+const ONEWAY_COLOR = '#ff9f43';
+// roads: {pts:[[nx,ny]...], oneway:bool}.  coast/resv: [[nx,ny]...] polylines (closed loops).
+let data = { roads: [], coast: [], resv: [] };
+let active = 'roads', oneway = false, freehand = true, mode = 'draw';
+let vis = { roads: true, coast: true, resv: true, guide: true };
+let opacity = 0.55, brush = 14;
+
+let view = { zoom: 1, offX: 0, offY: 0, unit: 1000 };
+let bg = { offX: 0, offY: 0, scaleX: 1, scaleY: 1 };
+let cur = null, history = [];
+
+function snapshot() { history.push(JSON.stringify(data)); if (history.length > 80) history.shift(); }
+function undo() { if (history.length) { data = JSON.parse(history.pop()); cur = null; draw(); updateStat(); } }
 
 function resize() { cv.width = innerWidth; cv.height = innerHeight; draw(); }
 addEventListener('resize', resize);
 
-// ---- coordinate transforms ----
-function toScreen(nx, ny) {
-  return [nx * view.unit * view.zoom + view.offX, (1 - ny) * view.unit * view.zoom + view.offY];
-}
-function toGame(sx, sy) {
-  return [(sx - view.offX) / (view.unit * view.zoom), 1 - (sy - view.offY) / (view.unit * view.zoom)];
-}
+function toScreen(nx, ny) { return [nx * view.unit * view.zoom + view.offX, (1 - ny) * view.unit * view.zoom + view.offY]; }
+function toGame(sx, sy) { return [(sx - view.offX) / (view.unit * view.zoom), 1 - (sy - view.offY) / (view.unit * view.zoom)]; }
+
 function fitView() {
-  // frame game x[0,0.82] y[0.18,0.74] into the canvas
   const x0 = -0.02, x1 = 0.82, y0 = 0.16, y1 = 0.74;
   const w = cv.width, h = cv.height - 50;
-  const sx = w / (x1 - x0), sy = h / (y1 - y0);
-  view.unit = 1000; view.zoom = Math.min(sx, sy) / 1000;
+  view.unit = 1000; view.zoom = Math.min(w / (x1 - x0), h / (y1 - y0)) / 1000;
   const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
   view.offX = cv.width / 2 - cx * view.unit * view.zoom;
   view.offY = (cv.height + 50) / 2 - (1 - cy) * view.unit * view.zoom;
   draw();
 }
 
-// ---- background placement (with alignment nudge) ----
 function bgRect() {
   const b = DATA.bg;
   const cxg = (b.gxL + b.gxR) / 2, cyg = (b.gyB + b.gyT) / 2;
-  const gxL = (b.gxL - cxg) * bg.scaleX + cxg + bg.offX;
-  const gxR = (b.gxR - cxg) * bg.scaleX + cxg + bg.offX;
-  const gyB = (b.gyB - cyg) * bg.scaleY + cyg + bg.offY;
-  const gyT = (b.gyT - cyg) * bg.scaleY + cyg + bg.offY;
-  const [x0, yTop] = toScreen(gxL, gyT);   // image top-left = west, north
-  const [x1, yBot] = toScreen(gxR, gyB);
+  const X = g => (g - cxg) * bg.scaleX + cxg + bg.offX, Y = g => (g - cyg) * bg.scaleY + cyg + bg.offY;
+  const [x0, yTop] = toScreen(X(b.gxL), Y(b.gyT));
+  const [x1, yBot] = toScreen(X(b.gxR), Y(b.gyB));
   return { x: x0, y: yTop, w: x1 - x0, h: yBot - yTop };
+}
+
+function strokePoly(pts, close) {
+  if (!pts.length) return;
+  ctx.beginPath();
+  pts.forEach(([nx, ny], i) => { const [x, y] = toScreen(nx, ny); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+  if (close) ctx.closePath();
+  if (pts.length === 1) { const [x, y] = toScreen(pts[0][0], pts[0][1]); ctx.arc(x, y, 2, 0, 7); }
+  ctx.stroke();
+}
+function drawArrows(pts) {
+  let acc = 0, step = 34;
+  for (let i = 1; i < pts.length; i++) {
+    const [ax, ay] = toScreen(pts[i - 1][0], pts[i - 1][1]), [bx, by] = toScreen(pts[i][0], pts[i][1]);
+    const dx = bx - ax, dy = by - ay, len = Math.hypot(dx, dy); if (!len) continue;
+    acc += len;
+    if (acc >= step) { acc = 0; const ux = dx / len, uy = dy / len, s = 7;
+      ctx.beginPath();
+      ctx.moveTo(bx, by); ctx.lineTo(bx - ux * s - uy * s * 0.6, by - uy * s + ux * s * 0.6);
+      ctx.moveTo(bx, by); ctx.lineTo(bx - ux * s + uy * s * 0.6, by - uy * s - ux * s * 0.6);
+      ctx.stroke(); }
+  }
 }
 
 function draw() {
   ctx.clearRect(0, 0, cv.width, cv.height);
   ctx.fillStyle = '#0e1118'; ctx.fillRect(0, 0, cv.width, cv.height);
-  // background map
-  if (bgImg.complete && bgImg.naturalWidth) {
-    const r = bgRect();
-    ctx.globalAlpha = opacity;
-    ctx.imageSmoothingEnabled = true;
-    ctx.drawImage(bgImg, r.x, r.y, r.w, r.h);
-    ctx.globalAlpha = 1;
-  }
-  // coastline guide
-  if (showCoast && DATA) {
-    ctx.lineWidth = 1.5; ctx.strokeStyle = '#ffd23f';
-    const poly = (pts, close) => { ctx.beginPath(); pts.forEach(([nx, ny], i) => { const [x, y] = toScreen(nx, ny); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }); if (close) ctx.closePath(); ctx.stroke(); };
-    poly(DATA.outline, true);
-    ctx.strokeStyle = '#ffd23f88';
-    DATA.islands.forEach(p => poly(p, true));
-  }
-  // traced roads
+  if (bgImg.complete && bgImg.naturalWidth) { const r = bgRect(); ctx.globalAlpha = opacity; ctx.drawImage(bgImg, r.x, r.y, r.w, r.h); ctx.globalAlpha = 1; }
   ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-  ctx.strokeStyle = '#37d0ff'; ctx.lineWidth = 2.5;
-  for (const r of roads) strokePoly(r);
-  if (cur) { ctx.strokeStyle = '#7CFC8A'; strokePoly(cur); }
-  // eraser ring
+  // reference guide = current game coastline
+  if (vis.guide && DATA) {
+    ctx.lineWidth = 1.3; ctx.strokeStyle = '#ffd23f'; ctx.setLineDash([5, 5]);
+    strokePoly(DATA.outline, true); ctx.strokeStyle = '#ffd23f66'; DATA.islands.forEach(p => strokePoly(p, true));
+    ctx.setLineDash([]);
+  }
+  // reservoir layer (closed), coast layer (closed), roads
+  if (vis.resv) { ctx.strokeStyle = LAYERS.resv; ctx.lineWidth = 2.2; data.resv.forEach(p => strokePoly(p, true)); }
+  if (vis.coast) { ctx.strokeStyle = LAYERS.coast; ctx.lineWidth = 2.4; data.coast.forEach(p => strokePoly(p, true)); }
+  if (vis.roads) { ctx.lineWidth = 2.4; for (const r of data.roads) { ctx.strokeStyle = r.oneway ? ONEWAY_COLOR : LAYERS.roads; strokePoly(r.pts, false); if (r.oneway) drawArrows(r.pts); } }
+  // in-progress
+  if (cur) { ctx.lineWidth = 2.6; ctx.strokeStyle = (active === 'roads' && oneway) ? ONEWAY_COLOR : LAYERS[active]; ctx.globalAlpha = 0.85; strokePoly(cur, false); ctx.globalAlpha = 1; }
   if (mode === 'erase' && lastPt) { ctx.strokeStyle = '#e2503b'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(lastPt.sx, lastPt.sy, brush, 0, 7); ctx.stroke(); }
 }
-function strokePoly(r) {
-  if (r.length < 1) return;
-  ctx.beginPath();
-  r.forEach(([nx, ny], i) => { const [x, y] = toScreen(nx, ny); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
-  if (r.length === 1) { const [x, y] = toScreen(r[0][0], r[0][1]); ctx.arc(x, y, 2, 0, 7); }
-  ctx.stroke();
-}
+
+function layerList() { return active === 'roads' ? data.roads : data[active]; }
+function ptsOf(item) { return active === 'roads' ? item.pts : item; }
+function wrap(run, item) { return active === 'roads' ? { pts: run, oneway: item ? item.oneway : oneway } : run; }
 
 function updateStat() {
-  const pts = roads.reduce((s, r) => s + r.length, 0);
-  $('stat').textContent = `${roads.length} roads · ${pts} pts`;
+  const rc = data.roads.length, ow = data.roads.filter(r => r.oneway).length;
+  $('stat').innerHTML = `<b>${rc}</b> roads (${ow} 1-way) · <b>${data.coast.length}</b> coast · <b>${data.resv.length}</b> resv`;
 }
 
-// ---- pointer handling ----
+// ---- pointer ----
 let drawing = false, panning = false, panStart = null, lastPt = null;
+const keys = {};
 function evPos(e) { const r = cv.getBoundingClientRect(); return { sx: e.clientX - r.left, sy: e.clientY - r.top }; }
 
 cv.addEventListener('pointerdown', e => {
-  cv.setPointerCapture(e.pointerId);
-  const p = evPos(e); lastPt = p;
-  const spacePan = keys[' '];
-  if (mode === 'pan' || e.button === 1 || e.button === 2 || spacePan) {
-    panning = true; panStart = { ...p, offX: view.offX, offY: view.offY }; return;
-  }
+  cv.setPointerCapture(e.pointerId); const p = evPos(e); lastPt = p;
+  if (mode === 'pan' || e.button === 1 || e.button === 2 || keys[' ']) { panning = true; panStart = { ...p, offX: view.offX, offY: view.offY }; return; }
   if (mode === 'draw') {
     const g = toGame(p.sx, p.sy);
     if (freehand) { snapshot(); cur = [g]; drawing = true; }
-    else {
-      if (!cur) { snapshot(); cur = []; }
-      cur.push(g); draw();
-    }
+    else { if (!cur) { snapshot(); cur = []; } cur.push(g); draw(); }
   } else if (mode === 'erase') { snapshot(); drawing = true; eraseAt(p); }
 });
 cv.addEventListener('pointermove', e => {
   const p = evPos(e); lastPt = p;
   if (panning) { view.offX = panStart.offX + (p.sx - panStart.sx); view.offY = panStart.offY + (p.sy - panStart.sy); draw(); return; }
-  if (mode === 'draw' && freehand && drawing && cur) {
-    const g = toGame(p.sx, p.sy); const last = cur[cur.length - 1];
-    if (Math.hypot(g[0] - last[0], g[1] - last[1]) > 0.0015) { cur.push(g); draw(); }
-  } else if (mode === 'erase' && drawing) { eraseAt(p); }
-  else if (mode === 'draw' && !freehand && cur) { draw(); /* rubber band */ const g = toGame(p.sx, p.sy); ctx.strokeStyle = '#7CFC8A88'; const [x0, y0] = toScreen(...cur[cur.length - 1]); ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(p.sx, p.sy); ctx.stroke(); }
+  if (mode === 'draw' && freehand && drawing && cur) { const g = toGame(p.sx, p.sy), last = cur[cur.length - 1];
+    if (Math.hypot(g[0] - last[0], g[1] - last[1]) > 0.0015) { cur.push(g); draw(); } }
+  else if (mode === 'erase' && drawing) eraseAt(p);
+  else if (mode === 'draw' && !freehand && cur) { draw(); const [x0, y0] = toScreen(...cur[cur.length - 1]); ctx.strokeStyle = '#fff8'; ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(p.sx, p.sy); ctx.stroke(); }
   else if (mode === 'erase') draw();
 });
-function endStroke() {
-  if (mode === 'draw' && freehand && drawing && cur) { if (cur.length >= 2) roads.push(cur); cur = null; }
-  drawing = false; panning = false; draw(); updateStat();
-}
+function finishCur() { if (cur && cur.length >= 2) { layerList().push(wrap(cur, null)); } cur = null; }
+function endStroke() { if (mode === 'draw' && freehand && drawing) finishCur(); drawing = false; panning = false; draw(); updateStat(); }
 cv.addEventListener('pointerup', endStroke);
 cv.addEventListener('pointercancel', endStroke);
 cv.addEventListener('contextmenu', e => e.preventDefault());
-cv.addEventListener('dblclick', () => { if (mode === 'draw' && !freehand && cur) { if (cur.length >= 2) roads.push(cur); cur = null; draw(); updateStat(); } });
-
-// wheel zoom around cursor
+cv.addEventListener('dblclick', () => { if (mode === 'draw' && !freehand) { finishCur(); draw(); updateStat(); } });
 cv.addEventListener('wheel', e => {
-  e.preventDefault();
-  const p = evPos(e); const g = toGame(p.sx, p.sy);
-  view.zoom *= e.deltaY < 0 ? 1.12 : 1 / 1.12;
-  view.zoom = Math.max(0.1, Math.min(60, view.zoom));
-  // keep cursor anchored
-  view.offX = p.sx - g[0] * view.unit * view.zoom;
-  view.offY = p.sy - (1 - g[1]) * view.unit * view.zoom;
-  draw();
+  e.preventDefault(); const p = evPos(e), g = toGame(p.sx, p.sy);
+  view.zoom = Math.max(0.1, Math.min(80, view.zoom * (e.deltaY < 0 ? 1.12 : 1 / 1.12)));
+  view.offX = p.sx - g[0] * view.unit * view.zoom; view.offY = p.sy - (1 - g[1]) * view.unit * view.zoom; draw();
 }, { passive: false });
 
 function eraseAt(p) {
-  const rad = brush / (view.unit * view.zoom);   // erase radius in game units
-  const out = [];
-  for (const r of roads) {
+  const radG = brush / (view.unit * view.zoom), gp = toGame(p.sx, p.sy);
+  const lst = layerList(), out = [];
+  for (const item of lst) {
     let run = [];
-    for (const pt of r) {
-      if (Math.hypot(pt[0] - toGame(p.sx, p.sy)[0], pt[1] - toGame(p.sx, p.sy)[1]) <= rad) {
-        if (run.length >= 2) out.push(run); run = [];
-      } else run.push(pt);
+    for (const pt of ptsOf(item)) {
+      if (Math.hypot(pt[0] - gp[0], pt[1] - gp[1]) <= radG) { if (run.length >= 2) out.push(wrap(run, item)); run = []; }
+      else run.push(pt);
     }
-    if (run.length >= 2) out.push(run);
+    if (run.length >= 2) out.push(wrap(run, item));
   }
-  roads = out; draw(); updateStat();
+  if (active === 'roads') data.roads = out; else data[active] = out;
+  draw(); updateStat();
 }
 
-// ---- keyboard ----
-const keys = {};
 addEventListener('keydown', e => {
   keys[e.key] = true;
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); undo(); }
-  if (e.key === 'Enter' && mode === 'draw' && !freehand && cur) { if (cur.length >= 2) roads.push(cur); cur = null; draw(); updateStat(); }
+  if (e.key === 'Enter' && mode === 'draw' && !freehand) { finishCur(); draw(); updateStat(); }
   if (e.key === 'Escape') { cur = null; draw(); }
   if (e.key === 'd') setMode('draw'); if (e.key === 'e') setMode('erase'); if (e.key === 'p') setMode('pan');
 });
 addEventListener('keyup', e => { keys[e.key] = false; });
 
-// ---- UI wiring ----
+// ---- UI ----
 function setMode(m) { mode = m; cv.style.cursor = m === 'pan' ? 'grab' : (m === 'erase' ? 'cell' : 'crosshair');
   ['draw', 'erase', 'pan'].forEach(x => $('m-' + x).classList.toggle('on', x === m)); cur = null; draw(); }
-$('m-draw').onclick = () => setMode('draw');
-$('m-erase').onclick = () => setMode('erase');
-$('m-pan').onclick = () => setMode('pan');
+function setLayer(l) { finishCur(); active = l; ['roads', 'coast', 'resv'].forEach(x => $('L-' + x).classList.toggle('on', x === l)); draw(); }
+$('m-draw').onclick = () => setMode('draw'); $('m-erase').onclick = () => setMode('erase'); $('m-pan').onclick = () => setMode('pan');
+$('L-roads').onclick = () => setLayer('roads'); $('L-coast').onclick = () => setLayer('coast'); $('L-resv').onclick = () => setLayer('resv');
+$('oneway').onclick = () => { oneway = !oneway; $('oneway').classList.toggle('on', oneway); draw(); };
 $('freehand').onclick = () => { freehand = !freehand; $('freehand').classList.toggle('on', freehand); $('freehand').textContent = freehand ? 'Freehand' : 'Click pts'; cur = null; draw(); };
 $('opacity').oninput = e => { opacity = e.target.value / 100; draw(); };
 $('brush').oninput = e => { brush = +e.target.value; draw(); };
-$('coast').onclick = () => { showCoast = !showCoast; $('coast').classList.toggle('on', showCoast); draw(); };
-$('undo').onclick = undo;
-$('fit').onclick = fitView;
-$('clear').onclick = () => { if (confirm('Clear ALL traced roads?')) { snapshot(); roads = []; cur = null; draw(); updateStat(); } };
+['roads', 'coast', 'resv', 'guide'].forEach(k => $('v-' + k).onclick = () => { vis[k] = !vis[k]; $('v-' + k).classList.toggle('on', vis[k]); draw(); });
+$('undo').onclick = undo; $('fit').onclick = fitView;
+$('clear').onclick = () => { if (confirm('Clear the "' + active + '" layer?')) { snapshot(); if (active === 'roads') data.roads = []; else data[active] = []; cur = null; draw(); updateStat(); } };
 const NUDGE = 0.004, SCL = 1.01;
-$('al').onclick = () => { bg.offX -= NUDGE; draw(); };
-$('ar').onclick = () => { bg.offX += NUDGE; draw(); };
-$('au').onclick = () => { bg.offY += NUDGE; draw(); };
-$('ad').onclick = () => { bg.offY -= NUDGE; draw(); };
-$('sxp').onclick = () => { bg.scaleX *= SCL; draw(); };
-$('sxm').onclick = () => { bg.scaleX /= SCL; draw(); };
-$('syp').onclick = () => { bg.scaleY *= SCL; draw(); };
-$('sym').onclick = () => { bg.scaleY /= SCL; draw(); };
+$('al').onclick = () => { bg.offX -= NUDGE; draw(); }; $('ar').onclick = () => { bg.offX += NUDGE; draw(); };
+$('au').onclick = () => { bg.offY += NUDGE; draw(); }; $('ad').onclick = () => { bg.offY -= NUDGE; draw(); };
+$('sxp').onclick = () => { bg.scaleX *= SCL; draw(); }; $('sxm').onclick = () => { bg.scaleX /= SCL; draw(); };
+$('syp').onclick = () => { bg.scaleY *= SCL; draw(); }; $('sym').onclick = () => { bg.scaleY /= SCL; draw(); };
 $('areset').onclick = () => { bg = { offX: 0, offY: 0, scaleX: 1, scaleY: 1 }; draw(); };
 
 $('save').onclick = () => {
-  const blob = new Blob([JSON.stringify({ version: 1, bg, roads }, null, 0)], { type: 'application/json' });
-  const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
-  a.download = 'sg1966-trace.json'; a.click();
+  finishCur();
+  const blob = new Blob([JSON.stringify({ version: 2, bg, roads: data.roads, coast: data.coast, resv: data.resv })], { type: 'application/json' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'sg1966-trace.json'; a.click();
+  updateStat();
 };
 $('load').onchange = e => {
-  const f = e.target.files[0]; if (!f) return;
-  const rd = new FileReader();
-  rd.onload = () => { try { const d = JSON.parse(rd.result); roads = d.roads || []; if (d.bg) bg = d.bg; snapshot(); draw(); updateStat(); } catch (err) { alert('Bad file: ' + err.message); } };
+  const f = e.target.files[0]; if (!f) return; const rd = new FileReader();
+  rd.onload = () => { try { const d = JSON.parse(rd.result);
+      if (d.bg) bg = d.bg;
+      if (d.version >= 2) data = { roads: d.roads || [], coast: d.coast || [], resv: d.resv || [] };
+      else data = { roads: (d.roads || []).map(pts => ({ pts, oneway: false })), coast: [], resv: [] };
+      snapshot(); draw(); updateStat();
+    } catch (err) { alert('Bad file: ' + err.message); } };
   rd.readAsText(f);
 };
 
-// ---- boot ----
 fetch('/trace-data.json').then(r => r.json()).then(d => {
   DATA = d; bgImg.src = d.bg.img;
-  bgImg.onload = () => { resize(); fitView(); $('hint').innerHTML =
-    '<b>Trace roads:</b> hold & drag to draw · <b>Erase</b> mode to remove · right-drag or <b>Pan</b> to move · wheel to zoom.<br>' +
-    'Line the map up to the <span style="color:#ffd23f">yellow coastline</span> with the <b>align</b> arrows, then trace. <b>Save</b> when done.'; };
-  bgImg.onerror = () => { $('hint').textContent = 'Could not load /trace-map.jpg'; resize(); fitView(); };
+  const boot = () => { resize(); fitView(); updateStat(); $('hint').innerHTML =
+    '<b>Pick a layer</b> (Roads / Coast / Reservoir), then hold &amp; drag to trace · <b>One-way</b> tags roads with arrows · <b>Erase</b> to fix · right-drag/Pan to move · wheel to zoom.<br>' +
+    'Dashed <span style="color:#ffd23f">yellow</span> = current game coast (reference). Use <b>align</b> to line the map up first, then trace the real coast in <span style="color:#7CFC8A">green</span>. <b>Save</b> when done.'; };
+  bgImg.onload = boot; bgImg.onerror = () => { $('hint').textContent = 'Could not load /trace-map.jpg'; boot(); };
 }).catch(err => { $('hint').textContent = 'Could not load /trace-data.json — ' + err.message; });
 </script>
 </body>

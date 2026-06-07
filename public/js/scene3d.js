@@ -5,7 +5,7 @@
 // main.js expects from the old 2D view.
 import * as THREE from './vendor/three.module.js';
 import { BUILDINGS, GRID_SIZE, ROAD_TYPES } from './data.js';
-import { SG_OUTLINE, SG_ISLANDS, SG_RESERVOIRS, pointInPolygon, landMask, inReservoir, reservoirArea, inRiver, reservoirBranches, riverBranches } from './shape.js';
+import { SG_OUTLINE, SG_ISLANDS, SG_FOREIGN, SG_RESERVOIRS, pointInPolygon, landMask, inReservoir, reservoirArea, inRiver, reservoirBranches, riverBranches } from './shape.js';
 
 const N = GRID_SIZE;
 const WORLD = N * 10;         // world units across the bounding box (TILE stays ~10)
@@ -194,6 +194,8 @@ export class Scene3D {
     // Main island, then the smaller outlying islands (decorative).
     this._landmass(SG_OUTLINE, { depth: 8, bevel: 1.5, beachScale: 1.05, main: true });
     for (const poly of SG_ISLANDS) this._landmass(poly, { depth: 5, bevel: 1.0, beachScale: 1.08, palms: true });
+    // Johor / Malaysia across the strait — grey, decorative, untouchable.
+    for (const poly of (SG_FOREIGN || [])) if (poly.length >= 3) this._landmass(poly, { depth: 5, bevel: 0.8, beachScale: 1.03, foreign: true });
 
     // Invisible pick plane at ground level for raycasting taps.
     this.pickPlane = new THREE.Mesh(
@@ -206,7 +208,8 @@ export class Scene3D {
   }
 
   // Build one landmass (grass + sandy beach skirt) from a normalised polygon.
-  _landmass(poly, { depth = 8, bevel = 1.5, beachScale = 1.05, main = false, palms = false } = {}) {
+  // `foreign` renders it as flat grey "another country" land (no beach/palms).
+  _landmass(poly, { depth = 8, bevel = 1.5, beachScale = 1.05, main = false, palms = false, foreign = false } = {}) {
     const toShape = () => {
       const s = new THREE.Shape();
       poly.forEach(([nx, ny], i) => {
@@ -219,7 +222,7 @@ export class Scene3D {
     geo.rotateX(-Math.PI / 2);
     geo.computeBoundingBox();
     geo.translate(0, -geo.boundingBox.max.y, 0); // align the (beveled) top surface to y = 0
-    const land = new THREE.Mesh(geo, new THREE.MeshToonMaterial({ color: 0x77c25a, gradientMap: toonGradient() }));
+    const land = new THREE.Mesh(geo, new THREE.MeshToonMaterial({ color: foreign ? 0x9ba29a : 0x77c25a, gradientMap: toonGradient() }));
     land.receiveShadow = true; this.scene.add(land);
     if (main) this.island = land;
 
@@ -234,12 +237,12 @@ export class Scene3D {
     // drop the skirt well below the grass so the interior overlap never
     // z-fights into view; only its 5% outer rim shows as the coastal beach.
     beachGeo.translate(0, -beachGeo.boundingBox.max.y - 0.9, 0);
-    const beach = new THREE.Mesh(beachGeo, new THREE.MeshToonMaterial({ color: 0xe6d6a6, gradientMap: toonGradient() }));
+    const beach = new THREE.Mesh(beachGeo, new THREE.MeshToonMaterial({ color: foreign ? 0x8a8f88 : 0xe6d6a6, gradientMap: toonGradient() }));
     beach.scale.set(beachScale, 1, beachScale);
     beach.position.set((1 - beachScale) * cx, 0, (1 - beachScale) * cz); // keep the scale centred on the island
     beach.receiveShadow = true; this.scene.add(beach);
 
-    if (palms) {
+    if (palms && !foreign) {
       const gmat = new THREE.MeshToonMaterial({ color: 0x3fae57, gradientMap: toonGradient() });
       const tmat = new THREE.MeshToonMaterial({ color: 0x8a6b43, gradientMap: toonGradient() });
       for (const [dx, dz] of [[-5, -2], [4, 2], [0, 4]]) {

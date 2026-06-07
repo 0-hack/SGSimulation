@@ -388,6 +388,13 @@ function nearBranches(x, y, branches, margin) {
 // sprawling a third of the way across, matching the reference survey map.
 export const SG_RESERVOIRS = RESERVOIRS_1966; // retraced from the 1966 survey map (aligned with the roads)
 
+// Foreign land (Johor, Malaysia) across the strait — DECORATIVE ONLY. Rendered
+// as flat grey landmasses so players can see it is another country. It is never
+// part of the play grid (it lies outside SG_OUTLINE), so it stays untouchable /
+// unbuildable. Normalised coords; an array of polygons. Hand-traced via
+// public/trace.html and applied by scripts/apply_trace.mjs.
+export const SG_FOREIGN = [];
+
 // The Central Catchment reservoirs (MacRitchie / Upper & Lower Peirce / Seletar)
 // — slim, dendritic water bodies north of the island centre. Each is a set of
 // branches (polylines of {x, y (cells), w (half-width cells)}) that fork like

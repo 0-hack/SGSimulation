@@ -43,7 +43,7 @@
   <div class="grp">
     <button id="oneway" title="Tag roads as ONE-WAY (drawn in the direction of travel)">➔ One-way</button>
     <button id="freehand" class="on" title="Freehand: hold &amp; drag. Click: tap each point/corner; Esc, double-click or click the first dot to finish.">Freehand</button>
-    <span><small>brush</small> <input id="brush" type="range" min="4" max="40" value="14"></span>
+    <span><small>brush</small> <input id="brush" type="range" min="4" max="60" value="16"></span>
   </div>
   <div class="grp" id="bldgrp" title="Buildings/Houses. Freehand: drag a box. Click mode: tap the corners (4 dots) then close. Click a placed one to move / resize (corner) / rotate (green dot).">
     <small>place</small>
@@ -102,7 +102,7 @@ const blank = () => ({ roads: [], mainland: [], reservoirs: [], railway: [], san
 let data = blank();
 let active = 'roads', oneway = false, freehand = true, mode = 'draw';
 let vis = {}; KEYS.forEach(k => vis[k] = true); vis.guide = true;
-let opacity = 0.55, brush = 14, bType = 'terminal', bRot = 0, bHgt = 1.0;
+let opacity = 0.55, brush = 16, bType = 'terminal', bRot = 0, bHgt = 1.0;
 let view = { zoom: 1, offX: 0, offY: 0, unit: 1000 };
 let bg = { offX: 0, offY: 0, scaleX: 1, scaleY: 1 };
 let cur = null, curItem = null, resumable = null, history = [], rectStart = null, rectNow = null;
@@ -309,14 +309,37 @@ cv.addEventListener('dblclick', () => { if (mode === 'draw' && !freehand) { fini
 cv.addEventListener('wheel', e => { e.preventDefault(); const p = evPos(e), g = toGame(p.sx, p.sy);
   view.zoom = Math.max(0.1, Math.min(140, view.zoom * (e.deltaY < 0 ? 1.12 : 1 / 1.12)));
   view.offX = p.sx - g[0] * view.unit * view.zoom; view.offY = p.sy - (1 - g[1]) * view.unit * view.zoom; draw(); }, { passive: false });
+// distance from point c to segment a-b
+function ptSegDist(c, a, b) { const dx = b[0] - a[0], dy = b[1] - a[1], l2 = dx * dx + dy * dy || 1e-9; let t = ((c[0] - a[0]) * dx + (c[1] - a[1]) * dy) / l2; t = Math.max(0, Math.min(1, t)); return Math.hypot(c[0] - (a[0] + t * dx), c[1] - (a[1] + t * dy)); }
+// distance from point gp to a rotated rect b (0 if inside)
+function rectDist(b, gp) { const r = (b.rot || 0) * PI / 180, c = Math.cos(-r), s = Math.sin(-r), ox = gp[0] - b.cx, oy = gp[1] - b.cy; const lx = Math.max(Math.abs(ox * c - oy * s) - b.w / 2, 0), ly = Math.max(Math.abs(ox * s + oy * c) - b.h / 2, 0); return Math.hypot(lx, ly); }
+// cut the portions of a polyline that fall within the brush circle (segment-aware)
+function eraseFromLine(pts, c, r) {
+  const inside = (x, y) => (x - c[0]) ** 2 + (y - c[1]) ** 2 <= r * r;
+  const res = []; let run = []; const flush = () => { if (run.length >= 2) res.push(run); run = []; };
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i];
+    if (!inside(a[0], a[1])) run.push(a); else flush();
+    if (i < pts.length - 1) { const b = pts[i + 1], L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      if (L > r * 0.6 && ptSegDist(c, a, b) <= r) { const n = Math.ceil(L / (r * 0.6)); // subdivide a segment passing through the brush
+        for (let k = 1; k < n; k++) { const t = k / n, x = a[0] + (b[0] - a[0]) * t, y = a[1] + (b[1] - a[1]) * t; if (!inside(x, y)) run.push([x, y]); else flush(); } } }
+  }
+  flush(); return res;
+}
+// Erase anything within the brush radius, across every VISIBLE layer (hide a
+// layer to protect it). Lines are split where they cross the brush; buildings/
+// houses are removed when the brush touches their footprint.
 function eraseAt(p) {
-  const gp = toGame(p.sx, p.sy);
-  if (RECT(active)) { data[active] = data[active].filter(b => !inBldg(b, gp)); sel = null; draw(); updateStat(); return; }
-  const radG = brush / (view.unit * view.zoom), out = [];
-  for (const item of data[active]) { const pts = lineOf(item); let run = [];
-    for (const pt of pts) { if (Math.hypot(pt[0] - gp[0], pt[1] - gp[1]) <= radG) { if (run.length >= 2) out.push(active === 'roads' ? { pts: run, oneway: item.oneway } : run); run = []; } else run.push(pt); }
-    if (run.length >= 2) out.push(active === 'roads' ? { pts: run, oneway: item.oneway } : run); }
-  data[active] = out; resumable = null; draw(); updateStat();
+  const gp = toGame(p.sx, p.sy), radG = brush / (view.unit * view.zoom);
+  for (const k of KEYS) {
+    if (!vis[k]) continue;
+    if (RECT(k)) { data[k] = data[k].filter(b => rectDist(b, gp) > radG); continue; }
+    const out = [];
+    for (const item of data[k]) { const pts = k === 'roads' ? item.pts : item;
+      for (const seg of eraseFromLine(pts, gp, radG)) out.push(k === 'roads' ? { pts: seg, oneway: item.oneway } : seg); }
+    data[k] = out;
+  }
+  sel = null; resumable = null; draw(); updateStat();
 }
 addEventListener('keydown', e => { keys[e.key] = true; const tag = (e.target.tagName || '');
   if (tag === 'INPUT' || tag === 'SELECT') return;
@@ -366,7 +389,7 @@ fetch('/trace-data.json').then(r => r.json()).then(d => {
   const boot = () => { resize(); fitView(); updateStat(); if (restored) toast('Restored your last session');
     $('hint').innerHTML =
     '<b>Tools:</b> <b>D</b>raw · <b>E</b>rase · <b>P</b>an (or hold Space). <b>iPad:</b> draw with the Pencil; one finger pans, two fingers pinch-zoom. Tap <b>ⓘ</b> (or click this box) to hide.<br>' +
-    '<b>Pause anytime</b> with <b>Esc</b> — your trace is kept &amp; autosaved; click near a line\'s end to continue. <b>Coast</b> traces the mainland AND islands (biggest loop = mainland). <b>Buildings/Houses:</b> drag a box, or in Click mode tap the 4 corners then close.<br>' +
+    '<b>Pause anytime</b> with <b>Esc</b> — your trace is kept &amp; autosaved; click near a line\'s end to continue. <b>Erase</b> clears anything inside the brush across all <b>visible</b> layers (hide a layer to protect it; the <b>brush</b> slider sets the size). <b>Coast</b> traces mainland AND islands. <b>Buildings/Houses:</b> drag a box, or in Click mode tap the 4 corners then close.<br>' +
     '<b>Save</b> = keep state in this browser · <b>Export</b> = download JSON. Dashed <span style="color:#ffd23f">yellow</span> = current game coast (trace the real one in <span style="color:#7CFC8A">green</span>).'; };
   bgImg.onload = boot; bgImg.onerror = () => { $('hint').textContent = 'Could not load /trace-map.jpg'; boot(); };
 }).catch(err => { $('hint').textContent = 'Could not load /trace-data.json — ' + err.message; });

@@ -9,6 +9,7 @@
 //   islands    [[...]]        -> public/js/shape.js        SG_ISLANDS
 //   foreign    [[...]]        -> public/js/shape.js        SG_FOREIGN  (grey Malaysia)
 //   airport    [[...]]        -> public/js/scene3d.js      AIRPORT south/north (runway)
+//   buildings  [{type,cx,cy,w,h,rot,hgt}] -> scene3d.js    AIRPORT.buildings (hand-placed)
 import { readFileSync, writeFileSync } from 'node:fs';
 
 const WORLD = 1600, STEP = 9, MERGE = 7;
@@ -23,6 +24,7 @@ const islandsIn = (t.islands || []).filter(p => p.length >= 3);
 const reservoirsIn = (t.reservoirs || t.resv || []).filter(p => p.length >= 3);
 const foreignIn = (t.foreign || []).filter(p => p.length >= 3);
 const airportIn = (t.airport || []).map(a => a.pts || a).filter(p => p.length >= 2);
+const buildingsIn = (t.buildings || []).filter(b => b && b.type && b.w > 0 && b.h > 0);
 
 const cur = await import('../public/js/roads1966.js');
 const shapeURL = new URL('../public/js/shape.js', import.meta.url);
@@ -30,7 +32,9 @@ const sceneURL = new URL('../public/js/scene3d.js', import.meta.url);
 const roadsURL = new URL('../public/js/roads1966.js', import.meta.url);
 
 const r1 = v => Math.round(v * 10) / 10;        // world coords: 0.1 precision
+const r2 = v => Math.round(v * 100) / 100;
 const r3 = v => Math.round(v * 1000) / 1000;    // normalised: 0.001 precision
+const r4 = v => Math.round(v * 10000) / 10000;  // small footprints
 const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
 const toWorld = ([nx, ny]) => [(nx - 0.5) * WORLD, (0.5 - ny) * WORLD];
 function decimateN(pts, minD) {
@@ -122,17 +126,26 @@ if (mainlandIn.length || islandsIn.length || foreignIn.length) {
   writeFileSync(shapeURL, s);
 }
 
-// ---------------- scene3d.js: airport runway endpoints ----------------
-if (airportIn.length) {
-  const run = airportIn.sort((a, b) => b.length - a.length)[0];
-  const A = run[0], B = run[run.length - 1];
-  const south = A[1] <= B[1] ? A : B, north = A[1] <= B[1] ? B : A;   // smaller ny = south
+// ---------------- scene3d.js: airport runway + hand-placed buildings ----------------
+if (airportIn.length || buildingsIn.length) {
   let sc = readFileSync(sceneURL, 'utf8');
-  const re = /south: \{ x: [-\d.]+, y: [-\d.]+ \}, north: \{ x: [-\d.]+, y: [-\d.]+ \},/;
-  if (!re.test(sc)) throw new Error('could not find AIRPORT south/north in scene3d.js');
-  sc = sc.replace(re, `south: { x: ${r3(south[0])}, y: ${r3(south[1])} }, north: { x: ${r3(north[0])}, y: ${r3(north[1])} },`);
+  if (airportIn.length) {
+    const run = airportIn.sort((a, b) => b.length - a.length)[0];
+    const A = run[0], B = run[run.length - 1];
+    const south = A[1] <= B[1] ? A : B, north = A[1] <= B[1] ? B : A;   // smaller ny = south
+    const re = /south: \{ x: [-\d.]+, y: [-\d.]+ \}, north: \{ x: [-\d.]+, y: [-\d.]+ \},/;
+    if (!re.test(sc)) throw new Error('could not find AIRPORT south/north in scene3d.js');
+    sc = sc.replace(re, `south: { x: ${r3(south[0])}, y: ${r3(south[1])} }, north: { x: ${r3(north[0])}, y: ${r3(north[1])} },`);
+    did.push(`airport -> runway south(${r3(south[0])},${r3(south[1])}) north(${r3(north[0])},${r3(north[1])})`);
+  }
+  if (buildingsIn.length) {
+    const bstr = buildingsIn.map(b => `{ type: '${b.type}', cx: ${r3(b.cx)}, cy: ${r3(b.cy)}, w: ${r4(b.w)}, h: ${r4(b.h)}, rot: ${r3((b.rot || 0) * Math.PI / 180)}, hgt: ${r2(b.hgt || 1)} }`).join(', ');
+    const re = /buildings: \[[\s\S]*?\],/;
+    if (!re.test(sc)) throw new Error('could not find AIRPORT buildings in scene3d.js');
+    sc = sc.replace(re, () => `buildings: [${bstr}],`);
+    did.push(`airport buildings -> ${buildingsIn.length} placed`);
+  }
   writeFileSync(sceneURL, sc);
-  did.push(`airport -> runway south(${r3(south[0])},${r3(south[1])}) north(${r3(north[0])},${r3(north[1])})`);
 }
 
 if (!did.length) console.log('nothing to apply (no recognised layers in the trace file).');

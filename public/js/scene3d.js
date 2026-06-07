@@ -84,6 +84,10 @@ const AIRPORT = {
   termScale: 0.6,      // terminal/hangar shrunk toward normal building scale
   planeScale: 0.46,    // airliners ~one building-length (a touch smaller than the terminals)
   scale: 0.62,         // master shrink: the 1955/66 field was tiny next to the island, so the whole complex is scaled down
+  // Hand-placed buildings (from the tracer) override the procedural cluster.
+  // Each: { type, cx, cy, w, h, rot, hgt } — centre in normalised island coords,
+  // w/h normalised footprint, rot radians, hgt height multiplier.
+  buildings: [],
 };
 
 export class Scene3D {
@@ -624,6 +628,10 @@ export class Scene3D {
       const t = AIRPORT.apronLinks > 1 ? i / (AIRPORT.apronLinks - 1) : 0.5;
       slab(lkW, AIRPORT.linkW, 0x3a3d43, lkMid, apCz - apHL * 0.78 + t * apHL * 1.56, 0.13);
     }
+    // The terminal/hangar cluster is procedural ONLY when no buildings were
+    // hand-placed in the tracer; otherwise the player's layout replaces it.
+    const handPlaced = AIRPORT.buildings && AIRPORT.buildings.length;
+    if (!handPlaced) {
     // --- finger pier reaching into the apron; aircraft dock nose-in along it ---
     const sc = AIRPORT.termScale, faceApron = -Math.PI / 2; // model +Z -> parent -X (apron/runway side)
     const pier = makePier(); pier.scale.setScalar(sc);
@@ -677,6 +685,9 @@ export class Scene3D {
     slab(11, 12, 0xb9b4a6, 14, apCz + 20, 0.12);
     const plHall = makeAirliner(); plHall.scale.setScalar(AIRPORT.planeScale);
     plHall.position.set(14, 0, apCz + 20); plHall.rotation.y = -Math.PI / 2; g.add(plHall);
+    } // end procedural cluster
+
+    if (handPlaced) this._placeAirportBuildings(AIRPORT.buildings);
 
     // --- footprint mask (unbuildable) ---
     this.airportMask = Array.from({ length: N }, () => Array(N).fill(false));
@@ -689,8 +700,56 @@ export class Scene3D {
       const lx = (ox * cosr - oz * sinr) / SC, lz = (ox * sinr + oz * cosr) / SC;
       const onRunway = Math.abs(lx) < halfW + 2 && Math.abs(lz) < halfL;
       const onTaxi = Math.abs(lx - txOff) < txHW + 2 && Math.abs(lz) < halfL;
-      const onComplex = lx > 1 && lx < AIRPORT.termOff + 38 && lz > apCz - 62 && lz < apCz + 42;
+      const onComplex = !handPlaced && lx > 1 && lx < AIRPORT.termOff + 38 && lz > apCz - 62 && lz < apCz + 42;
       if (onRunway || onTaxi || onComplex) this.airportMask[y][x] = true;
+    }
+    if (handPlaced) this._maskAirportBuildings(AIRPORT.buildings);
+  }
+
+  // Build the player's hand-placed airport buildings (from the tracer) in world
+  // space. Each: { type, cx, cy, w, h, rot, hgt }. Sizes are normalised; we map
+  // them to world units and fit/parametrise each model to the drawn footprint.
+  _placeAirportBuildings(list) {
+    if (this.airportBuildings) this.scene.remove(this.airportBuildings);
+    const grp = new THREE.Group(); this.scene.add(grp); this.airportBuildings = grp;
+    const fit = (m, bw, bd, nomW, nomD, ht) => { m.scale.set(bw / nomW, ht, bd / nomD); return m; };
+    for (const b of list) {
+      const x = (b.cx - 0.5) * WORLD, z = (0.5 - b.cy) * WORLD;
+      const bw = Math.max(3, (b.w || 0.01) * WORLD), bd = Math.max(3, (b.h || 0.01) * WORLD), ht = b.hgt || 1;
+      let m;
+      switch (b.type) {
+        case 'terminal': m = fit(makeTerminal(), bw, bd, 38, 14, ht); break;
+        case 'hangar':   m = fit(makeHangar(), bw, bd, 18, 13, ht); break;
+        case 'pier':     m = fit(makePier(), bw, bd, 30, 6.5, ht); break;
+        case 'plane':    m = fit(makeAirliner(), bw, bd, 22, 16, ht); break;
+        case 'hall':     m = makeLowHall(bw, 5 * ht, bd); break;
+        case 'block':    m = makeAirBlock(bw, 6 * ht, bd); break;
+        case 'shed':     m = makeSawtoothShed(bw, 5.5 * ht, bd, Math.max(2, Math.round(bw / 6))); break;
+        case 'carpark': {
+          m = new THREE.Group();
+          const slab = new THREE.Mesh(new THREE.BoxGeometry(bw, 0.24, bd), toon(0x6d6f74));
+          slab.position.y = 0.12; slab.receiveShadow = true; m.add(slab);
+          addCars(m, 0, 0, bw - 3, bd - 3);
+          break;
+        }
+        default:         m = makeAirBlock(bw, 6 * ht, bd);
+      }
+      m.position.set(x, 0, z); m.rotation.y = b.rot || 0; grp.add(m);
+    }
+  }
+
+  // Mark cells under hand-placed buildings as unbuildable.
+  _maskAirportBuildings(list) {
+    for (const b of list) {
+      const cx = (b.cx - 0.5) * WORLD, cz = (0.5 - b.cy) * WORLD;
+      const hw = Math.max(3, (b.w || 0.01) * WORLD) / 2, hd = Math.max(3, (b.h || 0.01) * WORLD) / 2;
+      const c = Math.cos(-(b.rot || 0)), s = Math.sin(-(b.rot || 0));
+      for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+        if (!this.land[y][x] || this.airportMask[y][x]) continue;
+        const w = cellToWorld(x, y), ox = w.x - cx, oz = w.z - cz;
+        const lx = ox * c - oz * s, lz = ox * s + oz * c;
+        if (Math.abs(lx) <= hw && Math.abs(lz) <= hd) this.airportMask[y][x] = true;
+      }
     }
   }
 

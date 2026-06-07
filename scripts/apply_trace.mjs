@@ -93,7 +93,7 @@ if (roadsIn.length) {
 
 // ---------------- reservoirs ----------------
 let reservoirs = cur.RESERVOIRS_1966;
-if (reservoirsIn.length) { reservoirs = reservoirsIn.map(p => decimateN(p, 0.004)); did.push(`reservoirs -> ${reservoirs.length} traced`); }
+if (reservoirsIn.length) { reservoirs = reservoirsIn.map(p => decimateN(p, 0.0015)); did.push(`reservoirs -> ${reservoirs.length} traced`); }
 
 // ---------------- write roads1966.js (only if roads or reservoirs changed) ----------------
 if (roadsIn.length || reservoirsIn.length) {
@@ -121,13 +121,13 @@ if (mainlandIn.length || islandsIn.length || foreignIn.length) {
   if (mainlandIn.length) {
     // the Coast layer carries every landmass: longest loop = mainland, the rest
     // = surrounding islands (only overwrite islands when the player drew some).
-    const loops = mainlandIn.map(p => decimateN(p, 0.004)).sort((a, b) => b.length - a.length);
+    const loops = mainlandIn.map(p => decimateN(p, 0.0015)).sort((a, b) => b.length - a.length);
     s = replExport(s, 'SG_OUTLINE', '[' + loops[0].map(([x, y]) => `[${x}, ${y}]`).join(', ') + ']');
     did.push(`coast -> SG_OUTLINE (${loops[0].length} pts)`);
-    const isles = loops.slice(1).concat(islandsIn.map(p => decimateN(p, 0.004)));
+    const isles = loops.slice(1).concat(islandsIn.map(p => decimateN(p, 0.0015)));
     if (isles.length) { s = replExport(s, 'SG_ISLANDS', arr(isles)); did.push(`coast -> SG_ISLANDS (${isles.length})`); }
   } else if (islandsIn.length) {
-    s = replExport(s, 'SG_ISLANDS', arr(islandsIn.map(p => decimateN(p, 0.004))));
+    s = replExport(s, 'SG_ISLANDS', arr(islandsIn.map(p => decimateN(p, 0.0015))));
     did.push(`islands -> SG_ISLANDS (${islandsIn.length})`);
   }
   if (foreignIn.length) {

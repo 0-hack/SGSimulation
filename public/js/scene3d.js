@@ -1491,9 +1491,11 @@ export class Scene3D {
   setRoadMode(on) { this.roadMode = on; if (!on) this.clearRoadPreview(); }
 
   // Sample an edge's centre-line into world points (with bridge elevation).
+  // ground height a road sits on: follow the terrain so it doesn't sink into hills
+  _roadY(x, z) { return this._terrainHN(x / WORLD + 0.5, 0.5 - z / WORLD) + 0.16; }
   _sampleEdge(roads, e) {
     // a traced road carries its own smoothed polyline (curves through the map)
-    if (e.poly && e.poly.length >= 2) return e.poly.map((p) => ({ x: p.x, y: 0.16, z: p.z }));
+    if (e.poly && e.poly.length >= 2) return e.poly.map((p) => ({ x: p.x, y: this._roadY(p.x, p.z), z: p.z }));
     const a = roads.nodes[e.a], b = roads.nodes[e.b];
     if (!a || !b) return [];
     const pts = [];
@@ -1506,8 +1508,8 @@ export class Scene3D {
         x = it * it * a.x + 2 * it * t * e.ctrl.x + t * t * b.x;
         z = it * it * a.z + 2 * it * t * e.ctrl.z + t * t * b.z;
       } else { x = a.x + (b.x - a.x) * t; z = a.z + (b.z - a.z) * t; }
-      let y = 0.16;
-      if (e.elevated) { const ramp = Math.min(1, Math.min(t, 1 - t) / 0.22); y = 0.16 + ramp * 4.2; }
+      let y = this._roadY(x, z);
+      if (e.elevated) { const ramp = Math.min(1, Math.min(t, 1 - t) / 0.22); y += ramp * 4.2; }
       pts.push({ x, y, z });
     }
     return pts;
@@ -1570,10 +1572,8 @@ export class Scene3D {
         // graph of short segments, so we draw just a thin asphalt ribbon with a
         // pale shoulder — no per-joint stop lines or centre dashes (which would
         // clutter every tiny segment). The shared nodes keep it interconnected.
-        const hw = e.roadClass === 1 ? 1.5 : e.roadClass === 2 ? 1.05 : 0.7; // width by survey class
-        ribbon(pave, pts, hw + 0.4, 0.0);
-        ribbon(road, pts, hw, 0.03);
-        if (e.roadClass === 1) markLine(pts, 0, true, 0.05);   // dashed centre line on first-class roads
+        const hw = e.roadClass === 1 ? 0.62 : e.roadClass === 2 ? 0.42 : 0.3; // width by survey class (~36 m/unit)
+        ribbon(road, pts, hw, 0.04);     // dark asphalt only — no pale shoulder (avoids notch speckle)
         return;
       }
       const hw = T.width / 2, L = e.lanes || T.lanes, lw = T.width / L;

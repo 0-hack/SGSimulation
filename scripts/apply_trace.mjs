@@ -51,6 +51,21 @@ export function graphToTrace(nodes, edges) {
   return { roads: roads.filter(c => c.pts.length >= 2).map(c => ({ pts: c.pts.map(j => toNorm(nodes[j]).map(r4)), oneway: c.ow })) };
 }
 
+// ---- 3D-designed landmarks (public/design.html) ----
+export async function getLandmarks() {
+  const m = await import('../public/js/custom1966.js?u=' + Date.now());
+  return m.CUSTOM_LANDMARKS || [];
+}
+export async function setLandmarks(list) {
+  const customURL = new URL('../public/js/custom1966.js', import.meta.url);
+  let cs = readFileSync(customURL, 'utf8');
+  const re = /export const CUSTOM_LANDMARKS = \[[\s\S]*?\];/;
+  if (!re.test(cs)) throw new Error('CUSTOM_LANDMARKS not found in custom1966.js');
+  cs = cs.replace(re, () => 'export const CUSTOM_LANDMARKS = ' + JSON.stringify(list) + ';');
+  writeFileSync(customURL, cs);
+  return list.length;
+}
+
 // Apply a trace object to the game source files. Returns a list of what changed.
 // opts.mergeRoads: ADD the traced roads to the existing network (snapping to it)
 // instead of replacing — used for non-destructive live corrections.

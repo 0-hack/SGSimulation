@@ -10,3 +10,8 @@
 export const CUSTOM_HOUSES = [];
 export const CUSTOM_RAILWAYS = [];
 export const CUSTOM_SANDS = [];
+
+// CUSTOM_LANDMARKS — buildings/landmarks designed in 3D in public/design.html and
+// placed on the island. Each: { name, cx, cy, rot, scale, parts:[ {type, x,y,z,
+// w,h,d, rot, color} ] }. type = box | cyl | pyramid | dome. cx,cy normalised.
+export const CUSTOM_LANDMARKS = [];

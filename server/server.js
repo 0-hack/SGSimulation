@@ -125,6 +125,21 @@ if (process.env.TRACE_EDIT !== '0') {
       res.json({ ok: true, did });
     } catch (e) { res.status(400).json({ ok: false, error: e.message }); }
   });
+  // ---- 3D-designed landmarks (public/design.html) ----
+  app.get('/api/design/list', async (_req, res) => {
+    try { const { getLandmarks } = await import('../scripts/apply_trace.mjs'); res.json({ landmarks: await getLandmarks() }); }
+    catch (e) { res.status(500).json({ error: e.message }); }
+  });
+  app.post('/api/design/add', async (req, res) => {
+    try { const { getLandmarks, setLandmarks } = await import('../scripts/apply_trace.mjs');
+      const list = await getLandmarks(); list.push(req.body || {}); const count = await setLandmarks(list);
+      res.json({ ok: true, count }); } catch (e) { res.status(400).json({ ok: false, error: e.message }); }
+  });
+  app.post('/api/design/set', async (req, res) => {  // replace the whole list (edit / remove)
+    try { const { setLandmarks } = await import('../scripts/apply_trace.mjs');
+      const count = await setLandmarks((req.body && req.body.landmarks) || []); res.json({ ok: true, count }); }
+    catch (e) { res.status(400).json({ ok: false, error: e.message }); }
+  });
 }
 
 // ---- static client ---------------------------------------------------------

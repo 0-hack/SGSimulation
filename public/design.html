@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+<title>SG — 3D Building / Landmark Designer</title>
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; overflow: hidden; font: 13px/1.45 system-ui, sans-serif; background: #0e1118; color: #e7ebf2; }
+  #wrap { display: flex; height: 100%; }
+  #side { width: 290px; flex: none; background: #1b2230; border-right: 1px solid #000; overflow-y: auto; padding: 10px; }
+  #view { flex: 1; position: relative; }
+  canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+  h2 { font-size: 14px; margin: 2px 0 8px; }
+  h3 { font-size: 12px; opacity: .7; margin: 14px 0 6px; text-transform: uppercase; letter-spacing: .04em; }
+  button, .btn { background: #2a3243; color: #e7ebf2; border: 1px solid #3a4356; border-radius: 6px; padding: 7px 9px; cursor: pointer; font-size: 12.5px; }
+  button:hover { background: #344056; }
+  button.prim { background: #1f5a35; border-color: #2ecc71; color: #fff; }
+  button.warn { background: #5a2a2a; border-color: #7a3a3a; }
+  .row { display: flex; gap: 5px; flex-wrap: wrap; align-items: center; margin: 5px 0; }
+  .row label { width: 16px; opacity: .7; }
+  input[type=number] { width: 58px; background: #11151d; color: #e7ebf2; border: 1px solid #3a4356; border-radius: 5px; padding: 4px; }
+  input[type=text] { width: 100%; background: #11151d; color: #e7ebf2; border: 1px solid #3a4356; border-radius: 5px; padding: 6px; }
+  input[type=color] { width: 38px; height: 26px; padding: 0; border: 1px solid #3a4356; border-radius: 5px; background: none; }
+  #parts { border: 1px solid #2a3243; border-radius: 6px; max-height: 160px; overflow-y: auto; }
+  .pitem { display: flex; justify-content: space-between; align-items: center; padding: 5px 8px; cursor: pointer; border-bottom: 1px solid #232b3a; }
+  .pitem.sel { background: #2b3a52; }
+  .pitem .sw { width: 12px; height: 12px; border-radius: 2px; border: 1px solid #0006; display: inline-block; margin-right: 6px; vertical-align: -1px; }
+  .pitem .x { color: #e2503b; font-weight: 700; }
+  small { opacity: .65; } a { color: #7fd1ff; }
+  #toast { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); background: #2ecc71; color: #052915; padding: 8px 14px; border-radius: 8px; font-weight: 700; opacity: 0; transition: opacity .4s; pointer-events: none; }
+  #hud { position: absolute; top: 8px; left: 8px; background: #000a; padding: 5px 9px; border-radius: 7px; font-size: 12px; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="side">
+    <h2>🏗 Building / Landmark Designer</h2>
+    <input id="name" type="text" placeholder="Name (e.g. City Hall)" value="New Landmark">
+
+    <h3>Add part</h3>
+    <div class="row">
+      <button data-add="box">▢ Box</button>
+      <button data-add="cyl">⬭ Cylinder</button>
+      <button data-add="pyramid">▲ Roof</button>
+      <button data-add="dome">◗ Dome</button>
+    </div>
+
+    <h3>Parts</h3>
+    <div id="parts"></div>
+
+    <div id="props" style="display:none">
+      <h3>Selected part</h3>
+      <div class="row"><label>pos</label> x<input id="px" type="number" step="0.5"> y<input id="py" type="number" step="0.5"> z<input id="pz" type="number" step="0.5"></div>
+      <div class="row"><label>size</label> w<input id="pw" type="number" step="0.5"> h<input id="ph" type="number" step="0.5"> d<input id="pd" type="number" step="0.5"></div>
+      <div class="row"><label>rot</label> <input id="pr" type="number" step="5"> ° <input id="pc" type="color"> <button id="pdup">Duplicate</button> <button id="pdel" class="warn">Delete</button></div>
+    </div>
+
+    <h3>Place on island</h3>
+    <div class="row"><label>x</label><input id="cx" type="number" step="0.005" value="0.42"> <label>y</label><input id="cy" type="number" step="0.005" value="0.49"></div>
+    <div class="row"><label>rot</label><input id="lrot" type="number" step="5" value="0">° <label>×</label><input id="lscale" type="number" step="0.1" value="1"></div>
+    <small>x/y are normalised island coords (0–1). Trace.html shows them; downtown ≈ 0.42, 0.49.</small>
+
+    <h3>Save</h3>
+    <div class="row">
+      <button id="send" class="prim">🎮 Add to game</button>
+      <button id="export">⬇ JSON</button>
+      <label class="btn">📂 Load<input id="load" type="file" accept="application/json" hidden></label>
+    </div>
+    <div class="row"><button id="newd">＋ New design</button> <button id="manage">📋 Placed…</button></div>
+    <small>Added landmarks reflect in the game on reload (new game). <a href="/trace.html">← Tracer</a></small>
+  </div>
+  <div id="view">
+    <canvas id="c"></canvas>
+    <div id="hud">drag: orbit · wheel: zoom · right-drag: pan · click a part to select</div>
+    <div id="toast"></div>
+  </div>
+</div>
+
+<script type="module">
+import * as THREE from './js/vendor/three.module.js';
+addEventListener('error', e => { const h = document.getElementById('hud'); if (h) h.textContent = 'ERR: ' + (e.message || e.error?.message); });
+addEventListener('unhandledrejection', e => { const h = document.getElementById('hud'); if (h) h.textContent = 'REJ: ' + (e.reason?.message || e.reason); });
+const $ = id => document.getElementById(id);
+const cv = $('c');
+
+// ---- scene ----
+const renderer = new THREE.WebGLRenderer({ canvas: cv, antialias: true });
+renderer.shadowMap.enabled = true;
+const scene = new THREE.Scene(); scene.background = new THREE.Color(0x0e1118);
+const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 2000);
+const cam = { r: 60, th: 0.7, ph: 0.9, tx: 0, ty: 4, tz: 0 };
+const sun = new THREE.DirectionalLight(0xfff4e0, 1.4); sun.position.set(30, 50, 20); sun.castShadow = true;
+sun.shadow.mapSize.set(1024, 1024); Object.assign(sun.shadow.camera, { left: -60, right: 60, top: 60, bottom: -60, near: 1, far: 200 });
+scene.add(sun); scene.add(new THREE.AmbientLight(0x9fb4d0, 0.7));
+const grid = new THREE.GridHelper(120, 24, 0x3a4356, 0x222a38); grid.material.opacity = 0.5; grid.material.transparent = true; scene.add(grid);
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(120, 120), new THREE.MeshStandardMaterial({ color: 0x223344, roughness: 1 }));
+ground.rotation.x = -Math.PI / 2; ground.position.y = -0.01; ground.receiveShadow = true; scene.add(ground);
+
+// ---- model ----
+let parts = [];           // {type,x,y,z,w,h,d,rot,color}
+let sel = -1;
+const group = new THREE.Group(); scene.add(group);
+const COLORS = ['#cfc9b8', '#d7b07a', '#9aa0a6', '#b5c7d6', '#c98f5a', '#e6e1d2', '#7fae9e', '#8a8f88'];
+
+function partMesh(p) {
+  const w = p.w || 4, h = p.h || 4, d = p.d || 4; let geo, yoff = h / 2, ex = 0;
+  if (p.type === 'cyl') geo = new THREE.CylinderGeometry(w / 2, w / 2, h, 24);
+  else if (p.type === 'pyramid') { geo = new THREE.ConeGeometry(w * 0.7, h, 4); ex = Math.PI / 4; }
+  else if (p.type === 'dome') { geo = new THREE.SphereGeometry(w / 2, 22, 12, 0, Math.PI * 2, 0, Math.PI / 2); yoff = 0; }
+  else geo = new THREE.BoxGeometry(w, h, d);
+  const m = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: p.color || '#cfc9b8', roughness: 0.85 }));
+  m.castShadow = true; m.receiveShadow = true; m.position.set(p.x || 0, (p.y || 0) + yoff, p.z || 0); m.rotation.y = (p.rot || 0) * Math.PI / 180 + ex;
+  return m;
+}
+function rebuild() {
+  while (group.children.length) { const c = group.children.pop(); c.geometry.dispose(); group.remove(c); }
+  parts.forEach((p, i) => { const m = partMesh(p); m.userData.i = i;
+    if (i === sel) { const e = new THREE.Mesh(m.geometry.clone(), new THREE.MeshBasicMaterial({ color: 0x2ecc71, wireframe: true })); e.position.copy(m.position); e.rotation.copy(m.rotation); group.add(e); }
+    group.add(m); });
+  renderList(); render();
+}
+function renderList() {
+  $('parts').innerHTML = parts.map((p, i) => `<div class="pitem ${i === sel ? 'sel' : ''}" data-i="${i}"><span><span class="sw" style="background:${p.color}"></span>${p.type} ${i + 1}</span><span class="x" data-del="${i}">✕</span></div>`).join('') || '<div style="padding:8px;opacity:.6">No parts yet — add one.</div>';
+  const p = parts[sel]; $('props').style.display = p ? '' : 'none';
+  if (p) { px.value = p.x || 0; py.value = p.y || 0; pz.value = p.z || 0; pw.value = p.w; ph.value = p.h; pd.value = p.d; pr.value = p.rot || 0; pc.value = p.color; }
+}
+const { px, py, pz, pw, ph, pd, pr, pc } = window;
+function addPart(type) {
+  const c = COLORS[parts.length % COLORS.length];
+  const base = parts.reduce((m, q) => Math.max(m, (q.y || 0) + (q.h || 4)), 0);  // stack on top
+  parts.push({ type, x: 0, y: type === 'pyramid' || type === 'dome' ? base : 0, z: 0, w: 8, h: type === 'pyramid' ? 5 : 8, d: 8, rot: 0, color: c });
+  sel = parts.length - 1; rebuild();
+}
+document.querySelectorAll('[data-add]').forEach(b => b.onclick = () => addPart(b.dataset.add));
+$('parts').onclick = e => {
+  const del = e.target.dataset.del; if (del != null) { parts.splice(+del, 1); if (sel >= parts.length) sel = parts.length - 1; rebuild(); return; }
+  const it = e.target.closest('.pitem'); if (it) { sel = +it.dataset.i; rebuild(); }
+};
+for (const [el, key, mul] of [[px, 'x', 1], [py, 'y', 1], [pz, 'z', 1], [pw, 'w', 1], [ph, 'h', 1], [pd, 'd', 1], [pr, 'rot', 1]])
+  el.oninput = () => { if (parts[sel]) { parts[sel][key] = +el.value; rebuild(); } };
+pc.oninput = () => { if (parts[sel]) { parts[sel].color = pc.value; rebuild(); } };
+$('pdel').onclick = () => { if (sel >= 0) { parts.splice(sel, 1); sel = Math.min(sel, parts.length - 1); rebuild(); } };
+$('pdup').onclick = () => { if (parts[sel]) { const q = { ...parts[sel], x: (parts[sel].x || 0) + 4 }; parts.push(q); sel = parts.length - 1; rebuild(); } };
+
+// ---- camera / controls ----
+function updateCam() {
+  camera.position.set(cam.tx + cam.r * Math.sin(cam.ph) * Math.sin(cam.th), cam.ty + cam.r * Math.cos(cam.ph), cam.tz + cam.r * Math.sin(cam.ph) * Math.cos(cam.th));
+  camera.lookAt(cam.tx, cam.ty, cam.tz);
+}
+function render() { updateCam(); renderer.render(scene, camera); }
+function resize() { const w = cv.clientWidth, h = cv.clientHeight; renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); render(); }
+addEventListener('resize', resize);
+let drag = null;
+cv.addEventListener('pointerdown', e => { cv.setPointerCapture(e.pointerId); drag = { x: e.clientX, y: e.clientY, b: e.button, moved: false, th: cam.th, ph: cam.ph, tx: cam.tx, ty: cam.ty, tz: cam.tz }; });
+cv.addEventListener('pointermove', e => {
+  if (!drag) return; const dx = e.clientX - drag.x, dy = e.clientY - drag.y; if (Math.abs(dx) + Math.abs(dy) > 4) drag.moved = true;
+  if (drag.b === 2 || e.shiftKey) { const k = cam.r * 0.0016; const rt = new THREE.Vector3().setFromMatrixColumn(camera.matrix, 0); const up = new THREE.Vector3().setFromMatrixColumn(camera.matrix, 1); cam.tx = drag.tx - rt.x * dx * k + up.x * dy * k; cam.ty = drag.ty - rt.y * dx * k + up.y * dy * k; cam.tz = drag.tz - rt.z * dx * k + up.z * dy * k; }
+  else { cam.th = drag.th - dx * 0.01; cam.ph = Math.max(0.15, Math.min(1.5, drag.ph - dy * 0.01)); }
+  render();
+});
+cv.addEventListener('pointerup', e => { if (drag && !drag.moved && e.button === 0) pick(e); drag = null; });
+cv.addEventListener('contextmenu', e => e.preventDefault());
+cv.addEventListener('wheel', e => { e.preventDefault(); cam.r = Math.max(8, Math.min(300, cam.r * (e.deltaY < 0 ? 0.9 : 1.1))); render(); }, { passive: false });
+const ray = new THREE.Raycaster();
+function pick(e) {
+  const r = cv.getBoundingClientRect();
+  ray.setFromCamera(new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1), camera);
+  const hit = ray.intersectObjects(group.children.filter(c => c.userData.i != null), false)[0];
+  if (hit) { sel = hit.object.userData.i; rebuild(); }
+}
+
+// ---- save / send / load ----
+function toast(m, bad) { const t = $('toast'); t.textContent = m; t.style.background = bad ? '#e2503b' : '#2ecc71'; t.style.color = bad ? '#fff' : '#052915'; t.style.opacity = 1; clearTimeout(t._t); t._t = setTimeout(() => t.style.opacity = 0, 1600); }
+function design() { return { name: $('name').value || 'Landmark', cx: +$('cx').value, cy: +$('cy').value, rot: (+$('lrot').value) * Math.PI / 180, scale: +$('lscale').value, parts }; }
+$('send').onclick = async () => {
+  if (!parts.length) return toast('Add at least one part', true);
+  try { const r = await fetch('/api/design/add', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(design()) });
+    const j = await r.json(); if (!j.ok) throw new Error(j.error); toast(`Added to game (${j.count} landmark${j.count > 1 ? 's' : ''}) — reload a new game`); }
+  catch (e) { toast('Add failed: ' + e.message, true); }
+};
+$('export').onclick = () => { const b = new Blob([JSON.stringify(design(), null, 1)], { type: 'application/json' }); const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = ($('name').value || 'landmark') + '.json'; a.click(); };
+$('load').onchange = e => { const f = e.target.files[0]; if (!f) return; const rd = new FileReader();
+  rd.onload = () => { try { const d = JSON.parse(rd.result); parts = d.parts || []; sel = parts.length - 1; $('name').value = d.name || 'Landmark'; if (d.cx != null) $('cx').value = d.cx; if (d.cy != null) $('cy').value = d.cy; if (d.scale) $('lscale').value = d.scale; if (d.rot) $('lrot').value = Math.round(d.rot * 180 / Math.PI); rebuild(); toast('Loaded'); } catch (err) { toast('Bad file', true); } }; rd.readAsText(f); };
+$('newd').onclick = () => { if (parts.length && !confirm('Start a new design? (unsaved parts are cleared)')) return; parts = []; sel = -1; rebuild(); };
+$('manage').onclick = async () => {
+  try { const r = await fetch('/api/design/list'); const j = await r.json(); const list = j.landmarks || [];
+    if (!list.length) return toast('No landmarks placed yet');
+    const names = list.map((l, i) => `${i + 1}. ${l.name} @(${l.cx},${l.cy})`).join('\n');
+    const del = prompt('Placed landmarks:\n' + names + '\n\nType a number to DELETE it, or Cancel:', '');
+    if (del == null) return; const idx = parseInt(del) - 1; if (idx < 0 || idx >= list.length) return;
+    list.splice(idx, 1); await fetch('/api/design/set', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ landmarks: list }) });
+    toast('Removed — reload a new game'); } catch (e) { toast('Failed: ' + e.message, true); }
+};
+
+addPart('box'); resize(); $('hud').textContent = 'ready · ' + parts.length + ' part(s) · drag orbit, wheel zoom, right-drag pan, click to select';
+</script>
+</body>
+</html>

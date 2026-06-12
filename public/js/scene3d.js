@@ -6,7 +6,22 @@
 import * as THREE from './vendor/three.module.js';
 import { BUILDINGS, GRID_SIZE, ROAD_TYPES } from './data.js';
 import { SG_OUTLINE, SG_ISLANDS, SG_FOREIGN, SG_SANDS, SG_RESERVOIRS, pointInPolygon, landMask, inReservoir, reservoirArea, inRiver, reservoirBranches, riverBranches } from './shape.js';
-import { CUSTOM_HOUSES, CUSTOM_RAILWAYS, CUSTOM_SANDS } from './custom1966.js';
+import { CUSTOM_HOUSES, CUSTOM_RAILWAYS, CUSTOM_SANDS, CUSTOM_LANDMARKS } from './custom1966.js';
+
+// Build one part of a designed landmark (shared shape set with design.html).
+function makeLandmarkPart(p, toonMat) {
+  const w = p.w || 4, h = p.h || 4, d = p.d || 4; let geo, yoff = h / 2, extraRot = 0;
+  switch (p.type) {
+    case 'cyl': geo = new THREE.CylinderGeometry(w / 2, w / 2, h, 20); break;
+    case 'pyramid': geo = new THREE.ConeGeometry(w * 0.7, h, 4); extraRot = Math.PI / 4; break;
+    case 'dome': geo = new THREE.SphereGeometry(w / 2, 18, 10, 0, Math.PI * 2, 0, Math.PI / 2); yoff = 0; break;
+    default: geo = new THREE.BoxGeometry(w, h, d);
+  }
+  const m = new THREE.Mesh(geo, toonMat(typeof p.color === 'string' ? parseInt(p.color.slice(1), 16) : (p.color ?? 0xcfc9b8)));
+  m.castShadow = true; m.receiveShadow = true;
+  m.position.set(p.x || 0, (p.y || 0) + yoff, p.z || 0); m.rotation.y = (p.rot || 0) + extraRot;
+  return m;
+}
 import { HEIGHTS_1966 } from './heights1966.js';
 
 // Bilinear sample of the 1966 contour-derived heightfield (world units) at a
@@ -194,6 +209,7 @@ export class Scene3D {
     this._buildTerrain();    // the nature-reserve hills (Bukit Timah massif) around the reservoirs
     this._buildAirport();    // Singapore (Paya Lebar) Airport on the east side
     this._placeStructures(CUSTOM_HOUSES, 'houseGroup'); // hand-traced houses (free-placed)
+    this._buildLandmarks(CUSTOM_LANDMARKS); // 3D-designed buildings/landmarks (design.html)
     this._buildSands(CUSTOM_SANDS);       // sandy coast sections (hand-traced)
     this._buildRailways(CUSTOM_RAILWAYS); // railway lines (hand-traced)
     this._buildNature();     // scatter rural greenery across the undeveloped island
@@ -768,6 +784,33 @@ export class Scene3D {
       const m = this._makeStructure(b);
       m.position.set((b.cx - 0.5) * WORLD, 0, (0.5 - b.cy) * WORLD); m.rotation.y = b.rot || 0;
       grp.add(m);
+    }
+  }
+
+  // Render the 3D-designed landmarks (CUSTOM_LANDMARKS) on the island, each at
+  // its normalised position, sitting on the terrain. Cells under them are marked
+  // unbuildable so the city grows around them.
+  _buildLandmarks(list) {
+    if (this.landmarkGroup) this.scene.remove(this.landmarkGroup);
+    const g = new THREE.Group(); this.scene.add(g); this.landmarkGroup = g;
+    for (const lm of (list || [])) {
+      if (!lm.parts || !lm.parts.length) continue;
+      const grp = new THREE.Group();
+      for (const part of lm.parts) grp.add(makeLandmarkPart(part, toon));
+      grp.scale.setScalar(lm.scale || 1);
+      const wx = (lm.cx - 0.5) * WORLD, wz = (0.5 - lm.cy) * WORLD;
+      grp.position.set(wx, this._terrainHN(lm.cx, lm.cy) + 0.05, wz);
+      grp.rotation.y = lm.rot || 0; g.add(grp);
+      // footprint mask from the parts' XZ bounding box
+      if (this.airportMask) {
+        let r = 4; for (const p of lm.parts) r = Math.max(r, Math.hypot((p.x || 0) + (p.w || 4) / 2, (p.z || 0) + (p.d || 4) / 2));
+        r *= (lm.scale || 1);
+        const cx0 = Math.floor((wx / WORLD + 0.5) * N), cy0 = Math.floor((0.5 - wz / WORLD) * N), rc = Math.ceil(r / TILE);
+        for (let y = cy0 - rc; y <= cy0 + rc; y++) for (let x = cx0 - rc; x <= cx0 + rc; x++)
+          if (x >= 0 && y >= 0 && x < N && y < N && this.land[y][x]) {
+            const w = cellToWorld(x, y); if (Math.hypot(w.x - wx, w.z - wz) <= r) this.airportMask[y][x] = true;
+          }
+      }
     }
   }
 

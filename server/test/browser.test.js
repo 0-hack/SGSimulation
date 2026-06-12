@@ -66,7 +66,10 @@ try {
     for (let r = 0; r < N; r++) for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
       const x = c + dx, y = c + dy;
       if (x < 0 || y < 0 || x >= N || y >= N) continue;
-      if (v.isLand(x, y) && !v.state.grid[y][x]) { const s = v.cellToScreen(x, y); return { x, y, sx: s.x, sy: s.y }; }
+      // free land cell that is NOT on a road (the road network can be dense)
+      if (v.isLand(x, y) && !v.state.grid[y][x] && !(v.isRoadAt && v.isRoadAt(x, y))) {
+        const s = v.cellToScreen(x, y); return { x, y, sx: s.x, sy: s.y };
+      }
     }
     return null;
   });
@@ -88,7 +91,11 @@ try {
   // Zooming in to street level spawns animated pedestrians (LOD).
   const peopled = await page.evaluate(async () => {
     const v = window.__sgview;
+    // centre the camera over an actual road before zooming to street level
+    const n = v.state?.roads?.nodes?.[0];
+    if (n) v.target.set(n.x, 0, n.z);
     v.cam.radius = 50;                      // street-level zoom
+    v.render();
     await new Promise((r) => setTimeout(r, 500));
     return { on: v.peopleOn, count: v.people.length };
   });

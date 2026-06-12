@@ -7,6 +7,20 @@ import * as THREE from './vendor/three.module.js';
 import { BUILDINGS, GRID_SIZE, ROAD_TYPES } from './data.js';
 import { SG_OUTLINE, SG_ISLANDS, SG_FOREIGN, SG_RESERVOIRS, pointInPolygon, landMask, inReservoir, reservoirArea, inRiver, reservoirBranches, riverBranches } from './shape.js';
 import { CUSTOM_HOUSES, CUSTOM_RAILWAYS, CUSTOM_SANDS } from './custom1966.js';
+import { HEIGHTS_1966 } from './heights1966.js';
+
+// Bilinear sample of the 1966 contour-derived heightfield (world units) at a
+// normalised island point (nx east, ny north). Covers the whole island.
+function demHeight(nx, ny) {
+  const D = HEIGHTS_1966;
+  const u = (nx - D.x0) / (D.x1 - D.x0) * (D.w - 1);
+  const v = (ny - D.y1) / (D.y0 - D.y1) * (D.h - 1);   // y1 = top row (north)
+  if (u < 0 || v < 0 || u > D.w - 1 || v > D.h - 1) return 0;
+  const x0 = Math.floor(u), y0 = Math.floor(v), x1 = Math.min(D.w - 1, x0 + 1), y1 = Math.min(D.h - 1, y0 + 1);
+  const fx = u - x0, fy = v - y0, d = D.data;
+  const h00 = d[y0 * D.w + x0], h10 = d[y0 * D.w + x1], h01 = d[y1 * D.w + x0], h11 = d[y1 * D.w + x1];
+  return (h00 * (1 - fx) * (1 - fy) + h10 * fx * (1 - fy) + h01 * (1 - fx) * fy + h11 * fx * fy) * D.scale;
+}
 
 const N = GRID_SIZE;
 const WORLD = N * 10;         // world units across the bounding box (TILE stays ~10)
@@ -67,7 +81,7 @@ const HILL_MAXH = 22;               // tallest peak, for elevation colour bandin
 // with two terminal buildings set back on the inland (west) side. Centreline
 // endpoints in NORMALISED island coords (south → north).
 const AIRPORT = {
-  south: { x: 0.565, y: 0.413 }, north: { x: 0.597, y: 0.525 }, // runway centreline (long, ~16° off N–S; taxiway ≥ 2× the building span)
+  south: { x: 0.581, y: 0.493 }, north: { x: 0.605, y: 0.553 }, // Paya Lebar runway centreline (georeferenced from the 1966 sheet)
   rwHalfW: 4.5,        // runway half-width (world units)
   overrun: 4,          // paved overrun past each threshold
   taxiOff: 9,          // continuous parallel taxiway offset (localX, inland of runway)
@@ -432,23 +446,16 @@ export class Scene3D {
   // gaussian hills, faded to flat land beyond the reserve disk and carved down
   // to ~0 around the reservoirs so the lakes keep sitting in the low ground.
   _terrainHN(nx, ny) {
-    // elliptical falloff: long N–S (RY), narrow E–W (RX)
-    const dr = Math.hypot((nx - HILL_CENTER[0]) / HILL_RX, (ny - HILL_CENTER[1]) / HILL_RY);
-    if (dr >= 1) return 0;
-    const disk = smoothstep(1.0, 0.7, dr);                 // 1 inside, 0 at the rim
-    let h = 0;
-    for (const hl of SG_HILLS) {
-      const d2 = (nx - hl.x) ** 2 + (ny - hl.y) ** 2;
-      h += hl.h * Math.exp(-d2 / (2 * hl.s * hl.s));
-    }
-    h += 1.4 * Math.sin(nx * 90) * Math.sin(ny * 85);      // gentle rolling texture
+    let h = demHeight(nx, ny);                              // real 1966 contour heightfield
+    if (h < 0.05) return 0;
+    h += 0.8 * Math.sin(nx * 90) * Math.sin(ny * 85);       // gentle rolling texture
     const cx = Math.min(N - 1, Math.max(0, Math.floor(nx * N)));
     const cy = Math.min(N - 1, Math.max(0, Math.floor(ny * N)));
     const wd = this.waterDist ? this.waterDist[cy][cx] : 99;
     const valley = smoothstep(0.5, 5.0, wd);               // 0 at water, 1 a few cells away
     const cd = this.coastDist ? this.coastDist[cy][cx] : 99;
     const coast = smoothstep(0.5, 4.0, cd);                // 0 at the shoreline, 1 inland
-    return Math.max(0, h * disk * valley * coast);
+    return Math.max(0, h * valley * coast);
   }
   // Elevation at the centre of grid cell (cx,cy) — for placing trees & buildings.
   terrainHeight(cx, cy) { return this._terrainHN((cx + 0.5) / N, (cy + 0.5) / N); }
@@ -457,9 +464,8 @@ export class Scene3D {
   // disk, cel-shaded and tinted by elevation (forest green → olive → bare tan).
   _buildTerrain() {
     if (this.terrainMesh) { this.scene.remove(this.terrainMesh); this.terrainMesh.geometry.dispose(); }
-    const RES = 110;
-    const x0 = HILL_CENTER[0] - HILL_RX, x1 = HILL_CENTER[0] + HILL_RX;
-    const y0 = HILL_CENTER[1] - HILL_RY, y1 = HILL_CENTER[1] + HILL_RY;
+    const RES = 240;                          // whole-island heightfield grid
+    const x0 = HEIGHTS_1966.x0, x1 = HEIGHTS_1966.x1, y0 = HEIGHTS_1966.y0, y1 = HEIGHTS_1966.y1;
     const pos = [], col = [], idx = [], hgt = [], lnd = [];
     // Bukit Timah & the Central Catchment were rainforest in 1965/66 — forested
     // green all the way up, the canopy just deepening with altitude (never sand).
@@ -1564,9 +1570,10 @@ export class Scene3D {
         // graph of short segments, so we draw just a thin asphalt ribbon with a
         // pale shoulder — no per-joint stop lines or centre dashes (which would
         // clutter every tiny segment). The shared nodes keep it interconnected.
-        const hw = 0.95;
+        const hw = e.roadClass === 1 ? 1.5 : e.roadClass === 2 ? 1.05 : 0.7; // width by survey class
         ribbon(pave, pts, hw + 0.4, 0.0);
         ribbon(road, pts, hw, 0.03);
+        if (e.roadClass === 1) markLine(pts, 0, true, 0.05);   // dashed centre line on first-class roads
         return;
       }
       const hw = T.width / 2, L = e.lanes || T.lanes, lw = T.width / L;

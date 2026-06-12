@@ -86,10 +86,11 @@ function cellWorld(x, y) {
 function injectTracedRoads(roads) {
   const base = roads.nodes.length;
   for (const [x, z] of ROAD_NODES_1966) roads.nodes.push({ x, z, y: 0 });
-  for (const [a, b, ow] of ROAD_EDGES_1966)
+  for (const [a, b, ow, cls] of ROAD_EDGES_1966)
     roads.edges.push({
       a: a + base, b: b + base, ctrl: null,
-      type: 'street', lanes: ow ? 1 : 2, elevated: false, oneway: !!ow, traced: true,
+      type: cls === 1 ? 'avenue' : 'street', lanes: ow ? 1 : 2, elevated: false,
+      oneway: !!ow, traced: true, roadClass: cls || 3,
     });
   roads.seeded1966 = true;
 }

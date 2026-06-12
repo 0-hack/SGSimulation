@@ -250,21 +250,22 @@ export class Scene3D {
     land.receiveShadow = true; this.scene.add(land);
     if (main) this.island = land;
 
-    // a thin sandy beach skirt just below the grass so roads/grass aren't covered.
-    // Scale it about the island's own centroid (NOT the world origin) so offshore
-    // islands get a concentric sand ring instead of an offset/oversized blob.
+    // island centroid (used by palms / the optional shore skirt)
     let cx = 0, cz = 0;
     for (const [nx, ny] of poly) { cx += (nx - 0.5) * WORLD; cz += (0.5 - ny) * WORLD; }
     cx /= poly.length; cz /= poly.length;
-    const beachGeo = new THREE.ExtrudeGeometry(toShape(), { depth: 0.6, bevelEnabled: false });
-    beachGeo.rotateX(-Math.PI / 2); beachGeo.computeBoundingBox();
-    // drop the skirt well below the grass so the interior overlap never
-    // z-fights into view; only its 5% outer rim shows as the coastal beach.
-    beachGeo.translate(0, -beachGeo.boundingBox.max.y - 0.9, 0);
-    const beach = new THREE.Mesh(beachGeo, new THREE.MeshToonMaterial({ color: foreign ? 0x8a8f88 : 0xe6d6a6, gradientMap: toonGradient() }));
-    beach.scale.set(beachScale, 1, beachScale);
-    beach.position.set((1 - beachScale) * cx, 0, (1 - beachScale) * cz); // keep the scale centred on the island
-    beach.receiveShadow = true; this.scene.add(beach);
+    // No universal sand rim: real beaches are SG_SANDS, mapped to the actual
+    // foreshore. The other coasts go green straight to the water, like the map.
+    // Only Johor keeps a thin grey shore skirt (decorative backdrop).
+    if (foreign) {
+      const beachGeo = new THREE.ExtrudeGeometry(toShape(), { depth: 0.6, bevelEnabled: false });
+      beachGeo.rotateX(-Math.PI / 2); beachGeo.computeBoundingBox();
+      beachGeo.translate(0, -beachGeo.boundingBox.max.y - 0.9, 0);
+      const beach = new THREE.Mesh(beachGeo, new THREE.MeshToonMaterial({ color: 0x8a8f88, gradientMap: toonGradient() }));
+      beach.scale.set(beachScale, 1, beachScale);
+      beach.position.set((1 - beachScale) * cx, 0, (1 - beachScale) * cz);
+      beach.receiveShadow = true; this.scene.add(beach);
+    }
 
     if (palms && !foreign) {
       const gmat = new THREE.MeshToonMaterial({ color: 0x3fae57, gradientMap: toonGradient() });
@@ -289,7 +290,7 @@ export class Scene3D {
       const shape = new THREE.Shape();
       poly.forEach(([nx, ny], i) => { const x = (nx - 0.5) * WORLD, y = (ny - 0.5) * WORLD; i ? shape.lineTo(x, y) : shape.moveTo(x, y); });
       const geo = new THREE.ShapeGeometry(shape); geo.rotateX(-Math.PI / 2);
-      const m = new THREE.Mesh(geo, mat); m.position.y = -0.1; m.receiveShadow = true; g.add(m);
+      const m = new THREE.Mesh(geo, mat); m.position.y = 0.06; m.receiveShadow = true; g.add(m); // sit just above the grass edge so the beach shows
     }
   }
 

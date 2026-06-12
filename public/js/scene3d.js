@@ -1572,7 +1572,7 @@ export class Scene3D {
         // graph of short segments, so we draw just a thin asphalt ribbon with a
         // pale shoulder — no per-joint stop lines or centre dashes (which would
         // clutter every tiny segment). The shared nodes keep it interconnected.
-        const hw = e.roadClass === 1 ? 0.62 : e.roadClass === 2 ? 0.42 : 0.3; // width by survey class (~36 m/unit)
+        const hw = e.roadClass === 1 ? 0.34 : e.roadClass === 2 ? 0.22 : 0.16; // narrow, like the survey-map line widths (~36 m/unit)
         ribbon(road, pts, hw, 0.04);     // dark asphalt only — no pale shoulder (avoids notch speckle)
         return;
       }

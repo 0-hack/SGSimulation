@@ -5,7 +5,7 @@
 // main.js expects from the old 2D view.
 import * as THREE from './vendor/three.module.js';
 import { BUILDINGS, GRID_SIZE, ROAD_TYPES } from './data.js';
-import { SG_OUTLINE, SG_ISLANDS, SG_FOREIGN, SG_RESERVOIRS, pointInPolygon, landMask, inReservoir, reservoirArea, inRiver, reservoirBranches, riverBranches } from './shape.js';
+import { SG_OUTLINE, SG_ISLANDS, SG_FOREIGN, SG_SANDS, SG_RESERVOIRS, pointInPolygon, landMask, inReservoir, reservoirArea, inRiver, reservoirBranches, riverBranches } from './shape.js';
 import { CUSTOM_HOUSES, CUSTOM_RAILWAYS, CUSTOM_SANDS } from './custom1966.js';
 import { HEIGHTS_1966 } from './heights1966.js';
 
@@ -188,6 +188,7 @@ export class Scene3D {
     scene.add(sea);
 
     this._buildIsland();
+    this._buildForeshore();  // map-accurate sandy beaches (replaces the uniform sand ring)
     this.roadEdges = [];     // 1965 Singapore had no dense road grid — players build roads
     this._buildCatchment();  // Central Catchment reservoir + nature reserve (centre of island)
     this._buildTerrain();    // the nature-reserve hills (Bukit Timah massif) around the reservoirs
@@ -213,9 +214,10 @@ export class Scene3D {
   }
 
   _buildIsland() {
-    // Main island, then the smaller outlying islands (decorative).
-    this._landmass(SG_OUTLINE, { depth: 8, bevel: 1.5, beachScale: 1.05, main: true });
-    for (const poly of SG_ISLANDS) this._landmass(poly, { depth: 5, bevel: 1.0, beachScale: 1.08, palms: true });
+    // Main island, then the smaller outlying islands (decorative). The beach
+    // skirt is now just a thin neutral shore — the real sand is SG_SANDS.
+    this._landmass(SG_OUTLINE, { depth: 8, bevel: 1.5, beachScale: 1.012, main: true });
+    for (const poly of SG_ISLANDS) this._landmass(poly, { depth: 5, bevel: 1.0, beachScale: 1.025, palms: true });
     // Johor / Malaysia across the strait — grey, decorative, untouchable.
     for (const poly of (SG_FOREIGN || [])) if (poly.length >= 3) this._landmass(poly, { depth: 5, bevel: 0.8, beachScale: 1.03, foreign: true });
 
@@ -273,6 +275,21 @@ export class Scene3D {
         const fr = new THREE.Mesh(new THREE.SphereGeometry(3.6, 8, 6), gmat);
         fr.position.set(cx + dx, 8.4, cz + dz); fr.scale.y = 0.5; fr.castShadow = true; this.scene.add(fr);
       }
+    }
+  }
+
+  // The sandy foreshore (SG_SANDS) — flat sand patches at the coast, only where
+  // the 1966 sheet shows orange beach, matching its true location/size/shape.
+  _buildForeshore() {
+    if (this.foreshoreGroup) this.scene.remove(this.foreshoreGroup);
+    const g = new THREE.Group(); this.scene.add(g); this.foreshoreGroup = g;
+    const mat = new THREE.MeshToonMaterial({ color: 0xe6d6a6, gradientMap: toonGradient() });
+    for (const poly of (SG_SANDS || [])) {
+      if (poly.length < 3) continue;
+      const shape = new THREE.Shape();
+      poly.forEach(([nx, ny], i) => { const x = (nx - 0.5) * WORLD, y = (ny - 0.5) * WORLD; i ? shape.lineTo(x, y) : shape.moveTo(x, y); });
+      const geo = new THREE.ShapeGeometry(shape); geo.rotateX(-Math.PI / 2);
+      const m = new THREE.Mesh(geo, mat); m.position.y = -0.1; m.receiveShadow = true; g.add(m);
     }
   }
 

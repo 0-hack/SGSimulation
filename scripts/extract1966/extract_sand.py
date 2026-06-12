@@ -13,6 +13,8 @@ r,g,b=img[:,:,0].astype(int),img[:,:,1].astype(int),img[:,:,2].astype(int)
 orange=(r>175)&(r-g>14)&(g-b>22)&(g-b<70)&(g>120)
 orange=ndi.binary_closing(orange, structure=np.ones((3,3)), iterations=2)
 orange=ndi.binary_opening(orange, iterations=1)
+orange=ndi.binary_dilation(orange, iterations=3)   # widen the foreshore band so beaches read chunkier in 3D
+orange=ndi.binary_closing(orange, iterations=2)
 lbl,n=ndi.label(orange)
 sizes=ndi.sum(np.ones_like(lbl),lbl,range(1,n+1))
 def to_game_px(rows,cols):
@@ -24,12 +26,12 @@ minx=min(p[:,0].min() for p in allP)-0.02; maxx=max(p[:,0].max() for p in allP)+
 miny=min(p[:,1].min() for p in allP)-0.02; maxy=max(p[:,1].max() for p in allP)+0.02
 polys=[]
 for k in range(n):
-    if sizes[k]<60: continue
+    if sizes[k]<120: continue
     mk=ndi.binary_fill_holes(lbl==k+1)
     cs=measure.find_contours(mk.astype(float),0.5); cs.sort(key=len,reverse=True)
     c=cs[0]
     if len(c)<14: continue
-    p=approximate_polygon(c,1.5)
+    p=approximate_polygon(c,2.2)
     gp=to_game_px(p[:,0],p[:,1])
     cen=gp.mean(0)
     if not (minx<cen[0]<maxx and miny<cen[1]<maxy): continue

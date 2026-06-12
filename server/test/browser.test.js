@@ -47,7 +47,7 @@ try {
     return { hasGL: !!gl, buildings: window.__sgview ? window.__sgview.buildings.size : -1 };
   });
   ok(sceneInfo.hasGL, '3D canvas has a WebGL context');
-  ok(sceneInfo.buildings >= 1, `3D scene rendered ${sceneInfo.buildings} seed building(s)`);
+  ok(sceneInfo.buildings >= 0, `3D scene ready (${sceneInfo.buildings} seed building(s) — bare 1966 island)`);
 
   // Open build panel and place a building by tapping the canvas centre.
   await page.click('.tool[data-panel="build"]');
@@ -80,7 +80,7 @@ try {
 
   // The placed building appears as an animated mesh in the 3D scene.
   const builtCount = await page.evaluate(() => window.__sgview.buildings.size);
-  ok(builtCount >= 2, `3D scene now has ${builtCount} building meshes`);
+  ok(builtCount >= 1, `3D scene now has ${builtCount} building mesh(es)`);
 
   // A disaster animation runs without throwing.
   await page.evaluate(() => window.__sgview.playDisaster('flood'));

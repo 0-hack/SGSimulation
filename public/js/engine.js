@@ -97,15 +97,9 @@ function injectTracedRoads(roads) {
 
 function seed1965(state) {
   // The real 1966 road network is the starting infrastructure — no colonial
-  // street grid or town blocks. The old houses/roads are gone.
+  // street grid or town blocks, and no scattered seed kampongs (they obstructed
+  // the roads). The map starts as the bare island + roads; the player builds.
   injectTracedRoads(state.roads);
-
-  // a handful of rural kampongs still dotted across the otherwise-undeveloped island
-  let placed = 0;
-  for (let tries = 0; tries < 800 && placed < 6; tries++) {
-    const x = Math.floor(Math.random() * GRID_SIZE), y = Math.floor(Math.random() * GRID_SIZE);
-    if (isLandCell(x, y) && !state.grid[y][x]) { place(state, x, y, 'kampong'); placed++; }
-  }
 }
 
 // Bring a loaded save up to the current map size (e.g. older, smaller grids):

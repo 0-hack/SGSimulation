@@ -66,8 +66,50 @@ for s in range(len(nodes)):
         for w in A[u]:
             if comp[w]==-1: comp[w]=c; st.append(w)
     c+=1
-cnt=Counter(comp[comp>=0]); keep={k for k,v in cnt.items() if v>=8}
+cnt=Counter(comp[comp>=0]); keep={k for k,v in cnt.items() if v>=16}
 edges=[e for e in edges if comp[e[0]] in keep]
+# 3b) remove tangled clumps: tiny closed loops + dense over-bridged knots
+A=adj(len(nodes),edges)
+# (a) drop short cycles (perimeter < 26u) made of <=6 nodes — block-outline / bridge loops
+import itertools
+def edge_len(u,v): return float(np.hypot(*(nodes[u]-nodes[v])))
+eset={(min(u,v),max(u,v)) for u,v,_ in edges}
+# find small loops via DFS up to length 6 from each node, cheaply
+dropL=set()
+deg=[len(A[i]) for i in range(len(nodes))]
+for s in range(len(nodes)):
+    if deg[s]<2: continue
+    # BFS rings up to 6 nodes back to s
+    stack=[(s,[s])]
+    while stack:
+        u,path=stack.pop()
+        if len(path)>4: continue
+        for w in A[u]:
+            if w==s and len(path)>=3:
+                per=sum(edge_len(path[k],path[k+1]) for k in range(len(path)-1))+edge_len(path[-1],s)
+                if per<9.5 and len(path)<=4:
+                    loop=list(zip(path,path[1:]+[s]))            # de-loop: drop only the shortest edge
+                    su,sv=min(loop,key=lambda e:edge_len(*e))
+                    dropL.add((min(su,sv),max(su,sv)))
+            elif w not in path and len(path)<4:
+                stack.append((w,path+[w]))
+edges=[(u,v,cl) for u,v,cl in edges if (min(u,v),max(u,v)) not in dropL]
+print('after loop-drop',len(edges))
+# (b) thin out high-degree knots: where a node has degree>=5, keep its 3 longest spokes
+A=adj(len(nodes),edges)
+keepE=set()
+adjE={}
+for u,v,cl in edges:
+    adjE.setdefault(u,[]).append((v,cl)); adjE.setdefault(v,[]).append((u,cl))
+drop=set()
+for i in range(len(nodes)):
+    if len(A[i])>=6:
+        spokes=sorted(A[i], key=lambda j:-edge_len(i,j))
+        for j in spokes[4:]:
+            drop.add((min(i,j),max(i,j)))
+edges=[(u,v,cl) for u,v,cl in edges if (min(u,v),max(u,v)) not in drop]
+print('after knot-thin',len(edges))
+
 # 4) final spur prune + compact + smooth
 for _ in range(4):
     A=adj(len(nodes),edges); before=len(edges)

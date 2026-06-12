@@ -1510,7 +1510,7 @@ export class Scene3D {
 
   // Sample an edge's centre-line into world points (with bridge elevation).
   // ground height a road sits on: follow the terrain so it doesn't sink into hills
-  _roadY(x, z) { return this._terrainHN(x / WORLD + 0.5, 0.5 - z / WORLD) + 0.16; }
+  _roadY(x, z) { return this._terrainHN(x / WORLD + 0.5, 0.5 - z / WORLD) + 0.28; }
   _sampleEdge(roads, e) {
     // a traced road carries its own smoothed polyline (curves through the map)
     if (e.poly && e.poly.length >= 2) return e.poly.map((p) => ({ x: p.x, y: this._roadY(p.x, p.z), z: p.z }));
@@ -1619,7 +1619,13 @@ export class Scene3D {
       if (!buf[0].length) return;
       const g = new THREE.BufferGeometry();
       g.setAttribute('position', new THREE.Float32BufferAttribute(buf[0], 3));
-      g.setIndex(buf[1]); g.computeVertexNormals();
+      // uniform up-normals: these are flat ground decals, so they shade evenly
+      // (computed per-vertex normals on the terrain-following bends caused the
+      // bright "speckle" where folded/overlapping quads lit up under the sun).
+      const nrm = new Float32Array(buf[0].length);
+      for (let i = 1; i < nrm.length; i += 3) nrm[i] = 1;
+      g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
+      g.setIndex(buf[1]);
       const m = new THREE.Mesh(g, material); m.receiveShadow = true; this.roadGroup.add(m);
     };
     const DS = THREE.DoubleSide;

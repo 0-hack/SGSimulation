@@ -45,12 +45,12 @@
     <button id="freehand" class="on" title="Freehand: hold &amp; drag. Click: tap each point/corner; Esc, double-click or click the first dot to finish.">Freehand</button>
     <span><small>brush</small> <input id="brush" type="range" min="4" max="60" value="16"></span>
   </div>
-  <div class="grp" id="bldgrp" title="Buildings/Houses. Freehand: drag a box. Click mode: tap the corners (4 dots) then close. Click a placed one to move / resize (corner) / rotate (green dot).">
-    <small>place</small>
+  <div class="grp" id="bldgrp" style="display:none">
     <select id="btype"></select>
-    <span><small>rot</small> <input id="brot" type="range" min="-180" max="180" value="0"></span>
-    <span><small>tall</small> <input id="bhgt" type="range" min="3" max="40" value="10"></span>
+    <input id="brot" type="range" min="-180" max="180" value="0">
+    <input id="bhgt" type="range" min="3" max="40" value="10">
   </div>
+  <div class="grp"><a class="btn" href="/design.html" style="text-decoration:none" title="Design buildings &amp; landmarks in 3D">🏗 3D Designer</a></div>
   <div class="grp" id="vis" title="Show / hide layers"><small>show</small></div>
   <div class="grp"><span><small>map</small> <input id="opacity" type="range" min="0" max="100" value="55"></span></div>
   <div class="grp" title="Nudge the background map to line it up with your trace">
@@ -84,24 +84,22 @@ const $ = id => document.getElementById(id);
 const PI = Math.PI, LS = 'sg1966-trace-autosave';
 let DATA = null, bgImg = new Image();
 
+// Map-feature TRACING only. Buildings/houses/landmarks are designed in 3D in
+// design.html (they aren't map features), then placed into the game there.
 const LAYERS = {
   roads:      { c: '#37d0ff', name: 'Roads',     kind: 'line' },
+  bulldoze:   { c: '#ff3b3b', name: 'Delete rd', kind: 'line' }, // scribble over roads to remove them from the game
   mainland:   { c: '#7CFC8A', name: 'Coast',     kind: 'line', closed: true }, // mainland + islands (longest loop = mainland)
   reservoirs: { c: '#c85cff', name: 'Reservoir', kind: 'line', closed: true },
   railway:    { c: '#9fb0c0', name: 'Railway',   kind: 'line' },
   sands:      { c: '#eadbab', name: 'Sands',     kind: 'line' },
-  airport:    { c: '#ff5a5a', name: 'Airport',   kind: 'line' },
-  buildings:  { c: '#ff6ec7', name: 'Buildings', kind: 'rect' },
-  houses:     { c: '#b6ff5c', name: 'Houses',    kind: 'rect' },
+  airport:    { c: '#ff5a5a', name: 'Airport',   kind: 'line' }, // runway centre-line (buildings are designed in design.html)
   foreign:    { c: '#c9a06a', name: 'Malaysia',  kind: 'line', closed: true },
 };
 const KEYS = Object.keys(LAYERS);
-const TYPES = {
-  buildings: [['terminal', 'Terminal'], ['hangar', 'Hangar'], ['pier', 'Pier'], ['hall', 'Low hall'], ['block', 'Block'], ['shed', 'Workshop'], ['carpark', 'Car park'], ['plane', 'Aircraft']],
-  houses: [['kampong', 'Kampong'], ['shophouse', 'Shophouse'], ['hdb_flat', 'HDB flat']],
-};
+const TYPES = {};
 const ONEWAY_COLOR = '#ff9f43';
-const blank = () => ({ roads: [], mainland: [], reservoirs: [], railway: [], sands: [], airport: [], buildings: [], houses: [], foreign: [] });
+const blank = () => ({ roads: [], bulldoze: [], mainland: [], reservoirs: [], railway: [], sands: [], airport: [], foreign: [] });
 let data = blank();
 let active = 'roads', oneway = false, freehand = true, mode = 'draw';
 let vis = {}; KEYS.forEach(k => vis[k] = true); vis.guide = true;
@@ -129,7 +127,7 @@ function applyLoaded(d) { if (d.bg) bg = d.bg; const nd = blank();
   nd.roads = (d.roads || []).map(r => Array.isArray(r) ? { pts: r, oneway: false } : r);
   nd.mainland = (d.mainland || d.coast || []).concat(d.islands || []); // old Islands folded into Coast
   nd.reservoirs = d.reservoirs || d.resv || []; nd.railway = d.railway || []; nd.sands = d.sands || [];
-  nd.airport = d.airport || []; nd.buildings = d.buildings || []; nd.houses = d.houses || []; nd.foreign = d.foreign || []; data = nd; }
+  nd.airport = d.airport || []; nd.foreign = d.foreign || []; nd.bulldoze = d.bulldoze || []; data = nd; }
 
 function snapshot() { history.push(JSON.stringify(data)); if (history.length > 120) history.shift(); }
 function undo() { if (history.length) { data = JSON.parse(history.pop()); cur = null; curItem = null; rectStart = null; sel = null; draw(); updateStat(); } }
@@ -196,7 +194,7 @@ function draw() {
   ctx.lineCap = 'round'; ctx.lineJoin = 'round';
   if (vis.guide && DATA) { ctx.lineWidth = 1.3; ctx.strokeStyle = '#ffd23f'; ctx.setLineDash([5, 5]);
     strokePoly(DATA.outline, true); ctx.strokeStyle = '#ffd23f55'; DATA.islands.forEach(p => strokePoly(p, true)); ctx.setLineDash([]); }
-  for (const k of ['foreign', 'sands', 'reservoirs', 'mainland', 'railway', 'airport', 'roads', 'houses', 'buildings']) {
+  for (const k of ['foreign', 'sands', 'reservoirs', 'mainland', 'railway', 'airport', 'roads', 'bulldoze']) {
     if (!vis[k]) continue; const L = LAYERS[k];
     if (RECT(k)) { data[k].forEach(b => drawRect(b, L.c)); continue; }
     ctx.lineWidth = k === 'mainland' ? 2.6 : 2.2;
@@ -389,8 +387,9 @@ $('applygame').onclick = async () => {
     const r = await fetch('/api/trace/apply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ version: 3, ...data }) });
     const j = await r.json();
     if (!j.ok) throw new Error(j.error || 'apply failed');
-    toast('Added: ' + (j.did.join(' · ') || 'no changes') + ' — reload the game (new game) to see it');
-  } catch (e) { toast('Add failed: ' + e.message + ' (is the game server running?)', true); }
+    if (data.bulldoze.length) { snapshot(); data.bulldoze = []; draw(); updateStat(); } // delete strokes are one-shot
+    toast('Applied: ' + (j.did.join(' · ') || 'no changes') + ' — reload the game (new game) to see it');
+  } catch (e) { toast('Apply failed: ' + e.message + ' (is the game server running?)', true); }
   finally { b.textContent = old; b.disabled = false; }
 };
 $('help').onclick = () => $('hint').classList.toggle('hidden');

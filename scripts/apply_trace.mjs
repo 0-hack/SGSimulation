@@ -56,6 +56,7 @@ export function graphToTrace(nodes, edges) {
 // instead of replacing — used for non-destructive live corrections.
 export async function applyTrace(t, opts = {}) {
   const roadsIn = (t.roads || []).map(r => Array.isArray(r) ? { pts: r, oneway: false } : r).filter(r => r.pts.length >= 2);
+  const bulldozeIn = (t.bulldoze || []).map(a => a.pts || a).filter(p => p.length >= 1);
   const mainlandIn = (t.mainland || t.coast || []).filter(p => p.length >= 3);
   const islandsIn = (t.islands || []).filter(p => p.length >= 3);
   const reservoirsIn = (t.reservoirs || t.resv || []).filter(p => p.length >= 3);
@@ -75,11 +76,19 @@ export async function applyTrace(t, opts = {}) {
 
   // ---- roads ----
   let outNodes = cur.ROAD_NODES_1966, outEdges = cur.ROAD_EDGES_1966.map(e => [e[0], e[1], e[2] ? 1 : 0, e[3] || 2]);
-  if (roadsIn.length) {
+  if (roadsIn.length || (opts.mergeRoads && bulldozeIn.length)) {
     const merge = !!opts.mergeRoads;
     // when merging, seed the graph with the existing network so new roads snap to it
-    const nodes = merge ? cur.ROAD_NODES_1966.map(p => [p[0], p[1]]) : [];
-    const edges = merge ? cur.ROAD_EDGES_1966.map(e => [e[0], e[1], e[2] ? 1 : 0, e[3] || 2]) : [];
+    let nodes = merge ? cur.ROAD_NODES_1966.map(p => [p[0], p[1]]) : [];
+    let edges = merge ? cur.ROAD_EDGES_1966.map(e => [e[0], e[1], e[2] ? 1 : 0, e[3] || 2]) : [];
+    // BULLDOZE: drop existing edges scribbled over (within 12u of a delete stroke)
+    if (merge && bulldozeIn.length) {
+      const strokes = bulldozeIn.map(p => p.map(toWorld)), DEL = 12;
+      const near = n => strokes.some(s => s.some(q => dist(n, q) <= DEL));
+      const before = edges.length;
+      edges = edges.filter(e => !(near(nodes[e[0]]) || near(nodes[e[1]])));
+      did.push(`bulldozed ${before - edges.length} road edges`);
+    }
     const grid = new Map();
     const key = (x, z) => Math.floor(x / MERGE) + ',' + Math.floor(z / MERGE);
     nodes.forEach((p, id) => { const k = key(p[0], p[1]); if (!grid.has(k)) grid.set(k, []); grid.get(k).push(id); });
@@ -113,14 +122,19 @@ export async function applyTrace(t, opts = {}) {
         for (let i = 0; i < nodes.length; i++) nodes[i] = o[i]; };
       for (let k = 0; k < 3; k++) { smooth(0.5); smooth(-0.48); }
     }
+    // compact: keep only nodes referenced by an edge (drops orphans from bulldoze)
+    const used = new Set(); for (const e of edges) { used.add(e[0]); used.add(e[1]); }
+    const remap = new Map(), cnodes = [];
+    for (const id of used) { remap.set(id, cnodes.length); cnodes.push(nodes[id]); }
+    nodes = cnodes; edges = edges.map(e => [remap.get(e[0]), remap.get(e[1]), e[2], e[3]]);
     outNodes = nodes.map(p => [r1(p[0]), r1(p[1])]); outEdges = edges;
-    did.push(merge ? `roads +${newEdges.length} added -> ${outEdges.length} total` : `roads -> ${outNodes.length} nodes / ${outEdges.length} edges`);
+    if (roadsIn.length) did.push(merge ? `roads +${newEdges.length} added -> ${outEdges.length} total` : `roads -> ${outNodes.length} nodes / ${outEdges.length} edges`);
   }
 
   let reservoirs = cur.RESERVOIRS_1966;
   if (reservoirsIn.length) { reservoirs = reservoirsIn.map(p => decimateN(p, 0.0015)); did.push(`reservoirs -> ${reservoirs.length} traced`); }
 
-  if (roadsIn.length || reservoirsIn.length) {
+  if (roadsIn.length || reservoirsIn.length || (opts.mergeRoads && bulldozeIn.length)) {
     const body = `// 1966 Singapore road network + reservoirs. NODES: [x,z] world.
 // EDGES: [a,b,oneway,class].  RESERVOIRS: normalised polygons.
 export const ROAD_NODES_1966 = [${outNodes.map(p => `[${p[0]},${p[1]}]`).join(', ')}];

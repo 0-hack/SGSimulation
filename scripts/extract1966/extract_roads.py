@@ -9,7 +9,7 @@ xf=json.load(open('game_xform.json')); GX0,GY0,SPAN=xf['GX0'],xf['GY0'],xf['SPAN
 lvl=tifffile.TiffFile('/tmp/1966.tif').series[0].levels[LEVEL]
 img=lvl.asarray(); H,W=img.shape[:2]
 r,g,b=img[:,:,0].astype(np.int16),img[:,:,1].astype(np.int16),img[:,:,2].astype(np.int16)
-red=(r-g>30)&(g-b<12)&(r>120)&(r-b>38)
+red=(r-g>20)&(g-b<15)&(g<112)&(r-b>22)&(r>95)   # full maroon road network (dark red lines, not light urban fill)
 print('red frac',round(float(red.mean()),4),int(time.time()-t0),'s')
 road=ndi.binary_closing(red,iterations=2)
 road=mo.remove_small_objects(road,40)

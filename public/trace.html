@@ -63,6 +63,9 @@
     <button id="undo">↶ Undo</button><button id="fit">Fit</button>
     <button id="clear" style="background:#5a2a2a;border-color:#7a3a3a">Clear layer</button>
   </div>
+  <div class="grp" title="Trace missing roads over the map, then add them straight into the game (non-destructive)">
+    <button id="applygame" style="background:#1f5a35;border-color:#2ecc71;color:#fff">🎮 Add to game</button>
+  </div>
   <div class="grp">
     <button id="save" title="Save the working state in this browser (also autosaves)">💾 Save</button>
     <button id="export" title="Download the trace as a JSON file to send back">⬇ Export</button>
@@ -378,6 +381,18 @@ $('export').onclick = () => { finishCur();
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'sg1966-trace.json'; a.click(); draw(); updateStat(); };
 $('load').onchange = e => { const f = e.target.files[0]; if (!f) return; const rd = new FileReader();
   rd.onload = () => { try { applyLoaded(JSON.parse(rd.result)); sel = null; resumable = null; snapshot(); draw(); updateStat(); toast('Loaded'); } catch (err) { toast('Bad file: ' + err.message, true); } }; rd.readAsText(f); };
+// ---- live editing: add traced roads straight into the game's map data ----
+$('applygame').onclick = async () => {
+  finishCur(); updateStat();
+  const b = $('applygame'); const old = b.textContent; b.textContent = 'Adding…'; b.disabled = true;
+  try {
+    const r = await fetch('/api/trace/apply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ version: 3, ...data }) });
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error || 'apply failed');
+    toast('Added: ' + (j.did.join(' · ') || 'no changes') + ' — reload the game (new game) to see it');
+  } catch (e) { toast('Add failed: ' + e.message + ' (is the game server running?)', true); }
+  finally { b.textContent = old; b.disabled = false; }
+};
 $('help').onclick = () => $('hint').classList.toggle('hidden');
 $('hint').onclick = () => $('hint').classList.add('hidden');
 setInterval(() => autosave(), 5000);

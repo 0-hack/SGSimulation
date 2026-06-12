@@ -102,6 +102,31 @@ api.get('/health', (_req, res) => res.json({ ok: true, time: Date.now() }));
 
 app.use('/api', api);
 
+// ---- live map editing (the in-browser tracer) ------------------------------
+// Lets public/trace.html apply traced corrections straight to the game's map
+// data, and load the current network back for editing. Local-dev tool; disable
+// with TRACE_EDIT=0 on a shared/public deployment.
+if (process.env.TRACE_EDIT !== '0') {
+  // GET current road network as tracer polylines (so you can correct it)
+  app.get('/api/trace/current', async (_req, res) => {
+    try {
+      const { graphToTrace } = await import('../scripts/apply_trace.mjs');
+      const m = await import('../public/js/roads1966.js?u=' + Date.now());
+      res.json(graphToTrace(m.ROAD_NODES_1966, m.ROAD_EDGES_1966));
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+  // POST a trace -> write it into the game's source files (reflected on reload)
+  app.post('/api/trace/apply', async (req, res) => {
+    try {
+      const { applyTrace } = await import('../scripts/apply_trace.mjs');
+      // live edits ADD traced roads to the network (non-destructive); other
+      // layers (coast/sands/…) replace their whole feature as usual.
+      const did = await applyTrace(req.body || {}, { mergeRoads: true });
+      res.json({ ok: true, did });
+    } catch (e) { res.status(400).json({ ok: false, error: e.message }); }
+  });
+}
+
 // ---- static client ---------------------------------------------------------
 app.use(express.static(PUBLIC_DIR));
 // SPA-ish fallback for direct links like /world/<id>

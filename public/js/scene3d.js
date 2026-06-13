@@ -1361,6 +1361,7 @@ export class Scene3D {
     const id = `${x},${y}`;
     if (this.buildings.has(id)) this.removeBuilding(x, y, false);
     const b = BUILDINGS[key];
+    if (!b) return; // unknown building key (e.g. a landmark def missing) — skip
     const group = makeBuilding(key, theme);
     const c = cellToWorld(x, y);
     group.position.set(c.x, this.terrainHeight(x, y), c.z);
@@ -2423,6 +2424,7 @@ function addCars(g, lx, lz, w, d) {
 export function makeBuilding(key, theme) {
   const b = BUILDINGS[key];
   const g = new THREE.Group();
+  if (!b) return g; // unknown key (e.g. a landmark def not yet registered) — render nothing
   // Player-buildable 3D-designed landmark (from design.html): render its parts.
   // The landmark's scale is baked into each part so the build/grow animation
   // (which drives group.scale.y) still works.

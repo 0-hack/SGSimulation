@@ -685,9 +685,8 @@ async function visitWorld(id) {
     G.state = world.state;
     G.readOnly = true;
     G.cloud = null;
-    refreshSummary(G.state);
-    G.view.setState(G.state);
-    G.view.centerCamera();
+    // attachState() registers this world's landmarks BEFORE rendering, then
+    // setStates + centres the camera — so visitors see what the owner built.
     attachState();
     $('visit-name').textContent = `${world.name} (by ${world.owner})`;
     $('visit-banner').classList.remove('hidden');

@@ -263,21 +263,43 @@ function updateStat() {
   $('stat').innerHTML = s;
   autosave();
 }
-// Load everything ALREADY in the game (roads/coast/reservoirs/railway/sands/
-// airport) so each shows under its "show" filter. Read-only; the GET endpoint is
-// always available (even with editing disabled). Non-blocking — works offline.
+// Load everything ALREADY in the game (roads/coast/reservoirs/railway/sands) so
+// each shows under its "show" filter. Reads the game's STATIC data modules
+// directly (always served, no API/server-restart needed). Falls back to the
+// /api/trace/current endpoint if a module import is blocked.
 function loadGameData() {
-  fetch('/api/trace/current').then(r => r.json()).then(j => {
+  const u = '?u=' + Date.now(), W = 1600;
+  const toNorm = (p) => [p[0] / W + 0.5, 0.5 - p[1] / W]; // road node [x,z] world -> normalised
+  Promise.all([
+    import('/js/roads1966.js' + u).catch(() => ({})),
+    import('/js/shape.js' + u).catch(() => ({})),
+    import('/js/custom1966.js' + u).catch(() => ({})),
+  ]).then(([rd, sh, cu]) => {
+    const N = rd.ROAD_NODES_1966, E = rd.ROAD_EDGES_1966;
+    if (!N || !E) throw new Error('modules unavailable');
     game = {
-      roads: (j.roads || []).map(r => (r.pts || r)).filter(p => p && p.length >= 2),
-      mainland: (j.mainland || []).filter(p => p && p.length >= 2),
-      reservoirs: (j.reservoirs || []).filter(p => p && p.length >= 2),
-      railway: (j.railway || []).filter(p => p && p.length >= 2),
-      sands: (j.sands || []).filter(p => p && p.length >= 2),
-      airport: (j.airport || []).map(r => (r.pts || r)).filter(p => p && p.length >= 2),
+      roads: E.map((e) => [toNorm(N[e[0]]), toNorm(N[e[1]])]).filter((p) => p[0] && p[1]),
+      mainland: [sh.SG_OUTLINE, ...(sh.SG_ISLANDS || [])].filter((p) => p && p.length >= 3),
+      reservoirs: (rd.RESERVOIRS_1966 || []).filter((p) => p && p.length >= 3),
+      railway: cu.CUSTOM_RAILWAYS || [],
+      sands: [...(sh.SG_SANDS || []), ...(cu.CUSTOM_SANDS || [])].filter((p) => p && p.length >= 3),
+      airport: [],
     };
     draw(); updateStat();
-  }).catch(() => {});
+  }).catch(() => {
+    // fallback: the read-only endpoint
+    fetch('/api/trace/current').then((r) => r.json()).then((j) => {
+      game = {
+        roads: (j.roads || []).map((r) => (r.pts || r)).filter((p) => p && p.length >= 2),
+        mainland: (j.mainland || []).filter((p) => p && p.length >= 2),
+        reservoirs: (j.reservoirs || []).filter((p) => p && p.length >= 2),
+        railway: (j.railway || []).filter((p) => p && p.length >= 2),
+        sands: (j.sands || []).filter((p) => p && p.length >= 2),
+        airport: (j.airport || []).map((r) => (r.pts || r)).filter((p) => p && p.length >= 2),
+      };
+      draw(); updateStat();
+    }).catch(() => {});
+  });
 }
 
 let drawing = false, panning = false, panStart = null, lastPt = null; const keys = {};

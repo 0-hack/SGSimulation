@@ -136,7 +136,11 @@ if (process.env.TRACE_EDIT !== '0') {
 }
 
 // ---- static client ---------------------------------------------------------
-app.use(express.static(PUBLIC_DIR));
+// no-cache on HTML/JS/JSON so players always get the latest after an update
+// (these are small; the browser still revalidates with ETag).
+app.use(express.static(PUBLIC_DIR, {
+  setHeaders: (res, p) => { if (/\.(html|js|json)$/.test(p)) res.setHeader('Cache-Control', 'no-cache'); },
+}));
 // SPA-ish fallback for direct links like /world/<id>
 app.get('*', (_req, res) => res.sendFile(join(PUBLIC_DIR, 'index.html')));
 

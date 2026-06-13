@@ -19,8 +19,8 @@ try {
   await p.waitForSelector('.road-tool');
   ok(true, 'Roads category shows the drawing toolkit');
 
-  // pick Avenue type + Straight tool
-  await p.evaluate(()=>[...document.querySelectorAll('.road-types .opt')].find(b=>/Avenue/.test(b.textContent))?.click());
+  // pick Road mode + Straight tool
+  await p.evaluate(()=>[...document.querySelectorAll('.road-types .opt')].find(b=>/Road/.test(b.textContent))?.click());
   await p.evaluate(()=>[...document.querySelectorAll('.road-tool')].find(b=>/Straight/.test(b.textContent)).click());
   await new Promise(r=>setTimeout(r,200));
 
@@ -43,7 +43,7 @@ try {
   await new Promise(r=>setTimeout(r,300));
   const after = await p.evaluate(()=>{ const e=window.__sgview.state.roads.edges; return { edges:e.length, type:e[e.length-1]?.type, edgePts:window.__sgview.edgePts.length }; });
   ok(after.edges > before, `tapping the map added a road edge (${before} → ${after.edges})`);
-  ok(after.type === 'avenue', 'the drawn road uses the selected Avenue type');
+  ok(after.type === 'road', 'the drawn road uses the Road mode');
   ok(after.edgePts >= 1, 'road network rebuilt for rendering/traffic');
 
   // a roundabout

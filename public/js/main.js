@@ -243,17 +243,18 @@ function setSpeed(s) {
 // ===========================================================================
 // Building interaction
 // ===========================================================================
+// Reclaim one sea cell (used as the drag-to-paint callback while in reclaim mode).
+function doReclaim(x, y) {
+  if (G.readOnly || !G.view.canReclaim(x, y)) return; // silently skip non-sea cells while dragging
+  const cost = reclaimCost(G.state, 1);
+  if (G.state.treasury < cost) { toast(`Out of funds for reclamation (need ${money(cost)}/tile).`); return; }
+  const r = reclaimLand(G.state, x, y);
+  if (r.ok) { G.view.applyReclaim(x, y); afterEdit(); }
+}
+
 function onTileTap(x, y) {
   if (G.readOnly) { toast('You are visiting — building is disabled here.'); return; }
   const b = G.build;
-  if (G.reclaim.active) {
-    if (!G.view.canReclaim(x, y)) { toast('You can only reclaim open Singapore sea. 🌊'); return; }
-    const cost = reclaimCost(G.state, 1);
-    if (G.state.treasury < cost) { toast(`Need ${money(cost)} to reclaim this tile.`); return; }
-    const r = reclaimLand(G.state, x, y);
-    if (r.ok) { G.view.applyReclaim(x, y); afterEdit(); toast(`Reclaimed land for ${money(r.cost)}. 🏝️`); }
-    return;
-  }
   if (b.bulldoze) {
     if (demolish(G.state, x, y)) { G.view.onDemolished(x, y); afterEdit(); toast('Demolished.'); }
     return;
@@ -372,7 +373,7 @@ function selectRoadTool(tool) {
   G.road.tool = G.road.tool === tool ? null : tool;
   G.road.pending = [];
   G.build.selected = null; G.build.bulldoze = false; G.reclaim.active = false;
-  G.view.setPreview(null); G.view.setBulldoze(false);
+  G.view.setPreview(null); G.view.setBulldoze(false); G.view.setPaintMode(false);
   G.view.setRoadMode(!!G.road.tool);
   G.view.showRoadPreview([]);
   refreshPanel();
@@ -390,8 +391,11 @@ function toggleReclaim() {
     G.build.selected = null; G.build.bulldoze = false;
     G.road.tool = null; G.view.setRoadMode(false); G.view.showRoadPreview([]);
     G.view.setPreview(null); G.view.setBulldoze(false);
+    G.view.setPaintMode(true, doReclaim); // drag across the sea to fill land
     closeSheet();
-    toast('Reclaim mode: tap open sea to fill new land (costs money). 🏝️');
+    toast('Reclaim mode: drag across open sea to fill new land (costs money). 🏝️');
+  } else {
+    G.view.setPaintMode(false);
   }
   refreshPanel();
 }
@@ -426,11 +430,11 @@ function refreshPanel() {
       road: G.road, reclaim: G.reclaim, toggleReclaim,
       selectRoadTool, setRoadType: (t) => { G.road.type = t; refreshPanel(); },
       toggleBridge: () => { G.road.elevated = !G.road.elevated; refreshPanel(); },
-      setCat: (c) => { G.build.cat = c; if (c !== 'roads') { G.road.tool = null; G.view.setRoadMode(false); } if (c !== 'land') G.reclaim.active = false; refreshPanel(); },
+      setCat: (c) => { G.build.cat = c; if (c !== 'roads') { G.road.tool = null; G.view.setRoadMode(false); } if (c !== 'land') { G.reclaim.active = false; G.view.setPaintMode(false); } refreshPanel(); },
       setTheme: (t) => { G.build.theme = t; if (G.build.selected) G.view.setPreview(G.build.selected, t); refreshPanel(); },
       selectBuilding: (k) => {
         G.build.selected = G.build.selected === k ? null : k;
-        G.build.bulldoze = false; G.reclaim.active = false;
+        G.build.bulldoze = false; G.reclaim.active = false; G.view.setPaintMode(false);
         G.road.tool = null; G.view.setRoadMode(false); G.view.showRoadPreview([]);
         G.view.setPreview(G.build.selected, G.build.theme);
         refreshPanel();
@@ -442,7 +446,7 @@ function refreshPanel() {
       },
       toggleBulldoze: () => {
         G.build.bulldoze = !G.build.bulldoze;
-        G.build.selected = null; G.reclaim.active = false;
+        G.build.selected = null; G.reclaim.active = false; G.view.setPaintMode(false);
         G.road.tool = null; G.view.setRoadMode(false); G.view.showRoadPreview([]);
         G.view.setBulldoze(G.build.bulldoze);
         refreshPanel();

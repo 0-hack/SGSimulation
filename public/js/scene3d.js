@@ -931,6 +931,10 @@ export class Scene3D {
       this._moved = false; this._down = pos(e); this._downTime = performance.now(); this._last = pos(e);
       // right / middle mouse button, or shift+left, drags to pan the view
       this._panDrag = e.pointerType === 'mouse' && (e.button === 1 || e.button === 2 || (e.button === 0 && e.shiftKey));
+      // paint mode: a drag fills cells (no camera orbit). Paint the first cell now.
+      if (this.paintMode && this.onPaint && !this._panDrag && this._pointers.size === 1) {
+        this._painting = true; this._paintSeen = new Set(); this._paintAt(pos(e));
+      }
     });
     c.addEventListener('contextmenu', (e) => e.preventDefault()); // free the right button for panning
     c.addEventListener('pointermove', (e) => {
@@ -951,6 +955,7 @@ export class Scene3D {
       const dx = p.x - this._last.x, dy = p.y - this._last.y;
       this._last = p;
       if (Math.abs(p.x - this._down.x) > 5 || Math.abs(p.y - this._down.y) > 5) this._moved = true;
+      if (this._painting) { this._paintAt(p); return; }     // drag paints cells (reclamation)
       if (this._panDrag) { this._pan(dx, dy); this._hover(p); return; } // drag to shift the view
       this.cam.theta -= dx * 0.005;
       this.cam.phi = THREE.MathUtils.clamp(this.cam.phi - dy * 0.005, 0.22, 1.28);
@@ -958,6 +963,13 @@ export class Scene3D {
     });
     const end = (e) => {
       const p = pos(e);
+      if (this._painting) { // finish a paint drag; a plain tap already painted on pointerdown
+        this._painting = false; this._paintSeen = null;
+        this._pointers.delete(e.pointerId);
+        if (this._pointers.size < 2) { this._lastPinch = 0; this._lastMid = null; }
+        if (this._pointers.size === 0) this._panDrag = false;
+        return;
+      }
       const quick = performance.now() - this._downTime < 400;
       if (!this._moved && quick && this._pointers.size <= 1) {
         if (this.roadMode && this.onGroundTap) {
@@ -1052,6 +1064,14 @@ export class Scene3D {
     if (gx < 0 || gy < 0 || gx >= N || gy >= N) return null;
     return { x: gx, y: gy };
   }
+  // Paint the cell under screen point p (once per cell per drag).
+  _paintAt(p) {
+    const cell = this._raycastCell(p); if (!cell || !this.onPaint) return;
+    const id = cell.x + ',' + cell.y;
+    if (this._paintSeen && this._paintSeen.has(id)) return;
+    if (this._paintSeen) this._paintSeen.add(id);
+    this.onPaint(cell.x, cell.y);
+  }
   isLand(x, y) {
     const base = (this.land[y] && this.land[y][x]) || (this.reclaimedMask && this.reclaimedMask[y] && this.reclaimedMask[y][x]);
     return !!(base && !(this.reserveMask && this.reserveMask[y][x]) && !(this.riverMask && this.riverMask[y][x]) && !(this.airportMask && this.airportMask[y][x]));
@@ -1071,27 +1091,49 @@ export class Scene3D {
   // A block of new land filling the sea cell from the seabed up to ground level.
   _reclaimSlab(x, y) {
     const c = cellToWorld(x, y), H = 1.5;
-    const m = new THREE.Mesh(new THREE.BoxGeometry(TILE, H, TILE), toon(0xc7b489)); // sandy fill
+    const m = new THREE.Mesh(new THREE.BoxGeometry(TILE, H, TILE), toon(0xc7b489)); // sandy by default
     m.position.set(c.x, 0.05 - H / 2, c.z); m.receiveShadow = true;
     return m;
   }
   // Add the visual for one freshly reclaimed cell during play + flag the mask.
   applyReclaim(x, y) {
     if (!this.reclaimedMask) this.reclaimedMask = Array.from({ length: N }, () => Array(N).fill(false));
-    if (!this.reclaimGroup) { this.reclaimGroup = new THREE.Group(); this.scene.add(this.reclaimGroup); }
+    if (!this.reclaimGroup) { this.reclaimGroup = new THREE.Group(); this.scene.add(this.reclaimGroup); this.reclaimSlabs = new Map(); }
     this.reclaimedMask[y][x] = true;
-    this.reclaimGroup.add(this._reclaimSlab(x, y));
+    const m = this._reclaimSlab(x, y); this.reclaimGroup.add(m); this.reclaimSlabs.set(x + ',' + y, m);
     const c = cellToWorld(x, y); this._spawnDust(c.x, c.z, 0xd9c79a); // fill splash
     const g = this.natureCells?.get(x + ',' + y); if (g) g.visible = false;
+    this._scheduleCoast();   // update the coastline (beach rim vs inland) shortly
   }
   // Rebuild all reclaimed-land visuals from saved state (on new game / load).
   _syncReclaimed() {
     if (this.reclaimGroup) { this.scene.remove(this.reclaimGroup); this.reclaimGroup = null; }
+    this.reclaimSlabs = new Map();
     this.reclaimedMask = Array.from({ length: N }, () => Array(N).fill(false));
     const list = (this.state && this.state.reclaimed) || [];
     if (!list.length) return;
     const g = new THREE.Group(); this.scene.add(g); this.reclaimGroup = g;
-    for (const [x, y] of list) if (x >= 0 && y >= 0 && x < N && y < N) { this.reclaimedMask[y][x] = true; g.add(this._reclaimSlab(x, y)); }
+    for (const [x, y] of list) if (x >= 0 && y >= 0 && x < N && y < N) {
+      this.reclaimedMask[y][x] = true; const m = this._reclaimSlab(x, y); g.add(m); this.reclaimSlabs.set(x + ',' + y, m);
+    }
+    this._refreshCoast();
+  }
+  // A reclaimed cell borders open sea (so its edge is a new beach) if any of its
+  // 4-neighbours is water that is neither original land nor already reclaimed.
+  _isOpenSea(x, y) {
+    if (x < 0 || y < 0 || x >= N || y >= N) return false;
+    return !(this.land[y] && this.land[y][x]) && !(this.reclaimedMask && this.reclaimedMask[y][x]);
+  }
+  _scheduleCoast() { clearTimeout(this._coastT); this._coastT = setTimeout(() => this._refreshCoast(), 120); }
+  // Recolour reclaimed land so the new coastline reads correctly: a sandy beach
+  // on cells that still front open sea, earthy-green reclaimed land inland.
+  _refreshCoast() {
+    if (!this.reclaimSlabs) return;
+    for (const [id, mesh] of this.reclaimSlabs) {
+      const [x, y] = id.split(',').map(Number);
+      const coastal = this._isOpenSea(x - 1, y) || this._isOpenSea(x + 1, y) || this._isOpenSea(x, y - 1) || this._isOpenSea(x, y + 1);
+      mesh.material.color.setHex(coastal ? 0xd9c79a : 0x93a06a); // beach : reclaimed inland
+    }
   }
   // Is a world point over the protected reservoir / catchment? (blocks road drawing)
   isReserveAt(wx, wz) {
@@ -1673,6 +1715,9 @@ export class Scene3D {
 
   // ---- freeform road network (player-drawn) --------------------------------
   setRoadMode(on) { this.roadMode = on; if (!on) this.clearRoadPreview(); }
+  // Paint mode (land reclamation): drag across the map to apply onPaint to each
+  // cell instead of orbiting the camera.
+  setPaintMode(on, onPaint) { this.paintMode = !!on; this.onPaint = onPaint || null; if (!on) { this._painting = false; this._paintSeen = null; } }
 
   // Sample an edge's centre-line into world points (with bridge elevation).
   // ground height a road sits on: follow the terrain so it doesn't sink into hills

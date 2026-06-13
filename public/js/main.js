@@ -77,9 +77,13 @@ function boot() {
 
   // exit "place mode": the ✕ Done button or the Esc key
   $('tool-banner-stop').onclick = cancelTools;
+  // commit bar for a drawn route / reclaim area
+  $('dc-build').onclick = () => { const fn = G._pendingCommit; closeCommit(false); if (fn) fn(); };
+  $('dc-cancel').onclick = () => { closeCommit(true); toast('Discarded.'); };
   window.addEventListener('keydown', (e) => {
     const t = e.target;
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+    if (e.key === 'Escape' && G._pendingCommit) { closeCommit(true); toast('Discarded.'); e.preventDefault(); return; }
     if (e.key === 'Escape' && activeTool()) { cancelTools(); toast('Stopped placing.'); e.preventDefault(); }
   });
 
@@ -276,26 +280,26 @@ function setSpeed(s) {
 // ===========================================================================
 // Building interaction
 // ===========================================================================
-// Reclaim one sea cell (used as the drag-to-paint callback while in reclaim mode).
-function doReclaim(x, y) {
-  if (G.readOnly || !G.view.canReclaim(x, y)) return; // silently skip non-sea cells while dragging
-  const cost = reclaimCost(G.state, 1);
-  if (G.state.treasury < cost) {
-    // the brush touches many cells per drag — only warn about funds once a second
-    const now = performance.now();
-    if (now - (G._reclaimWarn || 0) > 1000) { G._reclaimWarn = now; toast(`Out of funds for reclamation (need ${money(cost)}/tile).`); }
-    return;
-  }
-  const r = reclaimLand(G.state, x, y);
-  if (r.ok) scheduleReclaimRefresh(); // shows land rising; it tops out over time
-}
-// The reclaim brush touches many cells per drag — coalesce the (heavier) view &
-// HUD refresh into one per animation frame so big sweeps stay smooth.
-let _reclaimPending = false;
-function scheduleReclaimRefresh() {
-  if (_reclaimPending) return;
-  _reclaimPending = true;
-  requestAnimationFrame(() => { _reclaimPending = false; if (G.view) G.view.syncReclamation(G.state); afterEdit(); });
+// Reclaim land freehand: the player draws a loop over open sea (like trace.html),
+// and on release we fill every reclaimable cell inside it — after a cost prompt.
+function onReclaimArea(pts) {
+  if (G.readOnly) { G.view.clearRoadPreview(); return; }
+  const cells = (pts && pts.length >= 3) ? G.view._cellsInArea(pts) : [];
+  if (!cells.length) { G.view.clearRoadPreview(); toast('Draw a loop over open sea to reclaim it. 🏝️'); return; }
+  const cost = reclaimCost(G.state, cells.length); // priced with the live inflation/price index
+  promptCommit({
+    title: '🏝 Reclaim land',
+    detail: `${cells.length} tiles · ${money(cost)}`,
+    confirm: 'Reclaim',
+    onConfirm: () => {
+      let n = 0;
+      for (const [x, y] of cells) { const r = reclaimLand(G.state, x, y); if (r.ok) n++; else break; } // reclaimLand charges per tile at current prices
+      G.view.syncReclamation(G.state);
+      G.view.clearRoadPreview();
+      afterEdit();
+      toast(n < cells.length ? `Reclaimed ${n}/${cells.length} tiles — ran out of funds.` : `Reclaiming ${n} tiles. 🏝️`);
+    },
+  });
 }
 
 function onTileTap(x, y) {
@@ -366,6 +370,7 @@ function setEditPause(on) {
 function cancelTools() {
   G.build.selected = null; G.build.bulldoze = false; G.reclaim.active = false;
   G.road.tool = null; G.road.pending = [];
+  closeCommit(true);
   if (G.view) { G.view.setPreview(null); G.view.setBulldoze(false); G.view.setRoadMode(false); G.view.setPaintMode(false); G.view.setDrawMode(false); G.view.showRoadPreview([]); }
   updateToolBanner();
   if (G.currentPanel === 'build') refreshPanel();
@@ -457,25 +462,47 @@ function onGroundTap(x, z) {
   }
   G.view.showRoadPreview(R.pending, R.type, R.elevated);
 }
-// A route drawn freehand on the map → queue it for construction (builds with a
-// works crew, charged by length & type; railways become rail, others roads).
+// A route drawn freehand on the map → show a commit prompt with the cost; on
+// confirm, queue it for construction (cost reflects the live price/inflation).
 function onRouteDrawn(pts) {
-  if (G.readOnly) return;
-  // a bare tap (or a stroke that never left the start point) draws nothing —
-  // tell the player to hold and drag instead of failing silently.
-  if (!pts || pts.length < 2) { toast('Hold and drag across the map to draw the route — a single tap is too short. ✏️'); return; }
+  if (G.readOnly) { G.view.clearRoadPreview(); return; }
+  // a bare tap (or a stroke that never left the start point) draws nothing.
+  if (!pts || pts.length < 2) { G.view.clearRoadPreview(); toast('Hold and drag across the map to draw the route. ✏️'); return; }
   const T = ROAD_TYPES[G.road.type] || ROAD_TYPES.road;
   const len = routeLength(pts);
-  if (len < 8) { toast('That route is too short — drag a longer line across the map.'); return; }
+  if (len < 8) { G.view.clearRoadPreview(); toast('That route is too short — drag a longer line.'); return; }
   const cost = priced(T.cost * Math.max(1, len / 20), G.state);
-  if (G.state.treasury < cost) { toast(`Need ${money(cost)} for this ${T.name.toLowerCase()}.`); return; }
-  const total = Math.max(3, Math.min(40, Math.round(len / 15)));
-  G.state.treasury -= cost;
-  const kind = T.air ? 'air' : T.rail ? 'rail' : 'road';
-  addRoadwork(G.state, { pts, kind, type: G.road.type, lanes: T.lanes, elevated: G.road.elevated, total });
-  G.view.syncRoadworks(G.state);
-  afterEdit();
-  toast(`${T.name} — construction started (${money(cost)}). ✕ Done / Esc to stop.`);
+  promptCommit({
+    title: `${T.icon || ''} ${T.name}`,
+    detail: `${Math.round(len)} m · ${money(cost)}`,
+    confirm: 'Build',
+    onConfirm: () => {
+      if (G.state.treasury < cost) { toast(`Need ${money(cost)} for this ${T.name.toLowerCase()}.`); return; }
+      const total = Math.max(3, Math.min(40, Math.round(len / 15)));
+      G.state.treasury -= cost;
+      const kind = T.air ? 'air' : T.rail ? 'rail' : 'road';
+      addRoadwork(G.state, { pts, kind, type: G.road.type, lanes: T.lanes, elevated: G.road.elevated, total });
+      G.view.syncRoadworks(G.state);
+      G.view.clearRoadPreview();
+      afterEdit();
+      toast(`${T.name} — construction started (${money(cost)}).`);
+    },
+  });
+}
+// Bottom commit bar for a drawn route/area: shows the cost and Build / Cancel.
+// Cancel (or Esc) discards the drawing; confirm runs onConfirm.
+function promptCommit({ title, detail, confirm = 'Build', onConfirm }) {
+  G._pendingCommit = onConfirm;
+  const bar = $('draw-confirm');
+  $('dc-title').textContent = title;
+  $('dc-detail').textContent = detail;
+  $('dc-build').textContent = confirm;
+  bar.classList.remove('hidden');
+}
+function closeCommit(discard) {
+  $('draw-confirm')?.classList.add('hidden');
+  G._pendingCommit = null;
+  if (discard && G.view) G.view.clearRoadPreview();
 }
 function applyRoadToolMode() {
   const draw = G.road.tool === 'draw';
@@ -493,7 +520,7 @@ function selectRoadTool(tool) {
   refreshPanel();
   if (G.road.tool) {
     closeSheet();
-    const msg = { draw: 'Drag across the map to draw the route — it builds with a works crew.',
+    const msg = { draw: 'Draw freely by dragging. Hover an existing road end to continue from it. Release to see the cost, then Build.',
       straight: 'Tap two points to lay a straight road (keep tapping to chain).',
       curve: 'Tap start, a curve point, then the end. Chains on.',
       roundabout: 'Tap to place a roundabout.', erase: 'Tap a road to remove it.' }[G.road.tool];
@@ -507,11 +534,13 @@ function toggleReclaim() {
     G.build.selected = null; G.build.bulldoze = false;
     G.road.tool = null; G.view.setRoadMode(false); G.view.showRoadPreview([]);
     G.view.setPreview(null); G.view.setBulldoze(false);
-    G.view.setPaintMode(true, doReclaim, 2.2); // brush: drag to draw new land freehand
+    closeCommit(true);
+    G.view.setDrawMode(true, onReclaimArea, { area: true }); // draw a loop over the sea, like trace.html
     closeSheet();
-    toast('Reclaim mode: drag across open sea to draw new land freehand (costs money). 🏝️ ✕ Done / Esc to stop.');
+    toast('Reclaim mode: draw a loop around the sea you want to fill — release to see the cost. 🏝️ ✕ Done / Esc to stop.');
   } else {
-    G.view.setPaintMode(false);
+    G.view.setDrawMode(false);
+    closeCommit(true);
   }
   refreshPanel();
   updateToolBanner();

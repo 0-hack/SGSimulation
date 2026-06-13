@@ -123,6 +123,14 @@
     <button id="tool-banner-stop">✕ Done</button>
   </div>
 
+  <!-- Commit bar for a freehand-drawn road / reclaim area: shows the cost,
+       then Build (commit & charge) or Cancel (discard). -->
+  <div id="draw-confirm" class="draw-confirm hidden">
+    <div class="dc-info"><b id="dc-title"></b><span id="dc-detail"></span></div>
+    <button id="dc-cancel" class="dc-cancel">Cancel</button>
+    <button id="dc-build" class="dc-build">Build</button>
+  </div>
+
   <script type="module" src="/js/main.js"></script>
 </body>
 </html>

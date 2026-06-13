@@ -86,6 +86,21 @@ svg { display: block; width: 100%; height: 100%; }
 .tool-banner b { font-weight: 800; }
 .tool-banner .tb-sub { font-weight: 600; opacity: 0.92; font-size: 12px; }
 
+/* ---- commit bar for a drawn road / reclaim area --------------------------- */
+.draw-confirm { position: fixed; left: 50%; transform: translateX(-50%); bottom: 150px; z-index: 70;
+  display: flex; gap: 10px; align-items: center; background: #1b2433; color: #fff;
+  padding: 9px 10px 9px 16px; border-radius: 999px; font-size: 14px;
+  box-shadow: 0 8px 22px rgba(0,0,0,0.45); max-width: 94vw; }
+.draw-confirm.hidden { display: none; }
+.draw-confirm .dc-info { display: flex; flex-direction: column; line-height: 1.2; margin-right: 4px; }
+.draw-confirm .dc-info b { font-weight: 800; }
+.draw-confirm .dc-info span { font-size: 12px; color: #cdd6e2; }
+.draw-confirm button { border: none; border-radius: 999px; padding: 8px 16px; font-weight: 800; cursor: pointer; white-space: nowrap; }
+.draw-confirm .dc-cancel { background: rgba(255,255,255,0.16); color: #fff; }
+.draw-confirm .dc-cancel:hover { background: rgba(255,255,255,0.28); }
+.draw-confirm .dc-build { background: var(--teal, #11a39c); color: #fff; }
+.draw-confirm .dc-build:hover { filter: brightness(1.08); }
+
 /* ---- edit mode: time & the world are paused so you can build calmly -------- */
 /* a soft pulsing frame around the viewport makes it obvious editing is on */
 body.edit-mode::after {

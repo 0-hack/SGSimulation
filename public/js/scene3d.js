@@ -940,10 +940,13 @@ export class Scene3D {
       this._moved = false; this._down = pos(e); this._downTime = performance.now(); this._last = pos(e);
       // right / middle mouse button, or shift+left, drags to pan the view
       this._panDrag = e.pointerType === 'mouse' && (e.button === 1 || e.button === 2 || (e.button === 0 && e.shiftKey));
-      // draw mode: a drag traces a route (road/railway), no camera orbit
+      // draw mode: a drag traces a route (road/railway/airport) or a reclaim area
       if (this.drawMode && this.onStroke && !this._panDrag && this._pointers.size === 1) {
         const g = this._raycastGround(pos(e));
-        this._drawing = true; this._stroke = g ? [{ x: g.x, z: g.z }] : [];
+        // start from a snapped existing road end if we're hovering one (continue a road)
+        const start = (this._snap && !this._drawArea) ? { x: this._snap.x, z: this._snap.z } : (g ? { x: g.x, z: g.z } : null);
+        this._drawing = true; this._stroke = start ? [start] : [];
+        this._renderDrawPreview(this._stroke);
       }
       // paint mode: a drag fills cells (no camera orbit). Paint the first cell now.
       if (this.paintMode && this.onPaint && !this._panDrag && this._pointers.size === 1) {
@@ -969,10 +972,10 @@ export class Scene3D {
       const dx = p.x - this._last.x, dy = p.y - this._last.y;
       this._last = p;
       if (Math.abs(p.x - this._down.x) > 5 || Math.abs(p.y - this._down.y) > 5) this._moved = true;
-      if (this._drawing) { // drag traces a route; sample ground points every few units
+      if (this._drawing) { // drag traces a route in real time; sample finely for a smooth curve
         const g = this._raycastGround(p);
         if (g) { const last = this._stroke[this._stroke.length - 1];
-          if (!last || Math.hypot(g.x - last.x, g.z - last.z) > 6) { this._stroke.push({ x: g.x, z: g.z }); this.showRoadPreview(this._stroke, this._drawType, this._drawElevated); } }
+          if (!last || Math.hypot(g.x - last.x, g.z - last.z) > 2.5) { this._stroke.push({ x: g.x, z: g.z }); this._renderDrawPreview(this._stroke); } }
         return;
       }
       if (this._painting) { this._paintAt(p); return; }     // drag paints cells (reclamation)
@@ -983,19 +986,18 @@ export class Scene3D {
     });
     const end = (e) => {
       const p = pos(e);
-      if (this._drawing) { // finish a route stroke
-        // make sure the point where the finger/mouse lifts is part of the route,
-        // so even a short trackpad drag yields a real two-point line to build.
+      if (this._drawing) { // finish a route/area stroke
+        // make sure the point where the finger/mouse lifts is part of the route.
         const g = this._raycastGround(p);
         if (g && this._stroke) { const last = this._stroke[this._stroke.length - 1];
           if (!last || Math.hypot(g.x - last.x, g.z - last.z) > 0.5) this._stroke.push({ x: g.x, z: g.z }); }
         const stroke = this._stroke;
-        this._drawing = false; this._stroke = null; this.clearRoadPreview();
+        this._drawing = false; this._stroke = null;
+        this._renderDrawPreview(stroke);   // keep the drawn shape on screen until the player commits/cancels
         this._pointers.delete(e.pointerId);
         if (this._pointers.size < 2) { this._lastPinch = 0; this._lastMid = null; }
         if (this._pointers.size === 0) this._panDrag = false;
-        // always hand the stroke back so the game can guide the player (e.g. a
-        // bare tap that drew nothing gets a "hold and drag" hint instead of silence).
+        // hand the stroke back; the game shows a commit prompt (with the cost).
         if (this.onStroke) this.onStroke(stroke || []);
         return;
       }
@@ -1272,10 +1274,73 @@ export class Scene3D {
   }
 
   _hover(p) {
+    if (this.drawMode) { this._drawHover(p); return; }   // road/area drawing: snap to existing road ends
     if (!this.previewKey && !this.bulldoze) { if (this.ghost) this.ghost.visible = false; return; }
     const cell = this._raycastCell(p);
     this.hoverCell = cell;
     this._updateGhost();
+  }
+  // While in draw mode (and not mid-stroke), light up the nearest existing road
+  // end the cursor/pencil is near, so the player knows they can start there.
+  _drawHover(p) {
+    if (this._drawing || this._drawArea) { this._clearSnapMarker(); return; }
+    const g = this._raycastGround(p);
+    const s = g ? this._nearestSnap(g.x, g.z, 9) : null;
+    this._snap = s;
+    if (s) this._showSnapMarker(s.x, s.z); else this._clearSnapMarker();
+  }
+  _nearestSnap(x, z, maxD) {
+    const nodes = this.navNodes || [];
+    let best = null, bd = maxD;
+    for (const n of nodes) { const d = Math.hypot(n.x - x, n.z - z); if (d < bd) { bd = d; best = n; } }
+    return best ? { x: best.x, z: best.z } : null;
+  }
+  _showSnapMarker(x, z) {
+    if (!this._snapMarker) {
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(2.8, 0.55, 8, 24), toon(0xffd24a));
+      ring.rotation.x = -Math.PI / 2; this.scene.add(ring); this._snapMarker = ring;
+    }
+    this._snapMarker.position.set(x, this._roadY(x, z) + 0.35, z);
+    this._snapMarker.visible = true;
+  }
+  _clearSnapMarker() { if (this._snapMarker) this._snapMarker.visible = false; this._snap = null; }
+  // Live preview of what's being drawn: a road ribbon (its true width) under a
+  // bright glow, or a closed outline for a reclamation area. Stays up until the
+  // player commits or cancels.
+  _renderDrawPreview(pts) {
+    if (this._drawPreviewGroup) this.scene.remove(this._drawPreviewGroup);
+    const g = new THREE.Group(); this.scene.add(g); this._drawPreviewGroup = g;
+    if (!pts || !pts.length) return;
+    const V = pts.map((q) => new THREE.Vector3(q.x, this._roadY(q.x, q.z) + 0.06, q.z));
+    if (this._drawArea) {
+      if (V.length >= 2) { const loop = V.concat([V[0]]); this._addRibbon(g, loop, 0.8, 0xffd24a, 0.08); }
+    } else if (V.length >= 2) {
+      const hw = this._drawRail ? 1.7 : this._drawAir ? 4.5 : (ROAD_TYPES[this._drawType]?.renderHW || ROAD_TYPES[this._drawType]?.width / 2 || 0.34);
+      this._addRibbon(g, V, hw + 0.6, 0xffe08a, 0.05);                                   // bright glow so it reads while drawing
+      this._addRibbon(g, V, hw, this._drawRail ? 0x5b5040 : this._drawAir ? 0x35383d : 0x33363d, 0.07); // the real carriageway
+    }
+    const tip = new THREE.Mesh(new THREE.SphereGeometry(0.9, 10, 8), toon(0xffd24a));
+    tip.position.copy(V[V.length - 1]); tip.position.y += 0.4; g.add(tip);
+  }
+  // Grid cells inside a drawn world-space loop that can be reclaimed (for area reclaim).
+  _cellsInArea(pts) {
+    if (!pts || pts.length < 3) return [];
+    const poly = pts.map((q) => [q.x, q.z]);
+    const inside = (x, z) => {
+      let h = false;
+      for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+        const xi = poly[i][0], zi = poly[i][1], xj = poly[j][0], zj = poly[j][1];
+        if (((zi > z) !== (zj > z)) && (x < (xj - xi) * (z - zi) / (zj - zi) + xi)) h = !h;
+      }
+      return h;
+    };
+    const out = [];
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+      if (!this.canReclaim(x, y)) continue;
+      const w = cellToWorld(x, y);
+      if (inside(w.x, w.z)) out.push([x, y]);
+    }
+    return out;
   }
 
   // ---- external API (mirrors the 2D view) ----------------------------------
@@ -1826,7 +1891,7 @@ export class Scene3D {
   setPaintMode(on, onPaint, radius) { this.paintMode = !!on; this.onPaint = onPaint || null; this.paintRadius = on ? (radius || 0) : 0; if (!on) { this._painting = false; this._paintSeen = null; } }
   // Draw mode: drag across the map to trace a route (road/railway). On release,
   // onStroke([{x,z}...]) is called. `opts` sets the live-preview look.
-  setDrawMode(on, onStroke, opts) { this.drawMode = !!on; this.onStroke = onStroke || null; this._drawType = (opts && opts.type) || 'road'; this._drawElevated = !!(opts && opts.elevated); this._drawRail = !!(opts && opts.rail); if (!on) { this._drawing = false; this._stroke = null; this.clearRoadPreview(); } }
+  setDrawMode(on, onStroke, opts) { this.drawMode = !!on; this.onStroke = onStroke || null; this._drawType = (opts && opts.type) || 'road'; this._drawElevated = !!(opts && opts.elevated); this._drawRail = !!(opts && opts.rail); this._drawAir = !!(opts && opts.air); this._drawArea = !!(opts && opts.area); if (!on) { this._drawing = false; this._stroke = null; this.clearRoadPreview(); } }
   // Render finished player-drawn railways (world coords) like the historic ones.
   _buildPlayerRailways(state) {
     if (this._pRailGroup) this.scene.remove(this._pRailGroup);
@@ -2232,7 +2297,11 @@ export class Scene3D {
     }
     this.scene.add(this._roadPreview);
   }
-  clearRoadPreview() { if (this._roadPreview) { this.scene.remove(this._roadPreview); this._roadPreview = null; } }
+  clearRoadPreview() {
+    if (this._roadPreview) { this.scene.remove(this._roadPreview); this._roadPreview = null; }
+    if (this._drawPreviewGroup) { this.scene.remove(this._drawPreviewGroup); this._drawPreviewGroup = null; }
+    this._clearSnapMarker();
+  }
 
   // ---- per-frame update + render -------------------------------------------
   render() {
@@ -2297,6 +2366,7 @@ export class Scene3D {
     this._updateBoats(adt);
     if (!this.frozen) this._updateAirstripPlanes(dt);   // taxiing/landing aircraft on drawn runways
     this._updateDisaster(adt);
+    if (this._snapMarker && this._snapMarker.visible) { const s = 1 + 0.18 * Math.sin(performance.now() / 180); this._snapMarker.scale.set(s, s, 1); } // pulse the "start here" ring
     this._updateCamera();
     this.renderer.render(this.scene, this.camera);
   }

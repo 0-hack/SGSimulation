@@ -113,6 +113,10 @@ try {
   const veh = await page.evaluate(() => window.__sgview.vehicles.length);
   ok(veh >= 1, `${veh} vehicles on the roads`);
 
+  // Exit "place mode" first — editing (a tool selected) pauses the clock by
+  // design, so leave it before checking that time advances.
+  await page.keyboard.press('Escape');
+  await new Promise((r) => setTimeout(r, 100));
   // Speed up and let time pass.
   await page.click('.spd[data-spd="3"]');
   const date0 = await page.$eval('#hud-date', (e) => e.textContent);

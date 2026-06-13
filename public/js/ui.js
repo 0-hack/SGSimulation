@@ -162,12 +162,12 @@ function renderReclaim(state, ctx) {
   const perCell = reclaimCost(state, 1);
   const pIndex = Math.round(priceIndex(state) * 100) / 100;
   const inflPct = (inflationRate(state) * 100).toFixed(1);
-  wrap.append(el('p', 'policy-desc', 'Reclaim land from the sea — turn open water into buildable Singapore land. Drag across the sea to paint a whole area; you can reclaim anywhere in the Singapore sea (not the Johor side or protected reservoirs).'));
+  wrap.append(el('p', 'policy-desc', 'Reclaim land from the sea — turn open water into buildable Singapore land. Draw a loop around the patch of open sea you want to fill (like sketching a new coastline); release to see the cost, then confirm. You can reclaim anywhere in the Singapore sea (not the Johor side or protected reservoirs).'));
   wrap.append(el('div', 'section-title', 'Cost (by area & inflation)'));
   wrap.append(el('p', 'policy-desc',
-    `<b>${money(perCell)}</b> per land tile, charged per tile as you paint. Total cost scales with the area you reclaim and with the current price level — ×${pIndex} vs 1965 (inflation ${inflPct}%/yr), so a well-run economy keeps reclamation cheaper. Reclaimed land takes a few days to rise from the sea before you can build on it.`));
+    `<b>${money(perCell)}</b> per land tile. Total cost scales with the area you enclose and with the current price level — ×${pIndex} vs 1965 (inflation ${inflPct}%/yr), so a well-run economy keeps reclamation cheaper. Reclaimed land takes a few days to rise from the sea before you can build on it.`));
   const btn = el('button', 'btn' + (ctx.reclaim.active ? ' active' : ''),
-    `<span class="bi">🏝️</span> ${ctx.reclaim.active ? 'Reclaiming — drag over open sea to fill' : 'Start reclaiming land'}`);
+    `<span class="bi">🏝️</span> ${ctx.reclaim.active ? 'Reclaiming — draw a loop over open sea' : 'Start reclaiming land'}`);
   btn.onclick = () => ctx.toggleReclaim();
   wrap.append(btn);
   return wrap;

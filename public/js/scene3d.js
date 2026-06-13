@@ -179,8 +179,10 @@ export class Scene3D {
     this.skyColor = new THREE.Color(0x8ec5e8);
     scene.background = this.skyColor.clone();
     // Linear fog fades the sea into the horizon so the world edge is never seen.
-    this.fog = new THREE.Fog(0x9fc6e0, WORLD * 0.68, WORLD * 2.0);
-    this.fogFar = WORLD * 2.0;
+    // Pushed out so that at full zoom-out Singapore and its grey neighbours stay
+    // clear, with only the undrawn sea beyond them fading away.
+    this.fog = new THREE.Fog(0x9fc6e0, WORLD * 1.5, WORLD * 3.7);
+    this.fogFar = WORLD * 3.7;
     scene.fog = this.fog;
 
     // Lighting
@@ -911,18 +913,18 @@ export class Scene3D {
     // near pushed off 0.5 and far past MAX_R + island radius + fog: a tighter
     // near/far ratio gives the depth buffer enough precision that the ground
     // stops z-fighting (sand bleeding through grass) when zoomed far out.
-    this.camera = new THREE.PerspectiveCamera(45, 1, 4, WORLD * 2.6);
+    this.camera = new THREE.PerspectiveCamera(45, 1, 4, WORLD * 4.2);
     this.target = new THREE.Vector3(0, 0, 0);
     this.cam = { radius: WORLD * 0.85, theta: -0.7, phi: 0.92 };
     this.MIN_R = 26;             // street-level zoom (buildings unchanged)
-    // Navigation limit: cap zoom-out so the view stays filled with Singapore and
-    // its grey neighbours (Johor) rather than an empty, fogged sea.
-    this.MAX_R = WORLD * 1.02;
-    // How far the camera focus may roam (the playable navigation box) — kept to
-    // Singapore + a margin of neighbouring land so you never pan into blank sea.
-    this.PAN_X = WORLD * 0.5;    // east/west focus limit
-    this.PAN_N = WORLD * 0.46;   // north limit (toward Johor)
-    this.PAN_S = WORLD * 0.34;   // south limit (just past the southern islands)
+    // Navigation limit: a generous zoom-out that still stays over drawn land
+    // (Singapore + its grey neighbours) rather than an endless fogged sea.
+    this.MAX_R = WORLD * 1.7;
+    // How far the camera focus may roam (the playable navigation box) — Singapore
+    // plus a margin of neighbouring land so you never pan into blank sea.
+    this.PAN_X = WORLD * 0.66;   // east/west focus limit
+    this.PAN_N = WORLD * 0.64;   // north limit (toward Johor / Malaysia)
+    this.PAN_S = WORLD * 0.58;   // south limit (toward Batam / Indonesia)
     this._pointers = new Map();
     this._lastPinch = 0;
     this._moved = false;

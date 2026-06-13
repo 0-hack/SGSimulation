@@ -456,12 +456,15 @@ $('applygame').onclick = async () => {
   const b = $('applygame'); const old = b.textContent; b.textContent = 'Adding…'; b.disabled = true;
   try {
     const r = await fetch('/api/trace/apply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ version: 3, ...data }) });
+    if (r.status === 404 || !(r.headers.get('content-type') || '').includes('application/json')) {
+      throw new Error('base-map editing is OFF on this server (TRACE_EDIT=0). It edits the shared 1966 map (everyone), so it\'s a creator action: run the server locally with editing on, OR ⬇ Export and apply via  node scripts/apply_trace.mjs <file>  then commit & deploy. (To edit roads in YOUR own game, use Build ▸ Roads in the game.)');
+    }
     const j = await r.json();
     if (!j.ok) throw new Error(j.error || 'apply failed');
     if (data.bulldoze.length) { snapshot(); data.bulldoze = []; draw(); updateStat(); } // delete strokes are one-shot
     loadGameData(); // refresh the existing-game overlay to match what's now in the game
     toast('Applied: ' + (j.did.join(' · ') || 'no changes') + ' — reload the game (new game) to see it');
-  } catch (e) { toast('Apply failed: ' + e.message + ' (is the game server running?)', true); }
+  } catch (e) { toast(e.message, true); }
   finally { b.textContent = old; b.disabled = false; }
 };
 $('help').onclick = () => $('hint').classList.toggle('hidden');

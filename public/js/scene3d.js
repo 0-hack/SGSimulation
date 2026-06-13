@@ -915,7 +915,14 @@ export class Scene3D {
     this.target = new THREE.Vector3(0, 0, 0);
     this.cam = { radius: WORLD * 0.85, theta: -0.7, phi: 0.92 };
     this.MIN_R = 26;             // street-level zoom (buildings unchanged)
-    this.MAX_R = WORLD * 1.5;    // capped so the fogged sea edge stays hidden
+    // Navigation limit: cap zoom-out so the view stays filled with Singapore and
+    // its grey neighbours (Johor) rather than an empty, fogged sea.
+    this.MAX_R = WORLD * 1.02;
+    // How far the camera focus may roam (the playable navigation box) — kept to
+    // Singapore + a margin of neighbouring land so you never pan into blank sea.
+    this.PAN_X = WORLD * 0.5;    // east/west focus limit
+    this.PAN_N = WORLD * 0.46;   // north limit (toward Johor)
+    this.PAN_S = WORLD * 0.34;   // south limit (just past the southern islands)
     this._pointers = new Map();
     this._lastPinch = 0;
     this._moved = false;
@@ -945,9 +952,9 @@ export class Scene3D {
         const pts = [...this._pointers.values()];
         const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
         if (this._lastPinch) this.cam.radius = THREE.MathUtils.clamp(this.cam.radius * this._lastPinch / dist, this.MIN_R, this.MAX_R);
-        // two-finger pan
+        // two-finger pan — moves the camera in the swipe direction (matches W/A/S/D)
         const mid = { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
-        if (this._lastMid) this._pan(mid.x - this._lastMid.x, mid.y - this._lastMid.y);
+        if (this._lastMid) this._pan(-(mid.x - this._lastMid.x), mid.y - this._lastMid.y);
         this._lastMid = mid;
         this._lastPinch = dist; this._moved = true;
         return;
@@ -999,10 +1006,11 @@ export class Scene3D {
       const step = 36; // screen-pixels-equivalent nudge
       let used = true;
       switch (e.key) {
+        // W/A/S/D & arrows move the camera in the key's direction (W = forward).
         case 'ArrowLeft': case 'a': case 'A': this._pan(step, 0); break;
         case 'ArrowRight': case 'd': case 'D': this._pan(-step, 0); break;
-        case 'ArrowUp': case 'w': case 'W': this._pan(0, step); break;
-        case 'ArrowDown': case 's': case 'S': this._pan(0, -step); break;
+        case 'ArrowUp': case 'w': case 'W': this._pan(0, -step); break;
+        case 'ArrowDown': case 's': case 'S': this._pan(0, step); break;
         case 'q': case 'Q': this.cam.theta += 0.12; break;
         case 'e': case 'E': this.cam.theta -= 0.12; break;
         case 'r': case 'R': this.centerCamera(); break;
@@ -1019,9 +1027,9 @@ export class Scene3D {
     const k = this.cam.radius * 0.0016;
     this.target.addScaledVector(right, -dx * k);
     this.target.addScaledVector(fwd, -dy * k);
-    // keep focus over the island so the player can't roam into empty sea
-    this.target.x = THREE.MathUtils.clamp(this.target.x, -WORLD * 0.52, WORLD * 0.52);
-    this.target.z = THREE.MathUtils.clamp(this.target.z, -WORLD * 0.42, WORLD * 0.42);
+    // keep focus inside the navigation box (north = -z toward Johor, south = +z)
+    this.target.x = THREE.MathUtils.clamp(this.target.x, -this.PAN_X, this.PAN_X);
+    this.target.z = THREE.MathUtils.clamp(this.target.z, -this.PAN_N, this.PAN_S);
   }
 
   _updateCamera() {

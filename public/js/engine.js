@@ -64,6 +64,7 @@ export function newGame({ name = 'New Singapore', owner = 'Anonymous' } = {}) {
     roads: { nodes: [], edges: [], islands: [] }, // player-drawn freeform road network
     reclaimed: [],            // [x,y] sea cells the player has reclaimed into land
     economy: { inflation: 0.02, priceIndex: 1, currency: 1 }, // dynamic inflation / price level / SGD strength
+    constructing: [],         // [x,y] cells whose building is still being built
     summary: {},
     daysElapsed: 0,
   };
@@ -112,6 +113,11 @@ export function ensureGrid(state) {
   if (!state.roads) state.roads = { nodes: [], edges: [], islands: [] };
   if (!Array.isArray(state.reclaimed)) state.reclaimed = [];
   if (!state.economy) state.economy = { inflation: 0.02, priceIndex: 1, currency: 1 };
+  // Rebuild the active-construction list from the grid (robust across saves).
+  state.constructing = [];
+  for (let y = 0; y < GRID_SIZE; y++) for (let x = 0; x < GRID_SIZE; x++) {
+    const c = state.grid?.[y]?.[x]; if (c && c.build && c.build.left > 0) state.constructing.push([x, y]);
+  }
   if (!state.roads.islands) state.roads.islands = [];
   // back-fill the traced 1966 roads into saves that predate them (so existing
   // games aren't left road-less after the update); skip if already seeded or
@@ -159,7 +165,26 @@ export function build(state, x, y, key, theme) {
   if (!canPlace(state, x, y, key)) return false;
   state.treasury -= buildingCost(state, key);
   place(state, x, y, key, theme);
+  // Construction takes time (by complexity): the building gives no homes/jobs/
+  // utilities and pays no upkeep until it tops out. Tracked on the cell + a flat
+  // list so the daily advance stays cheap.
+  const days = buildDays(BUILDINGS[key]);
+  state.grid[y][x].build = { total: days, left: days };
+  (state.constructing || (state.constructing = [])).push([x, y]);
   return true;
+}
+// Advance every active construction site by one day; drop the marker when done.
+function advanceConstruction(state) {
+  if (!state.constructing || !state.constructing.length) return;
+  const still = [];
+  for (const [x, y] of state.constructing) {
+    const c = state.grid[y] && state.grid[y][x];
+    if (!c || !c.build) continue;                 // demolished or already finished
+    c.build.left -= 1;
+    if (c.build.left <= 0) delete c.build;         // topped out — now operational
+    else still.push([x, y]);
+  }
+  state.constructing = still;
 }
 export function demolish(state, x, y) {
   const cell = state.grid?.[y]?.[x];
@@ -325,6 +350,7 @@ export function derive(state) {
       if (!cell) continue;
       const b = BUILDINGS[cell.k];
       if (!b) continue;
+      if (cell.build && cell.build.left > 0) continue; // still under construction — no output yet
       counts[cell.k] = (counts[cell.k] || 0) + 1;
       homes += b.homes || 0;
       jobs += b.jobs || 0;
@@ -547,6 +573,7 @@ function monthlyUpdate(state, d) {
 export function tickDay(state) {
   state.date = addDay(state.date);
   state.daysElapsed = (state.daysElapsed || 0) + 1;
+  advanceConstruction(state); // tick building sites toward completion
 
   const d = derive(state);
 

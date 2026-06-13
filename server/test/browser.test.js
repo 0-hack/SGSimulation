@@ -78,9 +78,10 @@ try {
   const treasuryAfter = await page.$eval('#hud-treasury', (e) => e.textContent);
   ok(treasuryBefore !== treasuryAfter, `building placed (treasury ${treasuryBefore} → ${treasuryAfter})`);
 
-  // The placed building appears as an animated mesh in the 3D scene.
-  const builtCount = await page.evaluate(() => window.__sgview.buildings.size);
-  ok(builtCount >= 1, `3D scene now has ${builtCount} building mesh(es)`);
+  // The placed building appears in the 3D scene — first as a construction site
+  // (buildings now take time to build), later as a finished mesh.
+  const builtCount = await page.evaluate(() => window.__sgview.buildings.size + window.__sgview.sites.size);
+  ok(builtCount >= 1, `3D scene now has ${builtCount} building/site mesh(es)`);
 
   // A disaster animation runs without throwing.
   await page.evaluate(() => window.__sgview.playDisaster('flood'));

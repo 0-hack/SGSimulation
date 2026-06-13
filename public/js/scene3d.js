@@ -134,6 +134,7 @@ export class Scene3D {
     this.state = null;
     this.land = landMask(N);
     this.buildings = new Map();   // "x,y" -> { group, key }
+    this.sites = new Map();       // "x,y" -> active construction site (rising mesh + scaffold + crane)
     this.anims = [];              // active construction/demolition tweens
     this.vehicles = [];
     this.dust = [];
@@ -1173,14 +1174,86 @@ export class Scene3D {
   syncAll() {
     for (const { group } of this.buildings.values()) this.scene.remove(group);
     this.buildings.clear();
+    for (const s of this.sites.values()) this.scene.remove(s.group);
+    this.sites.clear();
     if (!this.state) { this._refreshNature(); return; }
     for (let y = 0; y < N; y++) {
       for (let x = 0; x < N; x++) {
         const cell = this.state.grid[y]?.[x];
-        if (cell) this._addMesh(x, y, cell.k, false, cell.c);
+        if (!cell) continue;
+        if (cell.build && cell.build.left > 0) continue; // shown as a construction site below
+        this._addMesh(x, y, cell.k, false, cell.c);
       }
     }
+    this.syncConstruction(this.state); // spawn sites for anything still building
     this._refreshNature();
+  }
+
+  // ---- construction sites ---------------------------------------------------
+  // Reconcile the visible construction sites with state: spawn sites for cells
+  // still building, advance their progress, and pop the finished building when a
+  // site tops out. Cheap — iterates only the active-construction list.
+  syncConstruction(state) {
+    if (!state) return;
+    const active = new Set();
+    for (const [x, y] of (state.constructing || [])) {
+      const c = state.grid[y] && state.grid[y][x];
+      if (!c || !c.build) continue;
+      const id = `${x},${y}`; active.add(id);
+      if (!this.sites.has(id)) this._startSite(x, y, c.k, c.c, c.build.total);
+      this._setSiteProgress(id, 1 - c.build.left / Math.max(1, c.build.total));
+    }
+    for (const id of [...this.sites.keys()]) {
+      if (active.has(id)) continue;                 // this site has finished or been removed
+      const [x, y] = id.split(',').map(Number);
+      const cell = state.grid[y] && state.grid[y][x];
+      this._removeSite(id);
+      if (cell && cell.k && !cell.build) this._addMesh(x, y, cell.k, true, cell.c); // pop the completed building
+    }
+  }
+  _startSite(x, y, key, theme, total) {
+    const id = `${x},${y}`;
+    if (this.buildings.has(id)) this.removeBuilding(x, y);
+    if (this.sites.has(id)) this._removeSite(id);
+    const c = cellToWorld(x, y);
+    const wrap = new THREE.Group();
+    wrap.position.set(c.x, this.terrainHeight(x, y), c.z);
+    wrap.rotation.y = (Math.floor(Math.random() * 4)) * Math.PI / 2;
+    this.scene.add(wrap);
+    // the target building, measured then flattened so it rises with progress
+    const b = makeBuilding(key, theme);
+    const box = new THREE.Box3().setFromObject(b);
+    const sx = Math.max(2, box.max.x - box.min.x), sz = Math.max(2, box.max.z - box.min.z);
+    const H = Math.max(3, box.max.y - box.min.y);
+    b.scale.set(1, 0.02, 1); wrap.add(b);
+    const poleMat = toon(0xcaa94e);
+    const hw = sx / 2 + 0.5, hd = sz / 2 + 0.5;
+    for (const [px, pz] of [[-hw, -hd], [hw, -hd], [hw, hd], [-hw, hd]]) {
+      const pole = new THREE.Mesh(new THREE.BoxGeometry(0.18, H, 0.18), poleMat);
+      pole.position.set(px, H / 2, pz); wrap.add(pole);
+    }
+    // translucent yellow work platform marks the part being built right now
+    const plat = new THREE.Mesh(new THREE.BoxGeometry(sx + 1.0, 0.25, sz + 1.0), toon(0xffd23f, { transparent: true, opacity: 0.5 }));
+    plat.position.y = 0.3; wrap.add(plat);
+    // a tower crane beside the site
+    const mast = new THREE.Mesh(new THREE.BoxGeometry(0.3, H + 6, 0.3), poleMat);
+    mast.position.set(hw + 1.2, (H + 6) / 2, hd + 1.2); wrap.add(mast);
+    const jib = new THREE.Mesh(new THREE.BoxGeometry(sx + 3, 0.22, 0.22), poleMat);
+    jib.position.set(hw + 1.2 - (sx + 3) / 2 + 0.3, H + 5.6, hd + 1.2); wrap.add(jib);
+    this.sites.set(id, { group: wrap, b, plat, H });
+    const dg = this.natureCells && this.natureCells.get(id); if (dg) dg.visible = false;
+    this._spawnDust(c.x, c.z, 0xcab98a, 10);
+  }
+  _setSiteProgress(id, prog) {
+    const s = this.sites.get(id); if (!s) return;
+    const p = Math.max(0.02, Math.min(1, prog));
+    s.b.scale.y = p;                       // building rises from its base
+    s.plat.position.y = p * s.H + 0.2;     // platform rides the construction front
+    s.plat.visible = p < 0.98;
+  }
+  _removeSite(id) {
+    const s = this.sites.get(id); if (!s) return;
+    this.scene.remove(s.group); this.sites.delete(id);
   }
 
   _addMesh(x, y, key, animate, theme) {
@@ -1215,6 +1288,11 @@ export class Scene3D {
   // called by main.js after demolish
   onDemolished(x, y) {
     const id = `${x},${y}`;
+    if (this.sites.has(id)) { // was still under construction — tear down the site
+      this._removeSite(id);
+      const c = cellToWorld(x, y); this._spawnDust(c.x, c.z, 0xbfb09a, 18);
+      const g = this.natureCells && this.natureCells.get(id); if (g) g.visible = true;
+    }
     const entry = this.buildings.get(id);
     if (!entry) return;
     this.buildings.delete(id);

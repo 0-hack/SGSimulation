@@ -186,6 +186,7 @@ function loop(ts) {
     if (ticks > 0) {
       G.dirty = true;
       G.hudTimer += dt;
+      if (G.view) G.view.syncConstruction(G.state); // advance/finish construction sites
       updateHud(G.state, G.readOnly);
       updateShortages();
       if (G.state.pendingEvent) { showEvent(); }
@@ -263,8 +264,9 @@ function onTileTap(x, y) {
     if (canPlace(G.state, x, y, b.selected)) {
       const theme = BUILDINGS[b.selected].customizable ? b.theme : null;
       build(G.state, x, y, b.selected, theme);
-      G.view.onBuilt(x, y, b.selected, theme);
+      G.view.syncConstruction(G.state); // shows the construction site (it tops out over time)
       afterEdit();
+      toast(`${BUILDINGS[b.selected].name} — construction started.`);
     } else {
       const bd = BUILDINGS[b.selected];
       if (G.state.grid[y][x]) toast('Tile occupied.');

@@ -231,7 +231,7 @@ $('send').onclick = () => {
   if (!parts.length) return toast('Add at least one part', true);
   const lm = design(); if (editId) lm.id = editId;
   editId = addToLibrary(lm);
-  toast('Saved to your landmarks — build it from the game\'s Build menu (Landmarks).');
+  toast('Saved! In the game: Build (🏗) → 🏛️ Landmarks → tap the map to place “' + lm.name + '”.');
 };
 // Export this design as a shareable JSON file (send it to a friend to import).
 $('export').onclick = () => { const b = new Blob([JSON.stringify(design(), null, 1)], { type: 'application/json' }); const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = ($('name').value || 'landmark') + '.json'; a.click(); };

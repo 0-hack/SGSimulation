@@ -73,6 +73,14 @@ function boot() {
   $('sheet-close').onclick = closeSheet;
   document.querySelector('#sheet .sheet-backdrop').onclick = closeSheet;
 
+  // exit "place mode": the ✕ Done button or the Esc key
+  $('tool-banner-stop').onclick = cancelTools;
+  window.addEventListener('keydown', (e) => {
+    const t = e.target;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+    if (e.key === 'Escape' && activeTool()) { cancelTools(); toast('Stopped placing.'); e.preventDefault(); }
+  });
+
   // speed buttons
   document.querySelectorAll('.spd').forEach((b) => {
     b.onclick = () => setSpeed(parseInt(b.dataset.spd, 10));
@@ -98,6 +106,7 @@ function showMenu() {
   G.speed = 0;
   $('game').classList.add('hidden');
   $('toolbar').classList.add('hidden');
+  $('tool-banner')?.classList.add('hidden');
   closeSheet();
   $('menu').classList.remove('hidden');
   if (localStorage.getItem(LS_SAVE)) $('btn-continue').classList.remove('hidden');
@@ -308,6 +317,32 @@ function afterEdit() {
   if (G.currentPanel === 'build' || G.currentPanel === 'dash') refreshPanel(); // affordability/finances may change
 }
 
+// ---- placement-tool state (build / bulldoze / reclaim / road) --------------
+// You stay in "place mode" so you can place many in a row; this shows what's
+// active and gives an explicit way to STOP (the ✕ Done button or Esc).
+function activeTool() {
+  if (G.readOnly) return null;
+  if (G.build.selected && BUILDINGS[G.build.selected]) return { verb: 'build', label: BUILDINGS[G.build.selected].name };
+  if (G.build.bulldoze) return { verb: 'remove', label: '🚜 Bulldoze' };
+  if (G.reclaim.active) return { verb: 'fill with land', label: '🏝 Reclaim' };
+  if (G.road.tool) return { verb: 'draw', label: '🛣 Road · ' + G.road.tool };
+  return null;
+}
+function updateToolBanner() {
+  const t = activeTool(), el = $('tool-banner');
+  if (!el) return;
+  if (!t) { el.classList.add('hidden'); return; }
+  $('tool-banner-text').innerHTML = `<b>${t.label}</b> — tap the map to ${t.verb}`;
+  el.classList.remove('hidden');
+}
+function cancelTools() {
+  G.build.selected = null; G.build.bulldoze = false; G.reclaim.active = false;
+  G.road.tool = null; G.road.pending = [];
+  if (G.view) { G.view.setPreview(null); G.view.setBulldoze(false); G.view.setRoadMode(false); G.view.setPaintMode(false); G.view.showRoadPreview([]); }
+  updateToolBanner();
+  if (G.currentPanel === 'build') refreshPanel();
+}
+
 // ===========================================================================
 // Freeform road drawing
 // ===========================================================================
@@ -401,8 +436,9 @@ function selectRoadTool(tool) {
     const msg = { straight: 'Tap two points to lay a straight road (keep tapping to chain).',
       curve: 'Tap start, a curve point, then the end. Chains on.',
       roundabout: 'Tap to place a roundabout.', erase: 'Tap a road to remove it.' }[G.road.tool];
-    toast(msg);
+    toast(msg + ' ✕ Done / Esc to stop.');
   }
+  updateToolBanner();
 }
 function toggleReclaim() {
   G.reclaim.active = !G.reclaim.active;
@@ -412,11 +448,12 @@ function toggleReclaim() {
     G.view.setPreview(null); G.view.setBulldoze(false);
     G.view.setPaintMode(true, doReclaim); // drag across the sea to fill land
     closeSheet();
-    toast('Reclaim mode: drag across open sea to fill new land (costs money). 🏝️');
+    toast('Reclaim mode: drag across open sea to fill new land (costs money). 🏝️ ✕ Done / Esc to stop.');
   } else {
     G.view.setPaintMode(false);
   }
   refreshPanel();
+  updateToolBanner();
 }
 
 // ===========================================================================
@@ -451,7 +488,7 @@ function refreshPanel() {
       road: G.road, reclaim: G.reclaim, toggleReclaim,
       selectRoadTool, setRoadType: (t) => { G.road.type = t; refreshPanel(); },
       toggleBridge: () => { G.road.elevated = !G.road.elevated; refreshPanel(); },
-      setCat: (c) => { G.build.cat = c; if (c !== 'roads') { G.road.tool = null; G.view.setRoadMode(false); } if (c !== 'land') { G.reclaim.active = false; G.view.setPaintMode(false); } refreshPanel(); },
+      setCat: (c) => { G.build.cat = c; if (c !== 'roads') { G.road.tool = null; G.view.setRoadMode(false); } if (c !== 'land') { G.reclaim.active = false; G.view.setPaintMode(false); } refreshPanel(); updateToolBanner(); },
       setTheme: (t) => { G.build.theme = t; if (G.build.selected) G.view.setPreview(G.build.selected, t); refreshPanel(); },
       selectBuilding: (k) => {
         G.build.selected = G.build.selected === k ? null : k;
@@ -462,8 +499,9 @@ function refreshPanel() {
         if (G.build.selected) {
           closeSheet();
           const custom = BUILDINGS[k].customizable ? ' (colour applied)' : '';
-          toast(`Tap the map to place ${BUILDINGS[k].name}${custom}.`);
+          toast(`Tap the map to place ${BUILDINGS[k].name}${custom}. ✕ Done / Esc to stop.`);
         }
+        updateToolBanner();
       },
       toggleBulldoze: () => {
         G.build.bulldoze = !G.build.bulldoze;
@@ -471,7 +509,8 @@ function refreshPanel() {
         G.road.tool = null; G.view.setRoadMode(false); G.view.showRoadPreview([]);
         G.view.setBulldoze(G.build.bulldoze);
         refreshPanel();
-        if (G.build.bulldoze) { closeSheet(); toast('Bulldoze mode: tap buildings to remove.'); }
+        if (G.build.bulldoze) { closeSheet(); toast('Bulldoze mode: tap buildings to remove. ✕ Done / Esc to stop.'); }
+        updateToolBanner();
       },
     }));
   } else if (panel === 'policy') {

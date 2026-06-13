@@ -1,7 +1,7 @@
 // UI rendering helpers: builds the contents of each bottom sheet/panel.
 // Returns DOM and wires callbacks; keeps main.js focused on orchestration.
 import { BUILDINGS, CATEGORIES, POLICIES, POP_SCALE, THEMES, ROAD_TYPES } from './data.js';
-import { derive, isUnlocked, formatDate, debtCeiling, bondRate } from './engine.js';
+import { derive, isUnlocked, formatDate, debtCeiling, bondRate, reclaimCost, reclaimInflation, RECLAIM } from './engine.js';
 import { ICONS, CAT_ICON } from './icons.js';
 
 // ---- formatting ----
@@ -65,6 +65,8 @@ export function renderBuild(state, ctx) {
 
   // Roads category shows the road-drawing toolkit instead of buildings.
   if (ctx.cat === 'roads') { wrap.append(renderRoads(ctx)); return wrap; }
+  // Reclaim category shows the land-reclamation tool instead of buildings.
+  if (ctx.cat === 'land') { wrap.append(renderReclaim(state, ctx)); return wrap; }
 
   // Colour-theme picker — shown for categories that contain customizable builds.
   const hasCustom = Object.values(BUILDINGS).some((b) => b.cat === ctx.cat && b.customizable);
@@ -147,6 +149,22 @@ function renderRoads(ctx) {
     tools.append(b);
   }
   wrap.append(tools);
+  return wrap;
+}
+
+// ---- land-reclamation toolkit ---------------------------------------------
+function renderReclaim(state, ctx) {
+  const wrap = el('div', 'roads-ui');
+  const perCell = reclaimCost(state, 1);
+  const infl = Math.round(reclaimInflation(state.date.y) * 100) / 100;
+  wrap.append(el('p', 'policy-desc', 'Reclaim land from the sea — turn open water into buildable Singapore land. You can reclaim anywhere in the Singapore sea (not the Johor side or protected reservoirs).'));
+  wrap.append(el('div', 'section-title', 'Cost (by area & inflation)'));
+  wrap.append(el('p', 'policy-desc',
+    `<b>${money(perCell)}</b> per land tile, charged as you fill. Cost scales with the area you reclaim and rises with inflation — currently ×${infl} vs 1965 (+${Math.round(RECLAIM.inflation * 1000) / 10}%/yr), so reclaiming later costs more.`));
+  const btn = el('button', 'btn' + (ctx.reclaim.active ? ' active' : ''),
+    `<span class="bi">🏝️</span> ${ctx.reclaim.active ? 'Reclaiming — tap open sea to fill' : 'Start reclaiming land'}`);
+  btn.onclick = () => ctx.toggleReclaim();
+  wrap.append(btn);
   return wrap;
 }
 

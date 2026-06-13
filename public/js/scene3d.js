@@ -1052,7 +1052,45 @@ export class Scene3D {
     return { x: gx, y: gy };
   }
   isLand(x, y) {
-    return !!(this.land[y] && this.land[y][x] && !(this.reserveMask && this.reserveMask[y][x]) && !(this.riverMask && this.riverMask[y][x]) && !(this.airportMask && this.airportMask[y][x]));
+    const base = (this.land[y] && this.land[y][x]) || (this.reclaimedMask && this.reclaimedMask[y] && this.reclaimedMask[y][x]);
+    return !!(base && !(this.reserveMask && this.reserveMask[y][x]) && !(this.riverMask && this.riverMask[y][x]) && !(this.airportMask && this.airportMask[y][x]));
+  }
+  // Can grid cell (x,y) be reclaimed? True only for OPEN SINGAPORE SEA — i.e.
+  // not already Singapore land, not already reclaimed, not protected water, and
+  // not over the foreign (Johor) landmass.
+  canReclaim(x, y) {
+    if (x < 0 || y < 0 || x >= N || y >= N) return false;
+    if (this.land[y] && this.land[y][x]) return false;                 // already SG land
+    if (this.reclaimedMask && this.reclaimedMask[y] && this.reclaimedMask[y][x]) return false;
+    if ((this.reserveMask && this.reserveMask[y][x]) || (this.riverMask && this.riverMask[y][x])) return false; // protected freshwater
+    const nx = (x + 0.5) / N, ny = (y + 0.5) / N;
+    if (SG_FOREIGN.some((poly) => pointInPolygon(nx, ny, poly))) return false; // Johor, not Singapore
+    return true;
+  }
+  // A block of new land filling the sea cell from the seabed up to ground level.
+  _reclaimSlab(x, y) {
+    const c = cellToWorld(x, y), H = 1.5;
+    const m = new THREE.Mesh(new THREE.BoxGeometry(TILE, H, TILE), toon(0xc7b489)); // sandy fill
+    m.position.set(c.x, 0.05 - H / 2, c.z); m.receiveShadow = true;
+    return m;
+  }
+  // Add the visual for one freshly reclaimed cell during play + flag the mask.
+  applyReclaim(x, y) {
+    if (!this.reclaimedMask) this.reclaimedMask = Array.from({ length: N }, () => Array(N).fill(false));
+    if (!this.reclaimGroup) { this.reclaimGroup = new THREE.Group(); this.scene.add(this.reclaimGroup); }
+    this.reclaimedMask[y][x] = true;
+    this.reclaimGroup.add(this._reclaimSlab(x, y));
+    const c = cellToWorld(x, y); this._spawnDust(c.x, c.z, 0xd9c79a); // fill splash
+    const g = this.natureCells?.get(x + ',' + y); if (g) g.visible = false;
+  }
+  // Rebuild all reclaimed-land visuals from saved state (on new game / load).
+  _syncReclaimed() {
+    if (this.reclaimGroup) { this.scene.remove(this.reclaimGroup); this.reclaimGroup = null; }
+    this.reclaimedMask = Array.from({ length: N }, () => Array(N).fill(false));
+    const list = (this.state && this.state.reclaimed) || [];
+    if (!list.length) return;
+    const g = new THREE.Group(); this.scene.add(g); this.reclaimGroup = g;
+    for (const [x, y] of list) if (x >= 0 && y >= 0 && x < N && y < N) { this.reclaimedMask[y][x] = true; g.add(this._reclaimSlab(x, y)); }
   }
   // Is a world point over the protected reservoir / catchment? (blocks road drawing)
   isReserveAt(wx, wz) {
@@ -1096,7 +1134,7 @@ export class Scene3D {
   }
 
   // ---- external API (mirrors the 2D view) ----------------------------------
-  setState(state) { this.state = state; this.syncAll(); this.rebuildRoadNet(); }
+  setState(state) { this.state = state; this._syncReclaimed(); this.syncAll(); this.rebuildRoadNet(); }
   setShortages(s) { this.shortages = s; }
   setPreview(key, theme) {
     this.previewKey = key; this.previewTheme = theme; this.bulldoze = false;

@@ -2,6 +2,7 @@
 import {
   newGame, tickDay, build, demolish, canPlace, derive,
   resolveEvent, snapshot, refreshSummary, ensureGrid, issueBond, repayDebt,
+  reclaimLand, reclaimCost,
 } from './engine.js';
 import { Scene3D } from './scene3d.js';
 import { api } from './api.js';
@@ -32,6 +33,8 @@ const G = {
   hudTimer: 0,
   build: { cat: 'residential', selected: null, bulldoze: false, theme: null },
   road: { tool: null, type: 'street', elevated: false, pending: [] },
+  reclaim: { active: false },  // land-reclamation tool: tap sea to fill land
+
   currentPanel: null,
   dirty: false,          // unsaved changes since last cloud save
 };
@@ -242,6 +245,14 @@ function setSpeed(s) {
 function onTileTap(x, y) {
   if (G.readOnly) { toast('You are visiting — building is disabled here.'); return; }
   const b = G.build;
+  if (G.reclaim.active) {
+    if (!G.view.canReclaim(x, y)) { toast('You can only reclaim open Singapore sea. 🌊'); return; }
+    const cost = reclaimCost(G.state, 1);
+    if (G.state.treasury < cost) { toast(`Need ${money(cost)} to reclaim this tile.`); return; }
+    const r = reclaimLand(G.state, x, y);
+    if (r.ok) { G.view.applyReclaim(x, y); afterEdit(); toast(`Reclaimed land for ${money(r.cost)}. 🏝️`); }
+    return;
+  }
   if (b.bulldoze) {
     if (demolish(G.state, x, y)) { G.view.onDemolished(x, y); afterEdit(); toast('Demolished.'); }
     return;
@@ -357,7 +368,7 @@ function onGroundTap(x, z) {
 function selectRoadTool(tool) {
   G.road.tool = G.road.tool === tool ? null : tool;
   G.road.pending = [];
-  G.build.selected = null; G.build.bulldoze = false;
+  G.build.selected = null; G.build.bulldoze = false; G.reclaim.active = false;
   G.view.setPreview(null); G.view.setBulldoze(false);
   G.view.setRoadMode(!!G.road.tool);
   G.view.showRoadPreview([]);
@@ -369,6 +380,17 @@ function selectRoadTool(tool) {
       roundabout: 'Tap to place a roundabout.', erase: 'Tap a road to remove it.' }[G.road.tool];
     toast(msg);
   }
+}
+function toggleReclaim() {
+  G.reclaim.active = !G.reclaim.active;
+  if (G.reclaim.active) {
+    G.build.selected = null; G.build.bulldoze = false;
+    G.road.tool = null; G.view.setRoadMode(false); G.view.showRoadPreview([]);
+    G.view.setPreview(null); G.view.setBulldoze(false);
+    closeSheet();
+    toast('Reclaim mode: tap open sea to fill new land (costs money). 🏝️');
+  }
+  refreshPanel();
 }
 
 // ===========================================================================
@@ -398,14 +420,14 @@ function refreshPanel() {
   if (panel === 'build') {
     content.append(renderBuild(G.state, {
       cat: G.build.cat, selected: G.build.selected, bulldoze: G.build.bulldoze, theme: G.build.theme,
-      road: G.road,
+      road: G.road, reclaim: G.reclaim, toggleReclaim,
       selectRoadTool, setRoadType: (t) => { G.road.type = t; refreshPanel(); },
       toggleBridge: () => { G.road.elevated = !G.road.elevated; refreshPanel(); },
-      setCat: (c) => { G.build.cat = c; if (c !== 'roads') { G.road.tool = null; G.view.setRoadMode(false); } refreshPanel(); },
+      setCat: (c) => { G.build.cat = c; if (c !== 'roads') { G.road.tool = null; G.view.setRoadMode(false); } if (c !== 'land') G.reclaim.active = false; refreshPanel(); },
       setTheme: (t) => { G.build.theme = t; if (G.build.selected) G.view.setPreview(G.build.selected, t); refreshPanel(); },
       selectBuilding: (k) => {
         G.build.selected = G.build.selected === k ? null : k;
-        G.build.bulldoze = false;
+        G.build.bulldoze = false; G.reclaim.active = false;
         G.road.tool = null; G.view.setRoadMode(false); G.view.showRoadPreview([]);
         G.view.setPreview(G.build.selected, G.build.theme);
         refreshPanel();
@@ -417,7 +439,7 @@ function refreshPanel() {
       },
       toggleBulldoze: () => {
         G.build.bulldoze = !G.build.bulldoze;
-        G.build.selected = null;
+        G.build.selected = null; G.reclaim.active = false;
         G.road.tool = null; G.view.setRoadMode(false); G.view.showRoadPreview([]);
         G.view.setBulldoze(G.build.bulldoze);
         refreshPanel();

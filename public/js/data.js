@@ -22,6 +22,7 @@ export const CATEGORIES = [
   { id: 'green', name: 'Environment', icon: '🌳' },
   { id: 'leisure', name: 'Coast & Leisure', icon: '⛱️' },
   { id: 'roads', name: 'Roads', icon: '🛣️' },
+  { id: 'land', name: 'Reclaim', icon: '🏝️' },
 ];
 
 // Freeform road types the player can draw.

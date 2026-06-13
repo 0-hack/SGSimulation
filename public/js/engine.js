@@ -62,6 +62,7 @@ export function newGame({ name = 'New Singapore', owner = 'Anonymous' } = {}) {
     log: [{ d: { ...START_DATE }, text: 'Singapore gains independence. The journey begins.' }],
     pendingEvent: null,       // event awaiting player choice
     roads: { nodes: [], edges: [], islands: [] }, // player-drawn freeform road network
+    reclaimed: [],            // [x,y] sea cells the player has reclaimed into land
     summary: {},
     daysElapsed: 0,
   };
@@ -108,6 +109,7 @@ export function ensureGrid(state) {
   if (!state) return state;
   if (typeof state.debt !== 'number') state.debt = 0;
   if (!state.roads) state.roads = { nodes: [], edges: [], islands: [] };
+  if (!Array.isArray(state.reclaimed)) state.reclaimed = [];
   if (!state.roads.islands) state.roads.islands = [];
   // back-fill the traced 1966 roads into saves that predate them (so existing
   // games aren't left road-less after the update); skip if already seeded or
@@ -163,6 +165,31 @@ export function demolish(state, x, y) {
   state.grid[y][x] = null;
   state.treasury -= 2; // demolition cost
   return true;
+}
+
+// ---------------------------------------------------------------------------
+// Land reclamation — turning sea into buildable land for money.
+// Cost is by AREA (charged per cell) and rises with INFLATION over the years:
+// a cell reclaimed in 1965 is cheap; the same cell in 2010 costs several times
+// more. (Geometry validation — "is this open Singapore sea?" — lives in the
+// 3D view's canReclaim(), which has the coastline & foreign-land masks.)
+// ---------------------------------------------------------------------------
+export const RECLAIM = { basePerCell: 2, inflation: 0.035 }; // $M/cell in 1965; +3.5%/yr
+export function reclaimInflation(year) {
+  return Math.pow(1 + RECLAIM.inflation, Math.max(0, year - START_DATE.y));
+}
+// Cost to reclaim `cells` cells in the given game year ($M).
+export function reclaimCost(state, cells = 1) {
+  return Math.round(RECLAIM.basePerCell * reclaimInflation(state.date.y) * cells * 10) / 10;
+}
+// Charge for and record one reclaimed cell. Returns { ok, cost, reason }.
+export function reclaimLand(state, x, y) {
+  if (!Array.isArray(state.reclaimed)) state.reclaimed = [];
+  const cost = reclaimCost(state, 1);
+  if (state.treasury < cost) return { ok: false, reason: 'funds', cost };
+  state.reclaimed.push([x, y]);
+  state.treasury -= cost;
+  return { ok: true, cost };
 }
 
 // ---------------------------------------------------------------------------

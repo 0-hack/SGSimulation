@@ -38,12 +38,23 @@
     <h2>🏗 Building / Landmark Designer</h2>
     <input id="name" type="text" placeholder="Name (e.g. City Hall)" value="New Landmark">
 
-    <h3>Add part</h3>
+    <h3>Add part — structure</h3>
     <div class="row">
       <button data-add="box">▢ Box</button>
       <button data-add="cyl">⬭ Cylinder</button>
       <button data-add="pyramid">▲ Roof</button>
       <button data-add="dome">◗ Dome</button>
+    </div>
+    <h3>Add part — exterior</h3>
+    <div class="row">
+      <button data-add="window">🪟 Window</button>
+      <button data-add="door">🚪 Door</button>
+    </div>
+
+    <h3>Edit</h3>
+    <div class="row">
+      <button id="movemode" title="Toggle: drag a part in the scene to move it (Shift-drag = up/down)">✥ Move parts</button>
+      <button id="nightbtn" title="Preview how lit windows look at night">🌙 Night preview</button>
     </div>
 
     <h3>Parts</h3>
@@ -54,6 +65,7 @@
       <div class="row"><label>pos</label> x<input id="px" type="number" step="0.5"> y<input id="py" type="number" step="0.5"> z<input id="pz" type="number" step="0.5"></div>
       <div class="row"><label>size</label> w<input id="pw" type="number" step="0.5"> h<input id="ph" type="number" step="0.5"> d<input id="pd" type="number" step="0.5"></div>
       <div class="row"><label>rot</label> <input id="pr" type="number" step="5"> ° <input id="pc" type="color"> <button id="pdup">Duplicate</button> <button id="pdel" class="warn">Delete</button></div>
+      <div class="row"><label style="width:auto"><input id="plight" type="checkbox" style="width:auto"> 💡 Lights up at night (lit window/sign)</label></div>
     </div>
 
     <h3>Place on island</h3>
@@ -68,11 +80,11 @@
       <label class="btn">📂 Load<input id="load" type="file" accept="application/json" hidden></label>
     </div>
     <div class="row"><button id="newd">＋ New design</button> <button id="manage">📋 Placed…</button></div>
-    <small>Added landmarks reflect in the game on reload (new game). <a href="/trace.html">← Tracer</a></small>
+    <small>Added landmarks reflect in the game on reload (new game). <a href="/">🎮 Game</a> · <a href="/trace.html">🗺 Tracer</a></small>
   </div>
   <div id="view">
     <canvas id="c"></canvas>
-    <div id="hud">drag: orbit · wheel: zoom · right-drag: pan · click a part to select</div>
+    <div id="hud">drag: orbit · wheel: zoom · right-drag: pan · click a part to select · ✥ Move: drag to reposition</div>
     <div id="toast"></div>
   </div>
 </div>
@@ -92,14 +104,16 @@ const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 2000);
 const cam = { r: 60, th: 0.7, ph: 0.9, tx: 0, ty: 4, tz: 0 };
 const sun = new THREE.DirectionalLight(0xfff4e0, 1.4); sun.position.set(30, 50, 20); sun.castShadow = true;
 sun.shadow.mapSize.set(1024, 1024); Object.assign(sun.shadow.camera, { left: -60, right: 60, top: 60, bottom: -60, near: 1, far: 200 });
-scene.add(sun); scene.add(new THREE.AmbientLight(0x9fb4d0, 0.7));
+scene.add(sun); const amb = new THREE.AmbientLight(0x9fb4d0, 0.7); scene.add(amb);
 const grid = new THREE.GridHelper(120, 24, 0x3a4356, 0x222a38); grid.material.opacity = 0.5; grid.material.transparent = true; scene.add(grid);
 const ground = new THREE.Mesh(new THREE.PlaneGeometry(120, 120), new THREE.MeshStandardMaterial({ color: 0x223344, roughness: 1 }));
 ground.rotation.x = -Math.PI / 2; ground.position.y = -0.01; ground.receiveShadow = true; scene.add(ground);
 
 // ---- model ----
-let parts = [];           // {type,x,y,z,w,h,d,rot,color}
+let parts = [];           // {type,x,y,z,w,h,d,rot,color,light}
 let sel = -1;
+let moveMode = false;     // ✥ drag a part in the scene to reposition it
+let night = false;        // 🌙 preview lit windows against a dark sky
 const group = new THREE.Group(); scene.add(group);
 const COLORS = ['#cfc9b8', '#d7b07a', '#9aa0a6', '#b5c7d6', '#c98f5a', '#e6e1d2', '#7fae9e', '#8a8f88'];
 
@@ -108,9 +122,15 @@ function partMesh(p) {
   if (p.type === 'cyl') geo = new THREE.CylinderGeometry(w / 2, w / 2, h, 24);
   else if (p.type === 'pyramid') { geo = new THREE.ConeGeometry(w * 0.7, h, 4); ex = Math.PI / 4; }
   else if (p.type === 'dome') { geo = new THREE.SphereGeometry(w / 2, 22, 12, 0, Math.PI * 2, 0, Math.PI / 2); yoff = 0; }
+  // window/door are thin panels mounted on a facade (depth kept small)
+  else if (p.type === 'window' || p.type === 'door') geo = new THREE.BoxGeometry(w, h, Math.max(0.3, d));
   else geo = new THREE.BoxGeometry(w, h, d);
-  const m = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: p.color || '#cfc9b8', roughness: 0.85 }));
-  m.castShadow = true; m.receiveShadow = true; m.position.set(p.x || 0, (p.y || 0) + yoff, p.z || 0); m.rotation.y = (p.rot || 0) * Math.PI / 180 + ex;
+  const mat = new THREE.MeshStandardMaterial({ color: p.color || '#cfc9b8', roughness: p.type === 'window' ? 0.25 : 0.85, metalness: p.type === 'window' ? 0.1 : 0 });
+  // a part flagged "light" glows; in night preview it really lights the window
+  if (p.light) { mat.emissive = new THREE.Color(p.color || '#ffe9a8'); mat.emissiveIntensity = night ? 1.1 : 0.55; }
+  const m = new THREE.Mesh(geo, mat);
+  m.castShadow = p.type !== 'window' && p.type !== 'door'; m.receiveShadow = true;
+  m.position.set(p.x || 0, (p.y || 0) + yoff, p.z || 0); m.rotation.y = (p.rot || 0) * Math.PI / 180 + ex;
   return m;
 }
 function rebuild() {
@@ -123,13 +143,19 @@ function rebuild() {
 function renderList() {
   $('parts').innerHTML = parts.map((p, i) => `<div class="pitem ${i === sel ? 'sel' : ''}" data-i="${i}"><span><span class="sw" style="background:${p.color}"></span>${p.type} ${i + 1}</span><span class="x" data-del="${i}">✕</span></div>`).join('') || '<div style="padding:8px;opacity:.6">No parts yet — add one.</div>';
   const p = parts[sel]; $('props').style.display = p ? '' : 'none';
-  if (p) { px.value = p.x || 0; py.value = p.y || 0; pz.value = p.z || 0; pw.value = p.w; ph.value = p.h; pd.value = p.d; pr.value = p.rot || 0; pc.value = p.color; }
+  if (p) { px.value = p.x || 0; py.value = p.y || 0; pz.value = p.z || 0; pw.value = p.w; ph.value = p.h; pd.value = p.d; pr.value = p.rot || 0; pc.value = p.color; plight.checked = !!p.light; }
 }
-const { px, py, pz, pw, ph, pd, pr, pc } = window;
+const { px, py, pz, pw, ph, pd, pr, pc, plight } = window;
 function addPart(type) {
-  const c = COLORS[parts.length % COLORS.length];
-  const base = parts.reduce((m, q) => Math.max(m, (q.y || 0) + (q.h || 4)), 0);  // stack on top
-  parts.push({ type, x: 0, y: type === 'pyramid' || type === 'dome' ? base : 0, z: 0, w: 8, h: type === 'pyramid' ? 5 : 8, d: 8, rot: 0, color: c });
+  const base = parts.reduce((m, q) => Math.max(m, (q.y || 0) + (q.h || 4)), 0);  // stack structure on top
+  if (type === 'window') { // a lit-glass panel, mounted on the front face at eye height
+    parts.push({ type, x: 0, y: 3, z: 4.2, w: 2, h: 2.5, d: 0.3, rot: 0, color: '#bcd4e6', light: true });
+  } else if (type === 'door') {
+    parts.push({ type, x: 0, y: 0, z: 4.2, w: 2.4, h: 4, d: 0.4, rot: 0, color: '#5a4636', light: false });
+  } else {
+    const c = COLORS[parts.length % COLORS.length];
+    parts.push({ type, x: 0, y: type === 'pyramid' || type === 'dome' ? base : 0, z: 0, w: 8, h: type === 'pyramid' ? 5 : 8, d: 8, rot: 0, color: c });
+  }
   sel = parts.length - 1; rebuild();
 }
 document.querySelectorAll('[data-add]').forEach(b => b.onclick = () => addPart(b.dataset.add));
@@ -140,8 +166,15 @@ $('parts').onclick = e => {
 for (const [el, key, mul] of [[px, 'x', 1], [py, 'y', 1], [pz, 'z', 1], [pw, 'w', 1], [ph, 'h', 1], [pd, 'd', 1], [pr, 'rot', 1]])
   el.oninput = () => { if (parts[sel]) { parts[sel][key] = +el.value; rebuild(); } };
 pc.oninput = () => { if (parts[sel]) { parts[sel].color = pc.value; rebuild(); } };
+plight.onchange = () => { if (parts[sel]) { parts[sel].light = plight.checked; rebuild(); } };
 $('pdel').onclick = () => { if (sel >= 0) { parts.splice(sel, 1); sel = Math.min(sel, parts.length - 1); rebuild(); } };
 $('pdup').onclick = () => { if (parts[sel]) { const q = { ...parts[sel], x: (parts[sel].x || 0) + 4 }; parts.push(q); sel = parts.length - 1; rebuild(); } };
+$('movemode').onclick = () => { moveMode = !moveMode; $('movemode').classList.toggle('prim', moveMode);
+  $('hud').textContent = moveMode ? '✥ Move ON — drag a part to reposition (Shift-drag = up/down)' : 'drag: orbit · wheel: zoom · click a part to select'; };
+$('nightbtn').onclick = () => { night = !night; $('nightbtn').classList.toggle('prim', night);
+  scene.background = new THREE.Color(night ? 0x05080f : 0x0e1118);
+  sun.intensity = night ? 0.12 : 1.4; amb.intensity = night ? 0.18 : 0.7; amb.color.set(night ? 0x2a3550 : 0x9fb4d0);
+  rebuild(); };
 
 // ---- camera / controls ----
 function updateCam() {
@@ -151,24 +184,41 @@ function updateCam() {
 function render() { updateCam(); renderer.render(scene, camera); }
 function resize() { const w = cv.clientWidth, h = cv.clientHeight; renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); render(); }
 addEventListener('resize', resize);
-let drag = null;
-cv.addEventListener('pointerdown', e => { cv.setPointerCapture(e.pointerId); drag = { x: e.clientX, y: e.clientY, b: e.button, moved: false, th: cam.th, ph: cam.ph, tx: cam.tx, ty: cam.ty, tz: cam.tz }; });
+let drag = null, moveDrag = null;
+const ray = new THREE.Raycaster();
+function rayAt(e) { const r = cv.getBoundingClientRect();
+  ray.setFromCamera(new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1), camera); return ray; }
+function partHit(e) { return rayAt(e).intersectObjects(group.children.filter(c => c.userData.i != null), false)[0]; }
+const _plane = new THREE.Plane(), _hitPt = new THREE.Vector3();
+cv.addEventListener('pointerdown', e => {
+  cv.setPointerCapture(e.pointerId);
+  // ✥ Move mode: left-drag on a part repositions it (instead of orbiting)
+  if (moveMode && e.button === 0) { const h = partHit(e);
+    if (h) { sel = h.object.userData.i; const p = parts[sel];
+      _plane.setFromNormalAndCoplanarPoint(new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, p.y || 0, 0));
+      const grab = rayAt(e).ray.intersectPlane(_plane, _hitPt.clone());
+      moveDrag = { i: sel, sy: e.clientY, py: p.y || 0, ox: grab ? grab.x - (p.x || 0) : 0, oz: grab ? grab.z - (p.z || 0) : 0, moved: false };
+      rebuild(); return; } }
+  drag = { x: e.clientX, y: e.clientY, b: e.button, moved: false, th: cam.th, ph: cam.ph, tx: cam.tx, ty: cam.ty, tz: cam.tz };
+});
 cv.addEventListener('pointermove', e => {
+  if (moveDrag) { const p = parts[moveDrag.i]; if (!p) { moveDrag = null; return; } moveDrag.moved = true;
+    if (e.shiftKey) { p.y = Math.round((moveDrag.py - (e.clientY - moveDrag.sy) * cam.r * 0.004) * 2) / 2; }  // Shift-drag = up/down
+    else { _plane.setFromNormalAndCoplanarPoint(new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, p.y || 0, 0));
+      const g = rayAt(e).ray.intersectPlane(_plane, _hitPt.clone());
+      if (g) { p.x = Math.round((g.x - moveDrag.ox) * 2) / 2; p.z = Math.round((g.z - moveDrag.oz) * 2) / 2; } }
+    rebuild(); return; }
   if (!drag) return; const dx = e.clientX - drag.x, dy = e.clientY - drag.y; if (Math.abs(dx) + Math.abs(dy) > 4) drag.moved = true;
   if (drag.b === 2 || e.shiftKey) { const k = cam.r * 0.0016; const rt = new THREE.Vector3().setFromMatrixColumn(camera.matrix, 0); const up = new THREE.Vector3().setFromMatrixColumn(camera.matrix, 1); cam.tx = drag.tx - rt.x * dx * k + up.x * dy * k; cam.ty = drag.ty - rt.y * dx * k + up.y * dy * k; cam.tz = drag.tz - rt.z * dx * k + up.z * dy * k; }
   else { cam.th = drag.th - dx * 0.01; cam.ph = Math.max(0.15, Math.min(1.5, drag.ph - dy * 0.01)); }
   render();
 });
-cv.addEventListener('pointerup', e => { if (drag && !drag.moved && e.button === 0) pick(e); drag = null; });
+cv.addEventListener('pointerup', e => {
+  if (moveDrag) { moveDrag = null; renderList(); return; }
+  if (drag && !drag.moved && e.button === 0) pick(e); drag = null; });
 cv.addEventListener('contextmenu', e => e.preventDefault());
 cv.addEventListener('wheel', e => { e.preventDefault(); cam.r = Math.max(8, Math.min(300, cam.r * (e.deltaY < 0 ? 0.9 : 1.1))); render(); }, { passive: false });
-const ray = new THREE.Raycaster();
-function pick(e) {
-  const r = cv.getBoundingClientRect();
-  ray.setFromCamera(new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1), camera);
-  const hit = ray.intersectObjects(group.children.filter(c => c.userData.i != null), false)[0];
-  if (hit) { sel = hit.object.userData.i; rebuild(); }
-}
+function pick(e) { const hit = partHit(e); if (hit) { sel = hit.object.userData.i; rebuild(); } }
 
 // ---- save / send / load ----
 function toast(m, bad) { const t = $('toast'); t.textContent = m; t.style.background = bad ? '#e2503b' : '#2ecc71'; t.style.color = bad ? '#fff' : '#052915'; t.style.opacity = 1; clearTimeout(t._t); t._t = setTimeout(() => t.style.opacity = 0, 1600); }

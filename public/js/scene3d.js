@@ -297,10 +297,10 @@ export class Scene3D {
       const gmat = new THREE.MeshToonMaterial({ color: 0x3fae57, gradientMap: toonGradient() });
       const tmat = new THREE.MeshToonMaterial({ color: 0x8a6b43, gradientMap: toonGradient() });
       for (const [dx, dz] of [[-5, -2], [4, 2], [0, 4]]) {
-        const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.8, 8, 8), tmat);
-        trunk.position.set(cx + dx, 4, cz + dz); trunk.castShadow = true; this.scene.add(trunk);
-        const fr = new THREE.Mesh(new THREE.SphereGeometry(3.6, 8, 6), gmat);
-        fr.position.set(cx + dx, 8.4, cz + dz); fr.scale.y = 0.5; fr.castShadow = true; this.scene.add(fr);
+        const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.5, 5, 8), tmat);
+        trunk.position.set(cx + dx, 2.5, cz + dz); trunk.castShadow = true; this.scene.add(trunk);
+        const fr = new THREE.Mesh(new THREE.SphereGeometry(2.3, 8, 6), gmat);
+        fr.position.set(cx + dx, 5.3, cz + dz); fr.scale.y = 0.5; fr.castShadow = true; this.scene.add(fr);
       }
     }
   }
@@ -2415,6 +2415,7 @@ function roofKit(g, x, z, w, d, topY) {
   g.add(partBox(1.2, 0.7, 1.2, mat(0x7d848b), x + w * 0.18, topY + 0.6, z + d * 0.18));
 }
 function treeAt(g, x, z, s = 1) {
+  s *= 0.62;   // trees were oversized — scale every tree down uniformly
   g.add(cyl(0.18 * s, 0.22 * s, 1.4 * s, 0x7a5836, x, 0.7 * s, z));
   const f = new THREE.Mesh(new THREE.SphereGeometry(1.0 * s, 7, 6), mat(0x4f9e3f));
   f.position.set(x, 1.9 * s, z); f.scale.y = 1.2; f.castShadow = true; g.add(f);

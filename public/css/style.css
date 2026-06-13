@@ -84,6 +84,23 @@ svg { display: block; width: 100%; height: 100%; }
   box-shadow: 0 6px 18px rgba(0,0,0,0.35); max-width: 92vw; }
 .tool-banner.hidden { display: none; }
 .tool-banner b { font-weight: 800; }
+.tool-banner .tb-sub { font-weight: 600; opacity: 0.92; font-size: 12px; }
+
+/* ---- edit mode: time & the world are paused so you can build calmly -------- */
+/* a soft pulsing frame around the viewport makes it obvious editing is on */
+body.edit-mode::after {
+  content: ''; position: fixed; inset: 0; z-index: 55; pointer-events: none;
+  border: 3px solid var(--teal, #11a39c);
+  box-shadow: inset 0 0 0 1px rgba(17,163,156,0.45), inset 0 0 46px rgba(17,163,156,0.22);
+  animation: editPulse 1.6s ease-in-out infinite;
+}
+@keyframes editPulse { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }
+/* a "Paused" pill next to the date, and the running speed button dimmed */
+.edit-mode .hud-date::after {
+  content: '⏸ Paused'; margin-left: 4px; background: var(--teal, #11a39c); color: #fff;
+  padding: 1px 7px; border-radius: 999px; font-weight: 800; font-size: 10px; letter-spacing: 0.2px;
+}
+.edit-mode .spd.active { opacity: 0.45; box-shadow: 0 0 0 2px var(--teal, #11a39c) inset; }
 .tool-banner button { background: rgba(255,255,255,0.22); border: 1px solid rgba(255,255,255,0.35);
   color: #fff; border-radius: 999px; padding: 5px 11px; font-weight: 700; cursor: pointer; white-space: nowrap; }
 .tool-banner button:hover { background: rgba(255,255,255,0.35); }

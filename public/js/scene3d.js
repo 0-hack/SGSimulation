@@ -984,11 +984,19 @@ export class Scene3D {
     const end = (e) => {
       const p = pos(e);
       if (this._drawing) { // finish a route stroke
-        if (this._stroke && this._stroke.length >= 2 && this.onStroke) this.onStroke(this._stroke);
+        // make sure the point where the finger/mouse lifts is part of the route,
+        // so even a short trackpad drag yields a real two-point line to build.
+        const g = this._raycastGround(p);
+        if (g && this._stroke) { const last = this._stroke[this._stroke.length - 1];
+          if (!last || Math.hypot(g.x - last.x, g.z - last.z) > 0.5) this._stroke.push({ x: g.x, z: g.z }); }
+        const stroke = this._stroke;
         this._drawing = false; this._stroke = null; this.clearRoadPreview();
         this._pointers.delete(e.pointerId);
         if (this._pointers.size < 2) { this._lastPinch = 0; this._lastMid = null; }
         if (this._pointers.size === 0) this._panDrag = false;
+        // always hand the stroke back so the game can guide the player (e.g. a
+        // bare tap that drew nothing gets a "hold and drag" hint instead of silence).
+        if (this.onStroke) this.onStroke(stroke || []);
         return;
       }
       if (this._painting) { // finish a paint drag; a plain tap already painted on pointerdown
@@ -1752,6 +1760,9 @@ export class Scene3D {
 
   // ---- day / night (driven by the in-game clock) ---------------------------
   advanceClock(days) { this.gameDays += days; this._pendingDays = (this._pendingDays || 0) + days; }
+  // Freeze the living world (traffic, people, boats, sea shimmer, weather) while
+  // the player is editing. The camera and edit feedback stay fully responsive.
+  setFrozen(on) { this.frozen = !!on; }
   _updateDayNight() {
     this.timeOfDay = ((this.gameDays / DAY_CYCLE) % 1 + 1) % 1;
     const elev = Math.sin(2 * Math.PI * (this.timeOfDay - 0.25)); // -1..1
@@ -2166,8 +2177,12 @@ export class Scene3D {
       if (d.t >= d.dur) { this.scene.remove(d.pts); this.dust.splice(i, 1); }
     }
 
+    // In edit mode the world holds still (time is paused), so ambient motion uses
+    // a zero delta — the camera and placement tweens above keep their real dt.
+    const adt = this.frozen ? 0 : dt;
+
     // unified traffic — density scales with population, drives grid + freeform roads
-    if (this.state && this.edgePts.length) {
+    if (!this.frozen && this.state && this.edgePts.length) {
       const target = THREE.MathUtils.clamp(Math.floor(this.state.population / 30000), 5, 60);
       // traffic lights appear once the city has modernised past LIGHT_YEAR
       const wantLights = (this.state.date?.y || 1965) >= LIGHT_YEAR;
@@ -2177,15 +2192,15 @@ export class Scene3D {
       this._advanceNet(this.vehicles, dt);
     }
 
-    // sea shimmer
-    if (this.sea) this.sea.material.opacity = 0.9 + Math.sin(this.clock.elapsedTime * 1.5) * 0.03;
+    // sea shimmer (held still while editing)
+    if (this.sea && !this.frozen) this.sea.material.opacity = 0.9 + Math.sin(this.clock.elapsedTime * 1.5) * 0.03;
 
     this._updateDayNight();
-    this._updateWeather(dt);
-    this._updateDevelopment(dt);
-    this._updatePeople(dt);
-    this._updateBoats(dt);
-    this._updateDisaster(dt);
+    this._updateWeather(adt);
+    this._updateDevelopment(adt);
+    this._updatePeople(adt);
+    this._updateBoats(adt);
+    this._updateDisaster(adt);
     this._updateCamera();
     this.renderer.render(this.scene, this.camera);
   }

@@ -49,6 +49,7 @@ const G = {
   build: { cat: 'residential', selected: null, bulldoze: false, theme: null },
   road: { tool: null, type: 'street', elevated: false, pending: [] },
   reclaim: { active: false },  // land-reclamation tool: tap sea to fill land
+  editPause: false,            // true while a build/road/reclaim tool is active — freezes time & the world
 
   currentPanel: null,
   dirty: false,          // unsaved changes since last cloud save
@@ -105,6 +106,7 @@ function boot() {
 // ===========================================================================
 function showMenu() {
   G.speed = 0;
+  setEditPause(false);
   $('game').classList.add('hidden');
   $('toolbar').classList.add('hidden');
   $('tool-banner')?.classList.add('hidden');
@@ -201,7 +203,7 @@ function loop(ts) {
   const dt = G.lastFrame ? (ts - G.lastFrame) / 1000 : 0;
   G.lastFrame = ts;
 
-  if (G.state && G.speed > 0 && !G.state.pendingEvent) {
+  if (G.state && G.speed > 0 && !G.state.pendingEvent && !G.editPause) {
     // drive the day/night sun & weather clock in lockstep with the date
     if (G.view) G.view.advanceClock(dt * SPEED_RATE[G.speed]);
     G.acc += dt * SPEED_RATE[G.speed];
@@ -333,10 +335,20 @@ function activeTool() {
 }
 function updateToolBanner() {
   const t = activeTool(), el = $('tool-banner');
+  // Editing a tool freezes the clock and the living map so you can build calmly.
+  setEditPause(!!t);
   if (!el) return;
   if (!t) { el.classList.add('hidden'); return; }
-  $('tool-banner-text').innerHTML = `<b>${t.label}</b> — tap the map to ${t.verb}`;
+  $('tool-banner-text').innerHTML = `<b>⏸ Edit mode · ${t.label}</b><br><span class="tb-sub">Time paused — tap the map to ${t.verb}</span>`;
   el.classList.remove('hidden');
+}
+// Enter/leave edit mode: pause time (the loop checks G.editPause), freeze the
+// world animation, and flag the UI so it's obvious editing is on.
+function setEditPause(on) {
+  if (G.editPause === on) return;
+  G.editPause = on;
+  document.body.classList.toggle('edit-mode', on);
+  if (G.view) G.view.setFrozen(on);
 }
 function cancelTools() {
   G.build.selected = null; G.build.bulldoze = false; G.reclaim.active = false;
@@ -429,10 +441,13 @@ function onGroundTap(x, z) {
 // A route drawn freehand on the map → queue it for construction (builds with a
 // works crew, charged by length & type; railways become rail, others roads).
 function onRouteDrawn(pts) {
-  if (G.readOnly || !pts || pts.length < 2) return;
+  if (G.readOnly) return;
+  // a bare tap (or a stroke that never left the start point) draws nothing —
+  // tell the player to hold and drag instead of failing silently.
+  if (!pts || pts.length < 2) { toast('Hold and drag across the map to draw the route — a single tap is too short. ✏️'); return; }
   const T = ROAD_TYPES[G.road.type] || ROAD_TYPES.street;
   const len = routeLength(pts);
-  if (len < 8) { toast('Draw a longer route.'); return; }
+  if (len < 8) { toast('That route is too short — drag a longer line across the map.'); return; }
   const cost = priced(T.cost * Math.max(1, len / 20), G.state);
   if (G.state.treasury < cost) { toast(`Need ${money(cost)} for this ${T.name.toLowerCase()}.`); return; }
   const total = Math.max(3, Math.min(40, Math.round(len / 15)));

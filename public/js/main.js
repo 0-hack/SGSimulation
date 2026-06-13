@@ -3,6 +3,7 @@ import {
   newGame, tickDay, build, demolish, canPlace, derive,
   resolveEvent, snapshot, refreshSummary, ensureGrid, issueBond, repayDebt,
   reclaimLand, reclaimCost, buildingCost, priced,
+  routeLength, addRoadwork,
 } from './engine.js';
 import { Scene3D } from './scene3d.js';
 import { api } from './api.js';
@@ -205,6 +206,7 @@ function loop(ts) {
     if (G.view) G.view.advanceClock(dt * SPEED_RATE[G.speed]);
     G.acc += dt * SPEED_RATE[G.speed];
     let ticks = 0;
+    const rwBefore = (G.state.roadworks || []).length;
     while (G.acc >= 1 && ticks < 60) {
       tickDay(G.state);
       G.acc -= 1;
@@ -214,7 +216,8 @@ function loop(ts) {
     if (ticks > 0) {
       G.dirty = true;
       G.hudTimer += dt;
-      if (G.view) { G.view.syncConstruction(G.state); G.view.syncReclamation(G.state); } // advance/finish sites & rising land
+      if (G.view) { G.view.syncConstruction(G.state); G.view.syncReclamation(G.state); G.view.syncRoadworks(G.state); // advance sites/land/routes
+        if ((G.state.roadworks || []).length < rwBefore) { G.view.rebuildRoadNet(); G.view._buildPlayerRailways(G.state); } } // a route finished -> render it for real
       updateHud(G.state, G.readOnly);
       updateShortages();
       if (G.state.pendingEvent) { showEvent(); }
@@ -338,7 +341,7 @@ function updateToolBanner() {
 function cancelTools() {
   G.build.selected = null; G.build.bulldoze = false; G.reclaim.active = false;
   G.road.tool = null; G.road.pending = [];
-  if (G.view) { G.view.setPreview(null); G.view.setBulldoze(false); G.view.setRoadMode(false); G.view.setPaintMode(false); G.view.showRoadPreview([]); }
+  if (G.view) { G.view.setPreview(null); G.view.setBulldoze(false); G.view.setRoadMode(false); G.view.setPaintMode(false); G.view.setDrawMode(false); G.view.showRoadPreview([]); }
   updateToolBanner();
   if (G.currentPanel === 'build') refreshPanel();
 }
@@ -423,17 +426,40 @@ function onGroundTap(x, z) {
   }
   G.view.showRoadPreview(R.pending, R.type, R.elevated);
 }
+// A route drawn freehand on the map → queue it for construction (builds with a
+// works crew, charged by length & type; railways become rail, others roads).
+function onRouteDrawn(pts) {
+  if (G.readOnly || !pts || pts.length < 2) return;
+  const T = ROAD_TYPES[G.road.type] || ROAD_TYPES.street;
+  const len = routeLength(pts);
+  if (len < 8) { toast('Draw a longer route.'); return; }
+  const cost = priced(T.cost * Math.max(1, len / 20), G.state);
+  if (G.state.treasury < cost) { toast(`Need ${money(cost)} for this ${T.name.toLowerCase()}.`); return; }
+  const total = Math.max(3, Math.min(40, Math.round(len / 15)));
+  G.state.treasury -= cost;
+  addRoadwork(G.state, { pts, kind: T.rail ? 'rail' : 'road', type: G.road.type, lanes: T.lanes, elevated: G.road.elevated, total });
+  G.view.syncRoadworks(G.state);
+  afterEdit();
+  toast(`${T.name} — construction started (${money(cost)}). ✕ Done / Esc to stop.`);
+}
+function applyRoadToolMode() {
+  const draw = G.road.tool === 'draw';
+  G.view.setRoadMode(!!G.road.tool && !draw);
+  if (draw) { const T = ROAD_TYPES[G.road.type] || ROAD_TYPES.street; G.view.setDrawMode(true, onRouteDrawn, { type: G.road.type, elevated: G.road.elevated, rail: !!T.rail }); }
+  else G.view.setDrawMode(false);
+}
 function selectRoadTool(tool) {
   G.road.tool = G.road.tool === tool ? null : tool;
   G.road.pending = [];
   G.build.selected = null; G.build.bulldoze = false; G.reclaim.active = false;
   G.view.setPreview(null); G.view.setBulldoze(false); G.view.setPaintMode(false);
-  G.view.setRoadMode(!!G.road.tool);
+  applyRoadToolMode();
   G.view.showRoadPreview([]);
   refreshPanel();
   if (G.road.tool) {
     closeSheet();
-    const msg = { straight: 'Tap two points to lay a straight road (keep tapping to chain).',
+    const msg = { draw: 'Drag across the map to draw the route — it builds with a works crew.',
+      straight: 'Tap two points to lay a straight road (keep tapping to chain).',
       curve: 'Tap start, a curve point, then the end. Chains on.',
       roundabout: 'Tap to place a roundabout.', erase: 'Tap a road to remove it.' }[G.road.tool];
     toast(msg + ' ✕ Done / Esc to stop.');
@@ -486,7 +512,7 @@ function refreshPanel() {
     content.append(renderBuild(G.state, {
       cat: G.build.cat, selected: G.build.selected, bulldoze: G.build.bulldoze, theme: G.build.theme,
       road: G.road, reclaim: G.reclaim, toggleReclaim,
-      selectRoadTool, setRoadType: (t) => { G.road.type = t; refreshPanel(); },
+      selectRoadTool, setRoadType: (t) => { G.road.type = t; applyRoadToolMode(); refreshPanel(); },
       toggleBridge: () => { G.road.elevated = !G.road.elevated; refreshPanel(); },
       setCat: (c) => { G.build.cat = c; if (c !== 'roads') { G.road.tool = null; G.view.setRoadMode(false); } if (c !== 'land') { G.reclaim.active = false; G.view.setPaintMode(false); } refreshPanel(); updateToolBanner(); },
       setTheme: (t) => { G.build.theme = t; if (G.build.selected) G.view.setPreview(G.build.selected, t); refreshPanel(); },

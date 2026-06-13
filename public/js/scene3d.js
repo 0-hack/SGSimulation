@@ -940,6 +940,11 @@ export class Scene3D {
       this._moved = false; this._down = pos(e); this._downTime = performance.now(); this._last = pos(e);
       // right / middle mouse button, or shift+left, drags to pan the view
       this._panDrag = e.pointerType === 'mouse' && (e.button === 1 || e.button === 2 || (e.button === 0 && e.shiftKey));
+      // draw mode: a drag traces a route (road/railway), no camera orbit
+      if (this.drawMode && this.onStroke && !this._panDrag && this._pointers.size === 1) {
+        const g = this._raycastGround(pos(e));
+        this._drawing = true; this._stroke = g ? [{ x: g.x, z: g.z }] : [];
+      }
       // paint mode: a drag fills cells (no camera orbit). Paint the first cell now.
       if (this.paintMode && this.onPaint && !this._panDrag && this._pointers.size === 1) {
         this._painting = true; this._paintSeen = new Set(); this._paintAt(pos(e));
@@ -964,6 +969,12 @@ export class Scene3D {
       const dx = p.x - this._last.x, dy = p.y - this._last.y;
       this._last = p;
       if (Math.abs(p.x - this._down.x) > 5 || Math.abs(p.y - this._down.y) > 5) this._moved = true;
+      if (this._drawing) { // drag traces a route; sample ground points every few units
+        const g = this._raycastGround(p);
+        if (g) { const last = this._stroke[this._stroke.length - 1];
+          if (!last || Math.hypot(g.x - last.x, g.z - last.z) > 6) { this._stroke.push({ x: g.x, z: g.z }); this.showRoadPreview(this._stroke, this._drawType, this._drawElevated); } }
+        return;
+      }
       if (this._painting) { this._paintAt(p); return; }     // drag paints cells (reclamation)
       if (this._panDrag) { this._pan(dx, dy); this._hover(p); return; } // drag to shift the view
       this.cam.theta -= dx * 0.005;
@@ -972,6 +983,14 @@ export class Scene3D {
     });
     const end = (e) => {
       const p = pos(e);
+      if (this._drawing) { // finish a route stroke
+        if (this._stroke && this._stroke.length >= 2 && this.onStroke) this.onStroke(this._stroke);
+        this._drawing = false; this._stroke = null; this.clearRoadPreview();
+        this._pointers.delete(e.pointerId);
+        if (this._pointers.size < 2) { this._lastPinch = 0; this._lastMid = null; }
+        if (this._pointers.size === 0) this._panDrag = false;
+        return;
+      }
       if (this._painting) { // finish a paint drag; a plain tap already painted on pointerdown
         this._painting = false; this._paintSeen = null;
         this._pointers.delete(e.pointerId);
@@ -1236,7 +1255,7 @@ export class Scene3D {
   }
 
   // ---- external API (mirrors the 2D view) ----------------------------------
-  setState(state) { this.state = state; this._syncReclaimed(); this.syncAll(); this.rebuildRoadNet(); }
+  setState(state) { this.state = state; this._syncReclaimed(); this.syncAll(); this.rebuildRoadNet(); this._buildPlayerRailways(state); this.syncRoadworks(state); }
   setShortages(s) { this.shortages = s; }
   setPreview(key, theme) {
     this.previewKey = key; this.previewTheme = theme; this.bulldoze = false;
@@ -1778,6 +1797,53 @@ export class Scene3D {
   // Paint mode (land reclamation): drag across the map to apply onPaint to each
   // cell instead of orbiting the camera.
   setPaintMode(on, onPaint) { this.paintMode = !!on; this.onPaint = onPaint || null; if (!on) { this._painting = false; this._paintSeen = null; } }
+  // Draw mode: drag across the map to trace a route (road/railway). On release,
+  // onStroke([{x,z}...]) is called. `opts` sets the live-preview look.
+  setDrawMode(on, onStroke, opts) { this.drawMode = !!on; this.onStroke = onStroke || null; this._drawType = (opts && opts.type) || 'street'; this._drawElevated = !!(opts && opts.elevated); this._drawRail = !!(opts && opts.rail); if (!on) { this._drawing = false; this._stroke = null; this.clearRoadPreview(); } }
+  // Render finished player-drawn railways (world coords) like the historic ones.
+  _buildPlayerRailways(state) {
+    if (this._pRailGroup) this.scene.remove(this._pRailGroup);
+    const g = new THREE.Group(); this.scene.add(g); this._pRailGroup = g;
+    for (const poly of ((state && state.railways) || [])) {
+      if (!poly || poly.length < 2) continue;
+      const pts = poly.map(([x, z]) => new THREE.Vector3(x, 0, z));
+      this._addRibbon(g, pts, 1.7, 0x5b5040, 0.13);
+      const nrm = pts.map((p, i) => { const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)]; let tx = b.x - a.x, tz = b.z - a.z; const l = Math.hypot(tx, tz) || 1; return [-tz / l, tx / l]; });
+      for (const sgn of [-1, 1]) this._addRibbon(g, pts.map((p, i) => new THREE.Vector3(p.x + nrm[i][0] * 0.7 * sgn, 0, p.z + nrm[i][1] * 0.7 * sgn)), 0.13, 0xb8c0c8, 0.18);
+    }
+  }
+  // Render routes still under construction: the built part grows from the start,
+  // with a works marker at the build front. Call each tick to animate.
+  syncRoadworks(state) {
+    if (this._roadworksGroup) this.scene.remove(this._roadworksGroup);
+    const g = new THREE.Group(); this.scene.add(g); this._roadworksGroup = g;
+    for (const w of ((state && state.roadworks) || [])) {
+      const wp = w.pts; if (!wp || wp.length < 2) continue;
+      const segL = []; let total = 0;
+      for (let i = 1; i < wp.length; i++) { const d = Math.hypot(wp[i].x - wp[i - 1].x, wp[i].z - wp[i - 1].z); segL.push(d); total += d; }
+      const prog = Math.max(0, Math.min(1, 1 - w.left / Math.max(1, w.total)));
+      const builtLen = prog * total;
+      const built = [{ x: wp[0].x, z: wp[0].z }]; let acc = 0;
+      for (let i = 1; i < wp.length; i++) {
+        const d = segL[i - 1];
+        if (acc + d <= builtLen) { built.push({ x: wp[i].x, z: wp[i].z }); acc += d; }
+        else { const t = d ? (builtLen - acc) / d : 0; built.push({ x: wp[i - 1].x + (wp[i].x - wp[i - 1].x) * t, z: wp[i - 1].z + (wp[i].z - wp[i - 1].z) * t }); break; }
+      }
+      const toV = (p) => new THREE.Vector3(p.x, 0, p.z);
+      // faint full planned route, then the solid built part on top
+      this._addRibbon(g, wp.map(toV), (w.kind === 'rail' ? 1.4 : (w.lanes || 2) * 1.6 / 2 + 0.5), 0x8a8f6a, 0.02);
+      if (built.length >= 2) this._addRibbon(g, built.map(toV), (w.kind === 'rail' ? 1.4 : (w.lanes || 2) * 1.6 / 2 + 0.5), (w.kind === 'rail' ? 0x5b5040 : 0x3a3e45), 0.05);
+      const f = built[built.length - 1] || wp[0];
+      const m = this._roadworkMarker(); m.position.set(f.x, this._roadY(f.x, f.z) + 0.1, f.z); g.add(m);
+    }
+  }
+  _roadworkMarker() {
+    const grp = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.BoxGeometry(2.4, 1.6, 2.4), toon(0xf6c945)); body.position.y = 0.9; grp.add(body);
+    const cab = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.0, 1.2), toon(0x444b55)); cab.position.y = 2.0; grp.add(cab);
+    for (const dx of [-2.2, 2.2]) { const cone = new THREE.Mesh(new THREE.ConeGeometry(0.5, 1.3, 7), toon(0xff7a3c)); cone.position.set(dx, 0.65, 0); grp.add(cone); }
+    return grp;
+  }
 
   // Sample an edge's centre-line into world points (with bridge elevation).
   // ground height a road sits on: follow the terrain so it doesn't sink into hills

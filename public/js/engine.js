@@ -67,6 +67,8 @@ export function newGame({ name = 'New Singapore', owner = 'Anonymous' } = {}) {
     economy: { inflation: 0.02, priceIndex: 1, currency: 1 }, // dynamic inflation / price level / SGD strength
     constructing: [],         // [x,y] cells whose building is still being built
     landmarks: [],            // 3D-designed landmarks saved into THIS world (per-player; for build menu + visitors)
+    roadworks: [],            // routes (roads/railways) drawn on the map, still under construction
+    railways: [],             // finished player-drawn railway lines (polylines of {x,z})
     summary: {},
     daysElapsed: 0,
   };
@@ -116,6 +118,8 @@ export function ensureGrid(state) {
   if (!Array.isArray(state.reclaimed)) state.reclaimed = [];
   if (!Array.isArray(state.reclaiming)) state.reclaiming = [];
   if (!Array.isArray(state.landmarks)) state.landmarks = [];
+  if (!Array.isArray(state.roadworks)) state.roadworks = [];
+  if (!Array.isArray(state.railways)) state.railways = [];
   if (!state.economy) state.economy = { inflation: 0.02, priceIndex: 1, currency: 1 };
   // Rebuild the active-construction list from the grid (robust across saves).
   state.constructing = [];
@@ -288,6 +292,49 @@ function advanceReclamation(state) {
     else still.push(r);
   }
   state.reclaiming = still;
+}
+
+// ---------------------------------------------------------------------------
+// Drawn routes (roads / railways) under construction
+// ---------------------------------------------------------------------------
+// Length of a polyline of {x,z} in world units.
+export function routeLength(pts) {
+  let L = 0; for (let i = 1; i < pts.length; i++) L += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].z - pts[i - 1].z);
+  return L;
+}
+// Queue a drawn route for construction. Returns { ok, cost }.
+export function addRoadwork(state, route) {
+  if (!state.roadworks) state.roadworks = [];
+  state.roadworks.push({
+    pts: route.pts, kind: route.kind || 'road', type: route.type || 'street',
+    lanes: route.lanes || 2, elevated: !!route.elevated,
+    total: route.total, left: route.total,
+  });
+  return { ok: true };
+}
+// Advance route construction; finished routes become real roads/railways.
+function advanceRoadworks(state) {
+  if (!state.roadworks || !state.roadworks.length) return;
+  const still = [];
+  for (const w of state.roadworks) {
+    w.left -= 1;
+    if (w.left > 0) { still.push(w); continue; }
+    if (w.kind === 'rail') {
+      (state.railways || (state.railways = [])).push(w.pts.map((p) => [p.x, p.z]));
+    } else {
+      const roads = state.roads, node = (x, z) => {
+        for (let i = 0; i < roads.nodes.length; i++) { const n = roads.nodes[i]; if (Math.hypot(n.x - x, n.z - z) < 4) return i; }
+        roads.nodes.push({ x, z, y: 0 }); return roads.nodes.length - 1;
+      };
+      let prev = node(w.pts[0].x, w.pts[0].z);
+      for (let i = 1; i < w.pts.length; i++) {
+        const id = node(w.pts[i].x, w.pts[i].z);
+        if (id !== prev) roads.edges.push({ a: prev, b: id, ctrl: null, type: w.type, lanes: w.lanes, elevated: w.elevated });
+        prev = id;
+      }
+    }
+  }
+  state.roadworks = still;
 }
 
 // ---------------------------------------------------------------------------
@@ -593,6 +640,7 @@ export function tickDay(state) {
   state.daysElapsed = (state.daysElapsed || 0) + 1;
   advanceConstruction(state); // tick building sites toward completion
   advanceReclamation(state);  // tick land reclamation (sea rising into land)
+  advanceRoadworks(state);    // tick drawn roads/railways toward completion
 
   const d = derive(state);
 

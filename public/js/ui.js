@@ -120,16 +120,16 @@ export function renderBuild(state, ctx) {
 function renderRoads(ctx) {
   const r = ctx.road;
   const wrap = el('div', 'roads-ui');
-  wrap.append(el('p', 'policy-desc', 'Draw your own roads — straight or curved, single street up to highway, with roundabouts and elevated flyovers. Traffic will use them.'));
+  wrap.append(el('p', 'policy-desc', 'Pick a type, then ✏️ Draw straight onto the map — drag to trace the route; it builds with a construction crew. Or tap points (Straight/Curve), add roundabouts, and Erase.'));
 
-  // road type
+  // type (roads + railway)
   const typeRow = el('div', 'road-types');
   for (const [id, t] of Object.entries(ROAD_TYPES)) {
-    const btn = el('button', 'opt' + (r.type === id ? ' active' : ''), `${t.name} · ${t.lanes}-lane`);
+    const btn = el('button', 'opt' + (r.type === id ? ' active' : ''), t.rail ? `${t.name}` : `${t.name} · ${t.lanes}-lane`);
     btn.onclick = () => ctx.setRoadType(id);
     typeRow.append(btn);
   }
-  wrap.append(el('div', 'section-title', 'Road type'));
+  wrap.append(el('div', 'section-title', 'Type'));
   wrap.append(typeRow);
 
   // bridge toggle
@@ -138,11 +138,11 @@ function renderRoads(ctx) {
   bridge.querySelector('.switch').onclick = () => ctx.toggleBridge();
   wrap.append(bridge);
 
-  // tools
+  // tools — ✏️ Draw (freehand) leads
   wrap.append(el('div', 'section-title', 'Tool'));
   const tools = el('div', 'road-tools');
   const defs = [
-    ['straight', 'Straight'], ['curve', 'Curve'], ['roundabout', 'Roundabout'], ['erase', 'Erase'],
+    ['draw', '✏️ Draw'], ['straight', 'Straight'], ['curve', 'Curve'], ['roundabout', 'Roundabout'], ['erase', 'Erase'],
   ];
   for (const [id, label] of defs) {
     const b = el('button', 'road-tool' + (r.tool === id ? ' active' : ''),

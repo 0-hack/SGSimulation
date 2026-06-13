@@ -1,7 +1,7 @@
 // UI rendering helpers: builds the contents of each bottom sheet/panel.
 // Returns DOM and wires callbacks; keeps main.js focused on orchestration.
 import { BUILDINGS, CATEGORIES, POLICIES, POP_SCALE, THEMES, ROAD_TYPES } from './data.js';
-import { derive, isUnlocked, formatDate, debtCeiling, bondRate, reclaimCost, reclaimInflation, RECLAIM } from './engine.js';
+import { derive, isUnlocked, formatDate, debtCeiling, bondRate, reclaimCost, buildingCost, buildDays, priceIndex, inflationRate, currencyStrength } from './engine.js';
 import { ICONS, CAT_ICON } from './icons.js';
 
 // ---- formatting ----
@@ -92,16 +92,18 @@ export function renderBuild(state, ctx) {
   for (const [key, b] of Object.entries(BUILDINGS)) {
     if (b.cat !== ctx.cat) continue;
     if (!isUnlocked(state, key)) continue;       // not invented yet — hidden, not locked
-    const affordable = state.treasury >= b.cost;
+    const cost = buildingCost(state, key);       // base cost × today's price level
+    const affordable = state.treasury >= cost;
     const card = el('button', 'bcard' + (ctx.selected === key ? ' selected' : ''));
 
     const tags = buildingTags(b);
+    const inflated = cost > b.cost ? ` <span class="b-infl" title="Base ${money(b.cost)} × inflation">▲</span>` : '';
     card.innerHTML = `
       <div class="b-top">
         <span class="b-ico">${b.icon}</span>
         <div style="flex:1">
           <div class="b-name">${b.name}</div>
-          <div class="b-cost">${money(b.cost)} · upkeep ${money(b.upkeep)}/mo</div>
+          <div class="b-cost">${money(cost)}${inflated} · upkeep ${money(b.upkeep)}/mo · ~${buildDays(b)}d</div>
         </div>
       </div>
       <div class="b-desc">${b.desc}</div>
@@ -156,13 +158,14 @@ function renderRoads(ctx) {
 function renderReclaim(state, ctx) {
   const wrap = el('div', 'roads-ui');
   const perCell = reclaimCost(state, 1);
-  const infl = Math.round(reclaimInflation(state.date.y) * 100) / 100;
-  wrap.append(el('p', 'policy-desc', 'Reclaim land from the sea — turn open water into buildable Singapore land. You can reclaim anywhere in the Singapore sea (not the Johor side or protected reservoirs).'));
+  const pIndex = Math.round(priceIndex(state) * 100) / 100;
+  const inflPct = (inflationRate(state) * 100).toFixed(1);
+  wrap.append(el('p', 'policy-desc', 'Reclaim land from the sea — turn open water into buildable Singapore land. Drag across the sea to paint a whole area; you can reclaim anywhere in the Singapore sea (not the Johor side or protected reservoirs).'));
   wrap.append(el('div', 'section-title', 'Cost (by area & inflation)'));
   wrap.append(el('p', 'policy-desc',
-    `<b>${money(perCell)}</b> per land tile, charged as you fill. Cost scales with the area you reclaim and rises with inflation — currently ×${infl} vs 1965 (+${Math.round(RECLAIM.inflation * 1000) / 10}%/yr), so reclaiming later costs more.`));
+    `<b>${money(perCell)}</b> per land tile, charged per tile as you paint. Total cost scales with the area you reclaim and with the current price level — ×${pIndex} vs 1965 (inflation ${inflPct}%/yr), so a well-run economy keeps reclamation cheaper.`));
   const btn = el('button', 'btn' + (ctx.reclaim.active ? ' active' : ''),
-    `<span class="bi">🏝️</span> ${ctx.reclaim.active ? 'Reclaiming — tap open sea to fill' : 'Start reclaiming land'}`);
+    `<span class="bi">🏝️</span> ${ctx.reclaim.active ? 'Reclaiming — drag over open sea to fill' : 'Start reclaiming land'}`);
   btn.onclick = () => ctx.toggleReclaim();
   wrap.append(btn);
   return wrap;
@@ -247,6 +250,14 @@ export function renderDash(state, ctx = {}) {
   grid.append(metric('💼 Jobs', num(d.jobs),
     `${pct((1 - d.unemployment) * 100)} employed`));
   grid.append(meterMetric('☁️ Pollution', state.pollution, true));
+
+  // Inflation & currency — a live read on economic management.
+  const infl = inflationRate(state) * 100;
+  const inflArrow = infl > 4 ? '▲' : infl < 1.5 ? '▼' : '◆';
+  grid.append(metric('📈 Inflation', `${infl.toFixed(1)}%`,
+    `prices ×${priceIndex(state).toFixed(2)} ${inflArrow}`));
+  grid.append(metric('💱 SGD strength', `×${currencyStrength(state).toFixed(2)}`,
+    currencyStrength(state) >= 1 ? 'strong currency' : 'weak currency'));
 
   wrap.append(grid);
 

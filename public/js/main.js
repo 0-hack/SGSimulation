@@ -2,7 +2,7 @@
 import {
   newGame, tickDay, build, demolish, canPlace, derive,
   resolveEvent, snapshot, refreshSummary, ensureGrid, issueBond, repayDebt,
-  reclaimLand, reclaimCost,
+  reclaimLand, reclaimCost, buildingCost, priced,
 } from './engine.js';
 import { Scene3D } from './scene3d.js';
 import { api } from './api.js';
@@ -268,7 +268,7 @@ function onTileTap(x, y) {
     } else {
       const bd = BUILDINGS[b.selected];
       if (G.state.grid[y][x]) toast('Tile occupied.');
-      else if (G.state.treasury < bd.cost) toast(`Need ${money(bd.cost)} to build ${bd.name}.`);
+      else if (G.state.treasury < buildingCost(G.state, b.selected)) toast(`Need ${money(buildingCost(G.state, b.selected))} to build ${bd.name}.`);
       else toast('Cannot build here.');
     }
   } else {
@@ -301,19 +301,20 @@ function roadNodeAt(roads, x, z) {
 function addRoadEdge(a, b, ctrl) {
   const t = G.road.type;
   const T = ROAD_TYPES[t];
-  if (G.state.treasury < T.cost) { toast(`Need ${money(T.cost)} for this ${T.name.toLowerCase()}.`); return false; }
+  const cost = priced(T.cost, G.state);
+  if (G.state.treasury < cost) { toast(`Need ${money(cost)} for this ${T.name.toLowerCase()}.`); return false; }
   const roads = G.state.roads;
   const ai = roadNodeAt(roads, a.x, a.z), bi = roadNodeAt(roads, b.x, b.z);
   if (ai === bi) return false;
   roads.edges.push({ a: ai, b: bi, ctrl: ctrl || null, type: t, lanes: T.lanes, elevated: G.road.elevated });
-  G.state.treasury -= T.cost;
+  G.state.treasury -= cost;
   G.view.rebuildRoadNet();
   afterEdit();
   return true;
 }
 function placeRoundabout(x, z) {
   const T = ROAD_TYPES[G.road.type];
-  const cost = T.cost * 4;
+  const cost = priced(T.cost * 4, G.state);
   if (G.state.treasury < cost) { toast(`Need ${money(cost)} for a roundabout.`); return; }
   const roads = G.state.roads, r = 6, k = 8, base = roads.nodes.length;
   for (let i = 0; i < k; i++) roads.nodes.push({ x: x + Math.cos(i / k * Math.PI * 2) * r, z: z + Math.sin(i / k * Math.PI * 2) * r, y: 0 });

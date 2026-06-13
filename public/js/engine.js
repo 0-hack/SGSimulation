@@ -63,6 +63,7 @@ export function newGame({ name = 'New Singapore', owner = 'Anonymous' } = {}) {
     pendingEvent: null,       // event awaiting player choice
     roads: { nodes: [], edges: [], islands: [] }, // player-drawn freeform road network
     reclaimed: [],            // [x,y] sea cells the player has reclaimed into land
+    economy: { inflation: 0.02, priceIndex: 1, currency: 1 }, // dynamic inflation / price level / SGD strength
     summary: {},
     daysElapsed: 0,
   };
@@ -110,6 +111,7 @@ export function ensureGrid(state) {
   if (typeof state.debt !== 'number') state.debt = 0;
   if (!state.roads) state.roads = { nodes: [], edges: [], islands: [] };
   if (!Array.isArray(state.reclaimed)) state.reclaimed = [];
+  if (!state.economy) state.economy = { inflation: 0.02, priceIndex: 1, currency: 1 };
   if (!state.roads.islands) state.roads.islands = [];
   // back-fill the traced 1966 roads into saves that predate them (so existing
   // games aren't left road-less after the update); skip if already seeded or
@@ -142,7 +144,7 @@ export function canPlace(state, x, y, key) {
   const b = BUILDINGS[key];
   if (!b) return false;
   if (!isUnlocked(state, key)) return false;
-  return state.treasury >= b.cost;
+  return state.treasury >= buildingCost(state, key);
 }
 export function isUnlocked(state, key) {
   const b = BUILDINGS[key];
@@ -155,7 +157,7 @@ function place(state, x, y, key, theme) {
 }
 export function build(state, x, y, key, theme) {
   if (!canPlace(state, x, y, key)) return false;
-  state.treasury -= BUILDINGS[key].cost;
+  state.treasury -= buildingCost(state, key);
   place(state, x, y, key, theme);
   return true;
 }
@@ -174,14 +176,67 @@ export function demolish(state, x, y) {
 // more. (Geometry validation — "is this open Singapore sea?" — lives in the
 // 3D view's canReclaim(), which has the coastline & foreign-land masks.)
 // ---------------------------------------------------------------------------
-export const RECLAIM = { basePerCell: 2, inflation: 0.035 }; // $M/cell in 1965; +3.5%/yr
-export function reclaimInflation(year) {
-  return Math.pow(1 + RECLAIM.inflation, Math.max(0, year - START_DATE.y));
-}
-// Cost to reclaim `cells` cells in the given game year ($M).
+export const RECLAIM = { basePerCell: 2 }; // $M/cell at 1965 prices (then × the live price index)
+// Cost to reclaim `cells` cells at today's prices ($M).
 export function reclaimCost(state, cells = 1) {
-  return Math.round(RECLAIM.basePerCell * reclaimInflation(state.date.y) * cells * 10) / 10;
+  return Math.round(RECLAIM.basePerCell * priceIndex(state) * cells * 10) / 10;
 }
+// ---------------------------------------------------------------------------
+// Inflation & prices — a live price level (priceIndex) compounds from a dynamic
+// inflation rate that responds to how well the player runs the economy. All
+// in-game purchases (buildings, roads, reclamation) are charged at today's
+// prices = base (1965) cost × priceIndex.
+// ---------------------------------------------------------------------------
+export function priceIndex(state) { return (state && state.economy && state.economy.priceIndex) || 1; }
+export function inflationRate(state) { return (state && state.economy && state.economy.inflation != null) ? state.economy.inflation : 0.02; }
+export function currencyStrength(state) { return (state && state.economy && state.economy.currency) || 1; }
+// A 1965-baseline price charged at today's price level.
+export function priced(base, state) { return Math.round(base * priceIndex(state) * 10) / 10; }
+// Current purchase cost of a building ($M) after inflation.
+export function buildingCost(state, key) { const b = BUILDINGS[key]; return b ? Math.round(b.cost * priceIndex(state)) : 0; }
+
+// Construction time in game-days, from a building's complexity (its base cost,
+// plus part count for 3D-designed landmarks). Bigger/more elaborate = longer.
+export function buildDays(b) {
+  if (!b) return 2;
+  let days = Math.sqrt(b.cost || 1) * 1.6;
+  if (b.landmarkParts) days += b.landmarkParts.length * 0.8; // designed complexity
+  return clamp(Math.round(days), 2, 48);
+}
+
+// The inflation rate the economy is pulling toward this month (annualised).
+// Golden rules: ~2% central-bank anchor, demand-pull when the labour market is
+// tight (Phillips curve), fiscal slippage (debt/deficits) weakens the currency
+// and imports inflation, while a strong treasury + credible, productive,
+// well-approved government anchors low inflation (Singapore's strong-SGD model);
+// utility shortages and pollution are supply shocks.
+function inflationTarget(state, d) {
+  let t = 0.02;
+  t += (0.045 - d.unemployment) * 0.5;                 // demand-pull / Phillips curve
+  const debtLoad = clamp((state.debt || 0) / Math.max(1, debtCeiling(state)), 0, 1.5);
+  t += debtLoad * 0.03;                                // heavy debt -> weaker currency
+  const net = state.lastFinance ? state.lastFinance.net : 0;
+  t -= clamp(net / 250, -0.02, 0.02);                  // surplus strengthens, deficit weakens
+  t -= clamp(state.treasury / 1500, -0.4, 0.6) * 0.02; // reserves back a strong currency
+  t -= (state.approval - 50) / 50 * 0.01;              // political stability anchors expectations
+  t -= (state.education - 20) / 100 * 0.012;           // productivity
+  if (d.powerRatio < 1) t += (1 - d.powerRatio) * 0.05; // supply shock: power
+  if (d.waterRatio < 1) t += (1 - d.waterRatio) * 0.05; // supply shock: water
+  t += clamp((state.pollution - 25) / 100, 0, 0.025);   // cost-push from pollution
+  return clamp(t, -0.02, 0.30);
+}
+// Settle the economy each month: glide inflation toward target (sticky
+// expectations), compound the price level, and update currency strength.
+function updateEconomy(state, d) {
+  const e = state.economy || (state.economy = { inflation: 0.02, priceIndex: 1, currency: 1 });
+  e.inflation = approach(e.inflation, inflationTarget(state, d), 0.2);
+  e.priceIndex = Math.max(1, e.priceIndex * (1 + e.inflation / 12)); // prices never fall below 1965
+  const strengthTarget = clamp(
+    1 + (0.02 - e.inflation) * 4 + state.treasury / 4000
+      - (state.debt || 0) / Math.max(1, debtCeiling(state)) * 0.3, 0.4, 2.5);
+  e.currency = approach(e.currency, strengthTarget, 0.1);
+}
+
 // Charge for and record one reclaimed cell. Returns { ok, cost, reason }.
 export function reclaimLand(state, x, y) {
   if (!Array.isArray(state.reclaimed)) state.reclaimed = [];
@@ -199,7 +254,8 @@ export function reclaimLand(state, x, y) {
 export function bondRate(state) {
   const ceil = debtCeiling(state);
   const util = ceil > 0 ? Math.min(1, (state.debt || 0) / ceil) : 1;
-  return 0.045 + util * 0.06;               // 4.5% .. ~10.5%
+  // Fisher: nominal yield ≈ real rate + inflation + credit-risk premium.
+  return 0.02 + Math.max(0, inflationRate(state)) + util * 0.06; // ~4% .. ~12%
 }
 // How much the government can owe — scales with the economy (annual revenue) & population.
 export function debtCeiling(state) {
@@ -480,6 +536,9 @@ function monthlyUpdate(state, d) {
 
   // Approval glides toward its target.
   state.approval = clamp(approach(state.approval, approvalTarget(state, d), 0.25), 0, 100);
+
+  // Settle inflation / price level from this month's economic performance.
+  updateEconomy(state, d);
 }
 
 // ---------------------------------------------------------------------------

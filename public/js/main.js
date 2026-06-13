@@ -186,7 +186,7 @@ function loop(ts) {
     if (ticks > 0) {
       G.dirty = true;
       G.hudTimer += dt;
-      if (G.view) G.view.syncConstruction(G.state); // advance/finish construction sites
+      if (G.view) { G.view.syncConstruction(G.state); G.view.syncReclamation(G.state); } // advance/finish sites & rising land
       updateHud(G.state, G.readOnly);
       updateShortages();
       if (G.state.pendingEvent) { showEvent(); }
@@ -249,7 +249,7 @@ function doReclaim(x, y) {
   const cost = reclaimCost(G.state, 1);
   if (G.state.treasury < cost) { toast(`Out of funds for reclamation (need ${money(cost)}/tile).`); return; }
   const r = reclaimLand(G.state, x, y);
-  if (r.ok) { G.view.applyReclaim(x, y); afterEdit(); }
+  if (r.ok) { G.view.syncReclamation(G.state); afterEdit(); } // shows land rising; it tops out over time
 }
 
 function onTileTap(x, y) {

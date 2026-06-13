@@ -1077,45 +1077,94 @@ export class Scene3D {
     return !!(base && !(this.reserveMask && this.reserveMask[y][x]) && !(this.riverMask && this.riverMask[y][x]) && !(this.airportMask && this.airportMask[y][x]));
   }
   // Can grid cell (x,y) be reclaimed? True only for OPEN SINGAPORE SEA — i.e.
-  // not already Singapore land, not already reclaimed, not protected water, and
-  // not over the foreign (Johor) landmass.
+  // not already (or being) reclaimed, not Singapore land, not protected water,
+  // and not over the foreign (Johor) landmass.
   canReclaim(x, y) {
     if (x < 0 || y < 0 || x >= N || y >= N) return false;
     if (this.land[y] && this.land[y][x]) return false;                 // already SG land
     if (this.reclaimedMask && this.reclaimedMask[y] && this.reclaimedMask[y][x]) return false;
+    if (this.reclaimingMask && this.reclaimingMask[y] && this.reclaimingMask[y][x]) return false; // already rising
     if ((this.reserveMask && this.reserveMask[y][x]) || (this.riverMask && this.riverMask[y][x])) return false; // protected freshwater
     const nx = (x + 0.5) / N, ny = (y + 0.5) / N;
     if (SG_FOREIGN.some((poly) => pointInPolygon(nx, ny, poly))) return false; // Johor, not Singapore
     return true;
   }
-  // A block of new land filling the sea cell from the seabed up to ground level.
+  _ensureReclaimGroups() {
+    if (!this.reclaimedMask) this.reclaimedMask = Array.from({ length: N }, () => Array(N).fill(false));
+    if (!this.reclaimingMask) this.reclaimingMask = Array.from({ length: N }, () => Array(N).fill(false));
+    if (!this.reclaimSlabs) this.reclaimSlabs = new Map();
+    if (!this.reclaimSites) this.reclaimSites = new Map();
+    if (!this.reclaimGroup) { this.reclaimGroup = new THREE.Group(); this.scene.add(this.reclaimGroup); }
+    if (!this.reclaimSiteGroup) { this.reclaimSiteGroup = new THREE.Group(); this.scene.add(this.reclaimSiteGroup); }
+  }
+  // A finished block of new land filling the sea cell up to ground level.
   _reclaimSlab(x, y) {
     const c = cellToWorld(x, y), H = 1.5;
     const m = new THREE.Mesh(new THREE.BoxGeometry(TILE, H, TILE), toon(0xc7b489)); // sandy by default
     m.position.set(c.x, 0.05 - H / 2, c.z); m.receiveShadow = true;
     return m;
   }
-  // Add the visual for one freshly reclaimed cell during play + flag the mask.
-  applyReclaim(x, y) {
-    if (!this.reclaimedMask) this.reclaimedMask = Array.from({ length: N }, () => Array(N).fill(false));
-    if (!this.reclaimGroup) { this.reclaimGroup = new THREE.Group(); this.scene.add(this.reclaimGroup); this.reclaimSlabs = new Map(); }
+  // ---- land reclamation as timed construction (sea rising into land) --------
+  // Reconcile rising-land sites with state.reclaiming, and finalise any that have
+  // finished (now present in state.reclaimed) into permanent, buildable land.
+  syncReclamation(state) {
+    if (!state) return;
+    this._ensureReclaimGroups();
+    const active = new Set();
+    for (const r of (state.reclaiming || [])) {
+      const id = r.x + ',' + r.y; active.add(id);
+      if (!this.reclaimSites.has(id)) this._startReclaimSite(r.x, r.y);
+      this._setReclaimProgress(id, 1 - r.left / Math.max(1, r.total));
+    }
+    for (const id of [...this.reclaimSites.keys()]) {
+      if (active.has(id)) continue;            // no longer rising -> it has finished
+      const [x, y] = id.split(',').map(Number);
+      this._removeReclaimSite(id);
+      this._finishReclaim(x, y);
+    }
+  }
+  _startReclaimSite(x, y) {
+    this._ensureReclaimGroups();
+    const id = x + ',' + y;
+    if (this.reclaimSites.has(id)) return;
+    this.reclaimingMask[y][x] = true;
+    const c = cellToWorld(x, y), H = 1.5;
+    const m = new THREE.Mesh(new THREE.BoxGeometry(TILE, H, TILE), toon(0x8a7c54)); // wet, under-construction fill
+    m.position.set(c.x, -2.15, c.z); m.receiveShadow = true; // starts submerged, rises with progress
+    this.reclaimSiteGroup.add(m); this.reclaimSites.set(id, m);
+    this._spawnDust(c.x, c.z, 0x9fb6c9, 8); // sea spray as filling begins
+    const g = this.natureCells && this.natureCells.get(id); if (g) g.visible = false;
+  }
+  _setReclaimProgress(id, prog) {
+    const m = this.reclaimSites.get(id); if (!m) return;
+    const p = Math.max(0, Math.min(1, prog));
+    m.position.y = -2.15 + p * 1.45; // rise from the seabed up to land level (-0.7)
+  }
+  _removeReclaimSite(id) {
+    const m = this.reclaimSites.get(id); if (!m) return;
+    this.reclaimSiteGroup.remove(m); this.reclaimSites.delete(id);
+    const [x, y] = id.split(',').map(Number); if (this.reclaimingMask) this.reclaimingMask[y][x] = false;
+  }
+  // Turn a finished reclamation into permanent, buildable land.
+  _finishReclaim(x, y) {
+    this._ensureReclaimGroups();
+    const id = x + ',' + y;
+    if (this.reclaimSlabs.has(id)) return;
     this.reclaimedMask[y][x] = true;
-    const m = this._reclaimSlab(x, y); this.reclaimGroup.add(m); this.reclaimSlabs.set(x + ',' + y, m);
-    const c = cellToWorld(x, y); this._spawnDust(c.x, c.z, 0xd9c79a); // fill splash
-    const g = this.natureCells?.get(x + ',' + y); if (g) g.visible = false;
-    this._scheduleCoast();   // update the coastline (beach rim vs inland) shortly
+    const m = this._reclaimSlab(x, y); this.reclaimGroup.add(m); this.reclaimSlabs.set(id, m);
+    const c = cellToWorld(x, y); this._spawnDust(c.x, c.z, 0xd9c79a, 12); // land secured
+    const g = this.natureCells && this.natureCells.get(id); if (g) g.visible = false;
+    this._scheduleCoast();
   }
   // Rebuild all reclaimed-land visuals from saved state (on new game / load).
   _syncReclaimed() {
-    if (this.reclaimGroup) { this.scene.remove(this.reclaimGroup); this.reclaimGroup = null; }
-    this.reclaimSlabs = new Map();
+    for (const grp of ['reclaimGroup', 'reclaimSiteGroup']) if (this[grp]) { this.scene.remove(this[grp]); this[grp] = null; }
+    this.reclaimSlabs = new Map(); this.reclaimSites = new Map();
     this.reclaimedMask = Array.from({ length: N }, () => Array(N).fill(false));
-    const list = (this.state && this.state.reclaimed) || [];
-    if (!list.length) return;
-    const g = new THREE.Group(); this.scene.add(g); this.reclaimGroup = g;
-    for (const [x, y] of list) if (x >= 0 && y >= 0 && x < N && y < N) {
-      this.reclaimedMask[y][x] = true; const m = this._reclaimSlab(x, y); g.add(m); this.reclaimSlabs.set(x + ',' + y, m);
-    }
+    this.reclaimingMask = Array.from({ length: N }, () => Array(N).fill(false));
+    this._ensureReclaimGroups();
+    for (const [x, y] of ((this.state && this.state.reclaimed) || [])) if (x >= 0 && y >= 0 && x < N && y < N) this._finishReclaim(x, y);
+    this.syncReclamation(this.state); // spawn rising sites for anything still in progress
     this._refreshCoast();
   }
   // A reclaimed cell borders open sea (so its edge is a new beach) if any of its

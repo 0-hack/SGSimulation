@@ -62,7 +62,8 @@ export function newGame({ name = 'New Singapore', owner = 'Anonymous' } = {}) {
     log: [{ d: { ...START_DATE }, text: 'Singapore gains independence. The journey begins.' }],
     pendingEvent: null,       // event awaiting player choice
     roads: { nodes: [], edges: [], islands: [] }, // player-drawn freeform road network
-    reclaimed: [],            // [x,y] sea cells the player has reclaimed into land
+    reclaimed: [],            // [x,y] sea cells reclaimed into finished, buildable land
+    reclaiming: [],           // { x,y,total,left } cells still rising from the sea
     economy: { inflation: 0.02, priceIndex: 1, currency: 1 }, // dynamic inflation / price level / SGD strength
     constructing: [],         // [x,y] cells whose building is still being built
     summary: {},
@@ -112,6 +113,7 @@ export function ensureGrid(state) {
   if (typeof state.debt !== 'number') state.debt = 0;
   if (!state.roads) state.roads = { nodes: [], edges: [], islands: [] };
   if (!Array.isArray(state.reclaimed)) state.reclaimed = [];
+  if (!Array.isArray(state.reclaiming)) state.reclaiming = [];
   if (!state.economy) state.economy = { inflation: 0.02, priceIndex: 1, currency: 1 };
   // Rebuild the active-construction list from the grid (robust across saves).
   state.constructing = [];
@@ -201,7 +203,7 @@ export function demolish(state, x, y) {
 // more. (Geometry validation — "is this open Singapore sea?" — lives in the
 // 3D view's canReclaim(), which has the coastline & foreign-land masks.)
 // ---------------------------------------------------------------------------
-export const RECLAIM = { basePerCell: 2 }; // $M/cell at 1965 prices (then × the live price index)
+export const RECLAIM = { basePerCell: 2, days: 8 }; // $M/cell at 1965 prices (× live price index); days to rise
 // Cost to reclaim `cells` cells at today's prices ($M).
 export function reclaimCost(state, cells = 1) {
   return Math.round(RECLAIM.basePerCell * priceIndex(state) * cells * 10) / 10;
@@ -262,14 +264,28 @@ function updateEconomy(state, d) {
   e.currency = approach(e.currency, strengthTarget, 0.1);
 }
 
-// Charge for and record one reclaimed cell. Returns { ok, cost, reason }.
+// Charge for one reclaimed cell. Reclamation, like a building, takes time: the
+// cell is added to `reclaiming` and only becomes buildable land (moved into
+// `reclaimed`) once it has risen from the sea. Returns { ok, cost, reason }.
 export function reclaimLand(state, x, y) {
   if (!Array.isArray(state.reclaimed)) state.reclaimed = [];
+  if (!Array.isArray(state.reclaiming)) state.reclaiming = [];
   const cost = reclaimCost(state, 1);
   if (state.treasury < cost) return { ok: false, reason: 'funds', cost };
-  state.reclaimed.push([x, y]);
+  state.reclaiming.push({ x, y, total: RECLAIM.days, left: RECLAIM.days });
   state.treasury -= cost;
   return { ok: true, cost };
+}
+// Advance every active reclamation by a day; finished cells become real land.
+function advanceReclamation(state) {
+  if (!state.reclaiming || !state.reclaiming.length) return;
+  const still = [];
+  for (const r of state.reclaiming) {
+    r.left -= 1;
+    if (r.left <= 0) { (state.reclaimed || (state.reclaimed = [])).push([r.x, r.y]); }
+    else still.push(r);
+  }
+  state.reclaiming = still;
 }
 
 // ---------------------------------------------------------------------------
@@ -574,6 +590,7 @@ export function tickDay(state) {
   state.date = addDay(state.date);
   state.daysElapsed = (state.daysElapsed || 0) + 1;
   advanceConstruction(state); // tick building sites toward completion
+  advanceReclamation(state);  // tick land reclamation (sea rising into land)
 
   const d = derive(state);
 

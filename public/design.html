@@ -80,7 +80,7 @@
       <label class="btn">📂 Load<input id="load" type="file" accept="application/json" hidden></label>
     </div>
     <div class="row"><button id="newd">＋ New design</button> <button id="manage">📋 Placed…</button></div>
-    <small>Added landmarks reflect in the game on reload (new game). <a href="/">🎮 Game</a> · <a href="/trace.html">🗺 Tracer</a></small>
+    <small>Saved to <b>your</b> landmarks (this browser) — build them from the game's Build ▸ Landmarks. <b>⬇ JSON</b> exports a design to share; <b>📂 Load</b> imports one. <a href="/">🎮 Game</a> · <a href="/trace.html">🗺 Tracer</a></small>
   </div>
   <div id="view">
     <canvas id="c"></canvas>
@@ -91,6 +91,7 @@
 
 <script type="module">
 import * as THREE from './js/vendor/three.module.js';
+import { loadLibrary, addToLibrary, removeFromLibrary } from './js/landmarks.js';
 addEventListener('error', e => { const h = document.getElementById('hud'); if (h) h.textContent = 'ERR: ' + (e.message || e.error?.message); });
 addEventListener('unhandledrejection', e => { const h = document.getElementById('hud'); if (h) h.textContent = 'REJ: ' + (e.reason?.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -223,29 +224,34 @@ function pick(e) { const hit = partHit(e); if (hit) { sel = hit.object.userData.
 // ---- save / send / load ----
 function toast(m, bad) { const t = $('toast'); t.textContent = m; t.style.background = bad ? '#e2503b' : '#2ecc71'; t.style.color = bad ? '#fff' : '#052915'; t.style.opacity = 1; clearTimeout(t._t); t._t = setTimeout(() => t.style.opacity = 0, 1600); }
 function design() { return { name: $('name').value || 'Landmark', cx: +$('cx').value, cy: +$('cy').value, rot: (+$('lrot').value) * Math.PI / 180, scale: +$('lscale').value, parts }; }
-$('send').onclick = async () => {
+let editId = null;  // id of the design currently loaded (so re-saving updates it)
+// Save to YOUR landmarks (this browser) — no server. It then shows in the game's
+// Build menu (start/continue a game). Per-player: only affects your own copy.
+$('send').onclick = () => {
   if (!parts.length) return toast('Add at least one part', true);
-  try {
-    const r = await fetch('/api/design/add', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(design()) });
-    if (r.status === 404) throw new Error('uploading is disabled on this server — run it without TRACE_EDIT=0');
-    const ct = r.headers.get('content-type') || '';
-    if (!ct.includes('application/json')) throw new Error('uploading is disabled on this server — run it without TRACE_EDIT=0');
-    const j = await r.json(); if (!j.ok) throw new Error(j.error || 'server error');
-    toast(`Added to game (${j.count} landmark${j.count > 1 ? 's' : ''}) — reload a new game`);
-  } catch (e) { toast('Add failed: ' + e.message, true); }
+  const lm = design(); if (editId) lm.id = editId;
+  editId = addToLibrary(lm);
+  toast('Saved to your landmarks — build it from the game\'s Build menu (Landmarks).');
 };
+// Export this design as a shareable JSON file (send it to a friend to import).
 $('export').onclick = () => { const b = new Blob([JSON.stringify(design(), null, 1)], { type: 'application/json' }); const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = ($('name').value || 'landmark') + '.json'; a.click(); };
+// Load a design file into the editor (your own export, or one shared with you).
 $('load').onchange = e => { const f = e.target.files[0]; if (!f) return; const rd = new FileReader();
-  rd.onload = () => { try { const d = JSON.parse(rd.result); parts = d.parts || []; sel = parts.length - 1; $('name').value = d.name || 'Landmark'; if (d.cx != null) $('cx').value = d.cx; if (d.cy != null) $('cy').value = d.cy; if (d.scale) $('lscale').value = d.scale; if (d.rot) $('lrot').value = Math.round(d.rot * 180 / Math.PI); rebuild(); toast('Loaded'); } catch (err) { toast('Bad file', true); } }; rd.readAsText(f); };
-$('newd').onclick = () => { if (parts.length && !confirm('Start a new design? (unsaved parts are cleared)')) return; parts = []; sel = -1; rebuild(); };
-$('manage').onclick = async () => {
-  try { const r = await fetch('/api/design/list'); const j = await r.json(); const list = j.landmarks || [];
-    if (!list.length) return toast('No landmarks placed yet');
-    const names = list.map((l, i) => `${i + 1}. ${l.name} @(${l.cx},${l.cy})`).join('\n');
-    const del = prompt('Placed landmarks:\n' + names + '\n\nType a number to DELETE it, or Cancel:', '');
-    if (del == null) return; const idx = parseInt(del) - 1; if (idx < 0 || idx >= list.length) return;
-    list.splice(idx, 1); await fetch('/api/design/set', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ landmarks: list }) });
-    toast('Removed — reload a new game'); } catch (e) { toast('Failed: ' + e.message, true); }
+  rd.onload = () => { try { const d = JSON.parse(rd.result); parts = d.parts || []; sel = parts.length - 1; editId = null; $('name').value = d.name || 'Landmark'; if (d.cx != null) $('cx').value = d.cx; if (d.cy != null) $('cy').value = d.cy; if (d.scale) $('lscale').value = d.scale; if (d.rot) $('lrot').value = Math.round(d.rot * 180 / Math.PI); rebuild(); toast('Loaded — tap “Add to game” to save it to your landmarks'); } catch (err) { toast('Bad file', true); } }; rd.readAsText(f); };
+$('newd').onclick = () => { if (parts.length && !confirm('Start a new design? (unsaved parts are cleared)')) return; parts = []; sel = -1; editId = null; rebuild(); };
+// Manage your saved landmarks: load one to edit, or delete it.
+$('manage').onclick = () => {
+  const list = loadLibrary();
+  if (!list.length) return toast('No saved landmarks yet — design one and tap “Add to game”.');
+  const names = list.map((l, i) => `${i + 1}. ${l.name} (${(l.parts || []).length} parts)`).join('\n');
+  const sel2 = prompt('Your landmarks:\n' + names + '\n\nType a number to EDIT it, or "d3" to DELETE #3:', '');
+  if (sel2 == null) return;
+  const del = /^d/i.test(sel2); const idx = parseInt(sel2.replace(/\D/g, '')) - 1;
+  if (idx < 0 || idx >= list.length) return;
+  if (del) { removeFromLibrary(list[idx].id); toast('Deleted “' + list[idx].name + '”.'); return; }
+  const d = list[idx]; parts = JSON.parse(JSON.stringify(d.parts || [])); sel = parts.length - 1; editId = d.id;
+  $('name').value = d.name || 'Landmark'; if (d.cx != null) $('cx').value = d.cx; if (d.cy != null) $('cy').value = d.cy; if (d.scale) $('lscale').value = d.scale; if (d.rot) $('lrot').value = Math.round(d.rot * 180 / Math.PI);
+  rebuild(); toast('Editing “' + d.name + '” — “Add to game” updates it.');
 };
 
 addPart('box'); resize(); $('hud').textContent = 'ready · ' + parts.length + ' part(s) · drag orbit, wheel zoom, right-drag pan, click to select';

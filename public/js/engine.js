@@ -66,6 +66,7 @@ export function newGame({ name = 'New Singapore', owner = 'Anonymous' } = {}) {
     reclaiming: [],           // { x,y,total,left } cells still rising from the sea
     economy: { inflation: 0.02, priceIndex: 1, currency: 1 }, // dynamic inflation / price level / SGD strength
     constructing: [],         // [x,y] cells whose building is still being built
+    landmarks: [],            // 3D-designed landmarks saved into THIS world (per-player; for build menu + visitors)
     summary: {},
     daysElapsed: 0,
   };
@@ -114,6 +115,7 @@ export function ensureGrid(state) {
   if (!state.roads) state.roads = { nodes: [], edges: [], islands: [] };
   if (!Array.isArray(state.reclaimed)) state.reclaimed = [];
   if (!Array.isArray(state.reclaiming)) state.reclaiming = [];
+  if (!Array.isArray(state.landmarks)) state.landmarks = [];
   if (!state.economy) state.economy = { inflation: 0.02, priceIndex: 1, currency: 1 };
   // Rebuild the active-construction list from the grid (robust across saves).
   state.constructing = [];

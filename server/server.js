@@ -116,13 +116,14 @@ app.get('/api/trace/current', async (_req, res) => {
     res.json(await getGameLayers());
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
-app.get('/api/design/list', async (_req, res) => {
-  try { const { getLandmarks } = await import('../scripts/apply_trace.mjs'); res.json({ landmarks: await getLandmarks() }); }
-  catch (e) { res.status(500).json({ error: e.message }); }
-});
+
+// NOTE: 3D-designed landmarks are now PER-PLAYER (stored in the player's browser
+// and inside their saved game) — see public/js/landmarks.js. No server write is
+// involved, so there's nothing to gate and nothing shared between players.
 
 if (process.env.TRACE_EDIT !== '0') {
-  // POST a trace -> write it into the game's source files (reflected on reload)
+  // POST a trace -> write it into the BASE 1966 map (shared by everyone). This is
+  // a creator/dev action, so it stays gated — set TRACE_EDIT=0 on public sites.
   app.post('/api/trace/apply', async (req, res) => {
     try {
       const { applyTrace } = await import('../scripts/apply_trace.mjs');
@@ -131,17 +132,6 @@ if (process.env.TRACE_EDIT !== '0') {
       const did = await applyTrace(req.body || {}, { mergeRoads: true });
       res.json({ ok: true, did });
     } catch (e) { res.status(400).json({ ok: false, error: e.message }); }
-  });
-  // ---- 3D-designed landmarks (public/design.html) — writes ----
-  app.post('/api/design/add', async (req, res) => {
-    try { const { getLandmarks, setLandmarks } = await import('../scripts/apply_trace.mjs');
-      const list = await getLandmarks(); list.push(req.body || {}); const count = await setLandmarks(list);
-      res.json({ ok: true, count }); } catch (e) { res.status(400).json({ ok: false, error: e.message }); }
-  });
-  app.post('/api/design/set', async (req, res) => {  // replace the whole list (edit / remove)
-    try { const { setLandmarks } = await import('../scripts/apply_trace.mjs');
-      const count = await setLandmarks((req.body && req.body.landmarks) || []); res.json({ ok: true, count }); }
-    catch (e) { res.status(400).json({ ok: false, error: e.message }); }
   });
 }
 

@@ -261,7 +261,7 @@ export function landmarkToBuilding(lm, i) {
   const jobs = Math.round(vol * 0.4);
   const happiness = Math.min(15, 2 + Math.round(complexity / 2));
   const slug = (lm.name || 'landmark').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || 'landmark';
-  const key = 'lm_' + slug + '_' + i;
+  const key = lm.id || ('lm_' + slug + '_' + i); // stable per-design id when present
   return [key, {
     name: lm.name || ('Landmark ' + (i + 1)), cat: 'landmark', icon: '🏛️',
     color: (parts[0] && parts[0].color) || '#cfc9b8',

@@ -10,8 +10,22 @@ import {
   updateHud, renderBuild, renderPolicy, renderDash, renderNews,
   money, num, pct, el,
 } from './ui.js';
-import { BUILDINGS, POP_SCALE, ROAD_TYPES } from './data.js';
+import { BUILDINGS, CATEGORIES, POP_SCALE, ROAD_TYPES, landmarkToBuilding } from './data.js';
+import { loadLibrary } from './landmarks.js';
 import { injectIcons, ICONS, WEATHER } from './icons.js';
+
+// Make 3D-designed landmarks buildable at runtime (per-player; no server writes).
+// Idempotent — safe to call again when new designs appear.
+function registerLandmarks(list) {
+  let n = 0;
+  for (const lm of (list || [])) {
+    if (!lm || !lm.parts || !lm.parts.length) continue;
+    const [key, def] = landmarkToBuilding(lm, lm.id || lm.name || n);
+    BUILDINGS[key] = def; n++;
+  }
+  if (n && !CATEGORIES.some((c) => c.id === 'landmark')) CATEGORIES.push({ id: 'landmark', name: 'Landmarks', icon: '🏛️' });
+  return n;
+}
 
 const LS_SAVE = 'sg_save_v1';
 const LS_NAME = 'sg_owner';
@@ -152,6 +166,11 @@ function continueGame() {
 
 function attachState() {
   ensureGrid(G.state); // migrate older/smaller saves to the current map size + roads
+  // Designed landmarks become buildable: the landmarks saved INTO this world
+  // (so visitors see them too) plus — when it's your own game — your personal
+  // library from this browser. Your library is also snapshotted into the world.
+  registerLandmarks(G.state.landmarks || []);
+  if (!G.readOnly) { const lib = loadLibrary(); registerLandmarks(lib); G.state.landmarks = lib; }
   refreshSummary(G.state);
   G.view.setState(G.state);
   G.view.centerCamera();
@@ -425,6 +444,8 @@ function refreshPanel() {
   content.innerHTML = '';
 
   if (panel === 'build') {
+    // pick up any landmarks designed since the game loaded (without a reload)
+    if (!G.readOnly) { const lib = loadLibrary(); registerLandmarks(lib); G.state.landmarks = lib; }
     content.append(renderBuild(G.state, {
       cat: G.build.cat, selected: G.build.selected, bulldoze: G.build.bulldoze, theme: G.build.theme,
       road: G.road, reclaim: G.reclaim, toggleReclaim,
@@ -581,6 +602,7 @@ function renderCloud() {
 async function cloudSave(isPublic) {
   if (G.readOnly) return;
   toast('Saving to cloud…');
+  G.state.landmarks = loadLibrary(); // bundle your designs so visitors can see them
   refreshSummary(G.state);
   try {
     if (G.cloud) {
@@ -604,6 +626,7 @@ async function cloudSave(isPublic) {
 
 function saveLocal() {
   if (!G.state || G.readOnly) return;
+  G.state.landmarks = loadLibrary(); // keep your designs travelling with the save
   try {
     localStorage.setItem(LS_SAVE, JSON.stringify({ state: G.state, cloud: G.cloud }));
   } catch { /* quota */ }

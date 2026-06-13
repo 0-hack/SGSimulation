@@ -4,12 +4,12 @@ import {
   BUILDINGS, POLICIES, START_DATE, GRID_SIZE, POP_SCALE,
   HISTORICAL_EVENTS, RANDOM_EVENTS,
 } from './data.js';
-import { pointInPolygon, inReservoir, inRiver } from './shape.js';
+import { onLand, inReservoir, inRiver } from './shape.js';
 import { ROAD_NODES_1966, ROAD_EDGES_1966 } from './roads1966.js';
 
-// Is grid cell (x,y) on the island (land), not in the reservoir, not in the river?
+// Is grid cell (x,y) on Singapore land (mainland or islands), not reservoir/river?
 function isLandCell(x, y) {
-  return pointInPolygon((x + 0.5) / GRID_SIZE, (y + 0.5) / GRID_SIZE)
+  return onLand((x + 0.5) / GRID_SIZE, (y + 0.5) / GRID_SIZE)
     && !inReservoir(x, y, GRID_SIZE) && !inRiver(x, y, GRID_SIZE);
 }
 

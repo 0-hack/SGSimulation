@@ -297,10 +297,11 @@ export class Scene3D {
       const gmat = new THREE.MeshToonMaterial({ color: 0x3fae57, gradientMap: toonGradient() });
       const tmat = new THREE.MeshToonMaterial({ color: 0x8a6b43, gradientMap: toonGradient() });
       for (const [dx, dz] of [[-5, -2], [4, 2], [0, 4]]) {
-        const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.5, 5, 8), tmat);
-        trunk.position.set(cx + dx, 2.5, cz + dz); trunk.castShadow = true; this.scene.add(trunk);
-        const fr = new THREE.Mesh(new THREE.SphereGeometry(2.3, 8, 6), gmat);
-        fr.position.set(cx + dx, 5.3, cz + dz); fr.scale.y = 0.5; fr.castShadow = true; this.scene.add(fr);
+        // keep island trees the same small scale as the mainland's scattered trees
+        const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.2, 1.5, 8), tmat);
+        trunk.position.set(cx + dx, 0.75, cz + dz); trunk.castShadow = true; this.scene.add(trunk);
+        const fr = new THREE.Mesh(new THREE.SphereGeometry(1.0, 8, 6), gmat);
+        fr.position.set(cx + dx, 1.6, cz + dz); fr.scale.y = 0.5; fr.castShadow = true; this.scene.add(fr);
       }
     }
   }
@@ -1853,10 +1854,10 @@ export class Scene3D {
 
     const a = 2 * Math.PI * (this.timeOfDay - 0.25);
     this.sun.position.set(Math.cos(a) * 200, Math.max(12, elev * 260), 90 + Math.sin(a) * 60);
-    this.sun.intensity = 0.18 + dayness * 1.15;
+    this.sun.intensity = 0.05 + dayness * 1.25;   // near-dark at night so unlit objects fall into shadow
     const sunCol = new THREE.Color(0xfff4e0).lerp(new THREE.Color(0xff8a3c), horizon * (1 - dayness * 0.5));
     this.sun.color.copy(sunCol).lerp(new THREE.Color(0x9fb6ff), this.nightFactor * 0.6);
-    this.hemi.intensity = 0.22 + dayness * 0.7;
+    this.hemi.intensity = 0.10 + dayness * 0.8;
 
     const night = new THREE.Color(0x0c1830), day = new THREE.Color(0x8ec5e8);
     const sky = night.clone().lerp(day, dayness).lerp(new THREE.Color(0xf2935a), horizon * 0.6 * (1 - dayness * 0.3));
@@ -1865,7 +1866,14 @@ export class Scene3D {
     this.skyColor = sky.clone();
 
     const glow = this.nightFactor;
-    for (const m of ALL_MATS) m.emissiveIntensity = glow * (m.userData.glowK ?? 0.3);
+    for (const m of ALL_MATS) {
+      // After dark only lit windows / signs glow warm (facades carry a window
+      // emissive map; lit designer parts have glowK >= 1). Plain bodies don't
+      // self-illuminate — they just darken under the dim night lighting, instead
+      // of the whole world turning yellow.
+      const lit = !!m.emissiveMap || (m.userData.glowK ?? 0) >= 1;
+      m.emissiveIntensity = lit ? glow * (m.userData.glowK ?? 0.3) : 0;
+    }
   }
 
   // ---- development: skyline grows taller & denser as the nation matures ----
@@ -2390,7 +2398,7 @@ export const ALL_MATS = []; // every building material, for the night-glow pass
 let GRAD = null;
 export function toonGradient() {
   if (!GRAD) {
-    const d = new Uint8Array([95, 160, 215, 255]);
+    const d = new Uint8Array([55, 150, 210, 255]); // darker shadow band so night reads as night
     GRAD = new THREE.DataTexture(d, d.length, 1, THREE.RedFormat);
     GRAD.minFilter = GRAD.magFilter = THREE.NearestFilter; GRAD.needsUpdate = true;
   }

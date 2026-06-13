@@ -369,10 +369,11 @@ body.edit-mode::after {
 
 /* ---------------- Toast ---------------- */
 .toast {
-  position: fixed; left: 50%; bottom: calc(var(--tb) + 16px); transform: translateX(-50%);
-  background: var(--ink); border: none; color: #fff;
-  padding: 11px 17px; border-radius: 22px; font-size: 13px; font-weight: 600; z-index: 50;
-  box-shadow: var(--shadow); max-width: 90vw; text-align: center;
+  position: fixed; left: 12px; top: calc(84px + env(safe-area-inset-top, 0px)); transform: none;
+  background: transparent; border: none; color: #fff;
+  padding: 0; border-radius: 0; font-size: 14px; font-weight: 800; z-index: 50;
+  box-shadow: none; max-width: 64vw; text-align: left;
+  text-shadow: 0 1px 4px rgba(0,0,0,0.9), 0 0 3px rgba(0,0,0,0.8); /* readable over any background */
   animation: pop .16s ease; pointer-events: none;
 }
 

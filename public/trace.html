@@ -99,16 +99,16 @@ const LAYERS = {
   railway:    { c: '#9fb0c0', name: 'Railway',   kind: 'line' },
   sands:      { c: '#eadbab', name: 'Sands',     kind: 'line' },
   airport:    { c: '#ff5a5a', name: 'Airport ✈', kind: 'line' }, // runway centre-line for plane take-off/landing (NOT a car road)
-  foreign:    { c: '#c9a06a', name: 'Malaysia',  kind: 'line', closed: true },
 };
 const KEYS = Object.keys(LAYERS);
 const TYPES = {};
 const ONEWAY_COLOR = '#ff9f43';
 // `bulldoze` is an internal accumulator (no longer a visible layer): Erase over
 // the Roads layer drops a delete-marker here so the game removes that road.
-const blank = () => ({ roads: [], bulldoze: [], mainland: [], reservoirs: [], railway: [], sands: [], airport: [], foreign: [] });
+const blank = () => ({ roads: [], bulldoze: [], mainland: [], reservoirs: [], railway: [], sands: [], airport: [] });
 let data = blank();
-let gameRoads = [];   // existing roads already in the game (read-only display under "show > Roads")
+// What's ALREADY in the game, per layer (read-only reference shown under "show").
+let game = { roads: [], mainland: [], reservoirs: [], railway: [], sands: [], airport: [] };
 let active = 'roads', oneway = false, freehand = true, mode = 'draw';
 let vis = {}; KEYS.forEach(k => vis[k] = true); vis.guide = true;
 let opacity = 0.55, brush = 16, bType = 'terminal', bRot = 0, bHgt = 1.0;
@@ -135,7 +135,7 @@ function applyLoaded(d) { if (d.bg) bg = d.bg; const nd = blank();
   nd.roads = (d.roads || []).map(r => Array.isArray(r) ? { pts: r, oneway: false } : r);
   nd.mainland = (d.mainland || d.coast || []).concat(d.islands || []); // old Islands folded into Coast
   nd.reservoirs = d.reservoirs || d.resv || []; nd.railway = d.railway || []; nd.sands = d.sands || [];
-  nd.airport = d.airport || []; nd.foreign = d.foreign || []; nd.bulldoze = d.bulldoze || []; data = nd; }
+  nd.airport = d.airport || []; nd.bulldoze = d.bulldoze || []; data = nd; }
 
 function snapshot() { history.push(JSON.stringify(data)); if (history.length > 120) history.shift(); redoStack = []; }
 function undo() { if (history.length) { redoStack.push(JSON.stringify(data)); data = JSON.parse(history.pop()); cur = null; curItem = null; rectStart = null; sel = null; draw(); updateStat(); } }
@@ -203,10 +203,16 @@ function draw() {
   ctx.lineCap = 'round'; ctx.lineJoin = 'round';
   if (vis.guide && DATA) { ctx.lineWidth = 1.3; ctx.strokeStyle = '#ffd23f'; ctx.setLineDash([5, 5]);
     strokePoly(DATA.outline, true); ctx.strokeStyle = '#ffd23f55'; DATA.islands.forEach(p => strokePoly(p, true)); ctx.setLineDash([]); }
-  // existing roads already in the game (read-only) — dim, drawn under new traces
-  if (vis.roads && gameRoads.length) { ctx.lineWidth = 2; ctx.strokeStyle = '#2b6d86';
-    for (const pts of gameRoads) strokePoly(pts, false); }
-  for (const k of ['foreign', 'sands', 'reservoirs', 'mainland', 'railway', 'airport', 'roads']) {
+  // What's ALREADY in the game (read-only) — drawn under your new traces, in the
+  // layer's colour but semi-transparent so you can see it and trace/edit on top.
+  ctx.globalAlpha = 0.5;
+  for (const k of KEYS) {
+    if (!vis[k] || !game[k] || !game[k].length) continue;
+    ctx.strokeStyle = LAYERS[k].c; ctx.lineWidth = k === 'roads' ? 2.4 : k === 'mainland' ? 2.2 : 1.8;
+    for (const p of game[k]) strokePoly(p, !!LAYERS[k].closed);
+  }
+  ctx.globalAlpha = 1;
+  for (const k of ['sands', 'reservoirs', 'mainland', 'railway', 'airport', 'roads']) {
     if (!vis[k]) continue; const L = LAYERS[k];
     if (RECT(k)) { data[k].forEach(b => drawRect(b, L.c)); continue; }
     ctx.lineWidth = k === 'mainland' ? 2.6 : 2.2;
@@ -251,16 +257,25 @@ function tryResume(g) {
 function syncToolbar(b) { bType = b.type; bRot = b.rot || 0; bHgt = b.hgt || 1; $('btype').value = b.type; $('brot').value = bRot; $('bhgt').value = Math.round(bHgt * 10); }
 function updateStat() {
   let s = KEYS.map(k => { const n = data[k].length; const ow = k === 'roads' ? ` (${data.roads.filter(r => r.oneway).length}→)` : ''; return `<b>${n}</b> ${LAYERS[k].name.slice(0, 4)}${ow}`; }).join(' · ');
-  if (gameRoads.length) s += ` · <span style="color:#2b6d86"><b>${gameRoads.length}</b> in&nbsp;game</span>`;
+  const gameN = KEYS.reduce((t, k) => t + ((game[k] && game[k].length) || 0), 0);
+  if (gameN) s += ` · <span style="color:#8ab"><b>${gameN}</b> in&nbsp;game</span>`;
   if (data.bulldoze.length) s += ` · <span style="color:#ff7a7a"><b>${data.bulldoze.length}</b> to&nbsp;delete</span>`;
   $('stat').innerHTML = s;
   autosave();
 }
-// Load the roads already in the game so they show under "show > Roads" (and can
-// be erased to delete them). Non-blocking: the tracer still works if offline.
-function loadGameRoads() {
+// Load everything ALREADY in the game (roads/coast/reservoirs/railway/sands/
+// airport) so each shows under its "show" filter. Read-only; the GET endpoint is
+// always available (even with editing disabled). Non-blocking — works offline.
+function loadGameData() {
   fetch('/api/trace/current').then(r => r.json()).then(j => {
-    gameRoads = (j.roads || []).map(r => (r.pts || r)).filter(p => p && p.length >= 2);
+    game = {
+      roads: (j.roads || []).map(r => (r.pts || r)).filter(p => p && p.length >= 2),
+      mainland: (j.mainland || []).filter(p => p && p.length >= 2),
+      reservoirs: (j.reservoirs || []).filter(p => p && p.length >= 2),
+      railway: (j.railway || []).filter(p => p && p.length >= 2),
+      sands: (j.sands || []).filter(p => p && p.length >= 2),
+      airport: (j.airport || []).map(r => (r.pts || r)).filter(p => p && p.length >= 2),
+    };
     draw(); updateStat();
   }).catch(() => {});
 }
@@ -365,12 +380,12 @@ function eraseAt(p) {
   }
   // Deleting EXISTING game roads: scrub with Erase while Roads is visible — cut
   // the on-screen copy and drop a delete-marker so the game removes it on Apply.
-  if (vis.roads && gameRoads.length) {
+  if (vis.roads && game.roads.length) {
     const out = []; let cut = false;
-    for (const pts of gameRoads) { const segs = eraseFromLine(pts, gp, radG);
+    for (const pts of game.roads) { const segs = eraseFromLine(pts, gp, radG);
       if (segs.length !== 1 || segs[0].length !== pts.length) cut = true;
       for (const seg of segs) out.push(seg); }
-    gameRoads = out;
+    game.roads = out;
     if (cut) data.bulldoze.push({ pts: [[gp[0], gp[1]]] });
   }
   sel = null; resumable = null; draw(); updateStat();
@@ -422,7 +437,7 @@ $('applygame').onclick = async () => {
     const j = await r.json();
     if (!j.ok) throw new Error(j.error || 'apply failed');
     if (data.bulldoze.length) { snapshot(); data.bulldoze = []; draw(); updateStat(); } // delete strokes are one-shot
-    loadGameRoads(); // refresh the existing-roads overlay to match what's now in the game
+    loadGameData(); // refresh the existing-game overlay to match what's now in the game
     toast('Applied: ' + (j.did.join(' · ') || 'no changes') + ' — reload the game (new game) to see it');
   } catch (e) { toast('Apply failed: ' + e.message + ' (is the game server running?)', true); }
   finally { b.textContent = old; b.disabled = false; }
@@ -435,11 +450,11 @@ addEventListener('beforeunload', () => autosave());
 fetch('/trace-data.json').then(r => r.json()).then(d => {
   DATA = d; bgImg.src = d.bg.img; refreshTypes();
   let restored = false; try { const s = localStorage.getItem(LS); if (s) { applyLoaded(JSON.parse(s)); restored = true; } } catch (e) {}
-  const boot = () => { resize(); fitView(); updateStat(); loadGameRoads(); if (restored) toast('Restored your last session');
+  const boot = () => { resize(); fitView(); updateStat(); loadGameData(); if (restored) toast('Restored your last session');
     $('hint').innerHTML =
     '<b>Tools:</b> <b>D</b>raw · <b>E</b>rase · <b>P</b>an (or hold Space). <b>iPad:</b> draw with the Pencil; one finger pans, two fingers pinch-zoom. Tap <b>ⓘ</b> (or click this box) to hide.<br>' +
     '<b>Pause anytime</b> with <b>Esc</b> — your trace is kept &amp; autosaved; click near a line\'s end to continue. <b>Undo</b>/<b>Redo</b> (Ctrl+Z / Ctrl+Y). <b>Erase</b> clears anything inside the brush across all <b>visible</b> layers (hide a layer to protect it; the <b>brush</b> slider sets the size). <b>Coast</b> traces mainland AND islands.<br>' +
-    '<b>Delete a game road:</b> show the <span style="color:#2b6d86">Roads</span> layer (existing roads appear dim teal), switch to <b>Erase</b> and scrub over it, then <b>🎮 Add to game</b>. <b>Airport ✈</b> traces the runway centre-line (used for plane take-off/landing — not a car road).<br>' +
+    '<b>What\'s already in the game</b> shows for every <b>show</b> filter (roads, coast, reservoirs, railway, sands, airport) as a faded line in that layer\'s colour — trace/edit on top. <b>Delete a game road:</b> show <span style="color:#37d0ff">Roads</span>, switch to <b>Erase</b>, scrub over it, then <b>🎮 Add to game</b>. <b>Airport ✈</b> = runway centre-line (plane take-off/landing, not a car road).<br>' +
     '<b>Save</b> = keep state in this browser · <b>Export</b> = download JSON. Dashed <span style="color:#ffd23f">yellow</span> = current game coast (trace the real one in <span style="color:#7CFC8A">green</span>).'; };
   bgImg.onload = boot; bgImg.onerror = () => { $('hint').textContent = 'Could not load /trace-map.jpg'; boot(); };
 }).catch(err => { $('hint').textContent = 'Could not load /trace-data.json — ' + err.message; });

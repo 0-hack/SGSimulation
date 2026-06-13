@@ -51,9 +51,34 @@ export function graphToTrace(nodes, edges) {
   return { roads: roads.filter(c => c.pts.length >= 2).map(c => ({ pts: c.pts.map(j => toNorm(nodes[j]).map(r4)), oneway: c.ow })) };
 }
 
+// Return ALL current game map layers as tracer polylines/polygons, so the
+// tracer can DISPLAY what's already in the game (read-only reference) under each
+// "show" filter — roads, coast (+islands), reservoirs, railway, sands, airport.
+export async function getGameLayers() {
+  const u = '?u=' + Date.now();
+  const rd = await import('../public/js/roads1966.js' + u);
+  const sh = await import('../public/js/shape.js' + u);
+  const cu = await import('../public/js/custom1966.js' + u);
+  const { roads } = graphToTrace(rd.ROAD_NODES_1966, rd.ROAD_EDGES_1966);
+  // airport runway centre-line (2 points) read from scene3d.js
+  let airport = [];
+  try {
+    const sc = readFileSync(new URL('../public/js/scene3d.js', import.meta.url), 'utf8');
+    const m = sc.match(/south: \{ x: ([-\d.]+), y: ([-\d.]+) \}, north: \{ x: ([-\d.]+), y: ([-\d.]+) \}/);
+    if (m) airport = [[[+m[1], +m[2]], [+m[3], +m[4]]]];
+  } catch {}
+  return {
+    roads,
+    mainland: [sh.SG_OUTLINE, ...(sh.SG_ISLANDS || [])].filter(p => p && p.length >= 3),
+    reservoirs: (rd.RESERVOIRS_1966 || []).filter(p => p && p.length >= 3),
+    railway: cu.CUSTOM_RAILWAYS || [],
+    sands: [...(sh.SG_SANDS || []), ...(cu.CUSTOM_SANDS || [])].filter(p => p && p.length >= 3),
+    airport,
+  };
+}
+
 // ---- 3D-designed landmarks (public/design.html) ----
-export async function getLandmarks() {
-  const m = await import('../public/js/custom1966.js?u=' + Date.now());
+export async function getLandmarks() {  const m = await import('../public/js/custom1966.js?u=' + Date.now());
   return m.CUSTOM_LANDMARKS || [];
 }
 export async function setLandmarks(list) {

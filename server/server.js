@@ -106,15 +106,22 @@ app.use('/api', api);
 // Lets public/trace.html apply traced corrections straight to the game's map
 // data, and load the current network back for editing. Local-dev tool; disable
 // with TRACE_EDIT=0 on a shared/public deployment.
+// Read-only: the current game map layers, so the tracer can DISPLAY what's
+// already in the game (roads/coast/reservoirs/railway/sands/airport) under each
+// "show" filter. Safe — no writes — so it stays available even when live editing
+// is disabled (TRACE_EDIT=0). The design list is read-only too.
+app.get('/api/trace/current', async (_req, res) => {
+  try {
+    const { getGameLayers } = await import('../scripts/apply_trace.mjs');
+    res.json(await getGameLayers());
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.get('/api/design/list', async (_req, res) => {
+  try { const { getLandmarks } = await import('../scripts/apply_trace.mjs'); res.json({ landmarks: await getLandmarks() }); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 if (process.env.TRACE_EDIT !== '0') {
-  // GET current road network as tracer polylines (so you can correct it)
-  app.get('/api/trace/current', async (_req, res) => {
-    try {
-      const { graphToTrace } = await import('../scripts/apply_trace.mjs');
-      const m = await import('../public/js/roads1966.js?u=' + Date.now());
-      res.json(graphToTrace(m.ROAD_NODES_1966, m.ROAD_EDGES_1966));
-    } catch (e) { res.status(500).json({ error: e.message }); }
-  });
   // POST a trace -> write it into the game's source files (reflected on reload)
   app.post('/api/trace/apply', async (req, res) => {
     try {
@@ -125,11 +132,7 @@ if (process.env.TRACE_EDIT !== '0') {
       res.json({ ok: true, did });
     } catch (e) { res.status(400).json({ ok: false, error: e.message }); }
   });
-  // ---- 3D-designed landmarks (public/design.html) ----
-  app.get('/api/design/list', async (_req, res) => {
-    try { const { getLandmarks } = await import('../scripts/apply_trace.mjs'); res.json({ landmarks: await getLandmarks() }); }
-    catch (e) { res.status(500).json({ error: e.message }); }
-  });
+  // ---- 3D-designed landmarks (public/design.html) — writes ----
   app.post('/api/design/add', async (req, res) => {
     try { const { getLandmarks, setLandmarks } = await import('../scripts/apply_trace.mjs');
       const list = await getLandmarks(); list.push(req.body || {}); const count = await setLandmarks(list);

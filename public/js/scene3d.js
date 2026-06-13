@@ -1925,8 +1925,15 @@ export class Scene3D {
   // ground height a road sits on: follow the terrain so it doesn't sink into hills
   _roadY(x, z) { return this._terrainHN(x / WORLD + 0.5, 0.5 - z / WORLD) + 0.28; }
   _sampleEdge(roads, e) {
-    // a traced road carries its own smoothed polyline (curves through the map)
-    if (e.poly && e.poly.length >= 2) return e.poly.map((p) => ({ x: p.x, y: this._roadY(p.x, p.z), z: p.z }));
+    // a traced or freehand-drawn road carries its own smoothed polyline
+    if (e.poly && e.poly.length >= 2) {
+      const n = e.poly.length;
+      return e.poly.map((p, i) => {
+        let y = this._roadY(p.x, p.z);
+        if (e.elevated) { const t = i / (n - 1); y += Math.min(1, Math.min(t, 1 - t) / 0.22) * 4.2; } // flyover ramps up at the ends
+        return { x: p.x, y, z: p.z };
+      });
+    }
     const a = roads.nodes[e.a], b = roads.nodes[e.b];
     if (!a || !b) return [];
     const pts = [];
@@ -1963,9 +1970,21 @@ export class Scene3D {
         idx.push(n, n + 1, n + 2, n, n + 2, n + 3);
       }
     };
+    // a CONSTANT-width ribbon that mitres each joint (offset by the averaged
+    // tangent's normal), so a curvy freehand road keeps a uniform width instead
+    // of pinching/bulging at every bend.
+    const ribbonSmooth = (buf, pts, hw, yOff) => {
+      const [v, idx] = buf, base = v.length / 3;
+      for (let i = 0; i < pts.length; i++) {
+        const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)];
+        let tx = b.x - a.x, tz = b.z - a.z; const l = Math.hypot(tx, tz) || 1; tx /= l; tz /= l;
+        const nx = -tz, nz = tx, p = pts[i];
+        v.push(p.x + nx * hw, p.y + yOff, p.z + nz * hw, p.x - nx * hw, p.y + yOff, p.z - nz * hw);
+      }
+      for (let i = 0; i < pts.length - 1; i++) { const a = base + i * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+    };
     // a thin marking line running along the centre-line, shifted sideways by `off`
-    const markLine = (pts, off, dashed, hw = 0.09) => {
-      const [v, idx] = mark; let acc = 0;
+    const markLine = (pts, off, dashed, hw = 0.09) => {      const [v, idx] = mark; let acc = 0;
       for (let i = 0; i < pts.length - 1; i++) {
         const a = pts[i], b = pts[i + 1];
         const dx = b.x - a.x, dz = b.z - a.z, l = Math.hypot(dx, dz) || 1;
@@ -2009,8 +2028,8 @@ export class Scene3D {
       }
       if (T.renderHW) {
         // player-drawn Road: a slim carriageway matching the 1966 survey-map roads —
-        // a clean dark ribbon, no wide shoulder or lane markings.
-        ribbon(road, pts, T.renderHW, 0.04);
+        // a clean dark ribbon of uniform width (mitred so bends don't pinch).
+        ribbonSmooth(road, pts, T.renderHW, 0.04);
         if (e.elevated) for (let i = 2; i < pts.length - 1; i += 4) {
           const pt = pts[i];
           const pil = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.5, pt.y, 8), toon(0x9098a0));

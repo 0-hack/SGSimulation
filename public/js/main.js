@@ -419,6 +419,12 @@ function eraseRoadAt(x, z) {
   const roads = G.state.roads;
   let best = -1, bestD = 6;
   roads.edges.forEach((e, i) => {
+    // drawn roads carry a full polyline — test every point along it so the whole
+    // curve is erasable, not just its endpoints
+    if (e.poly && e.poly.length) {
+      for (const p of e.poly) { const d = Math.hypot(p.x - x, p.z - z); if (d < bestD) { bestD = d; best = i; } }
+      return;
+    }
     const a = roads.nodes[e.a], b = roads.nodes[e.b];
     if (!a || !b) return;
     const mx = e.ctrl ? e.ctrl.x : (a.x + b.x) / 2, mz = e.ctrl ? e.ctrl.z : (a.z + b.z) / 2;

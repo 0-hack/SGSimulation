@@ -326,16 +326,16 @@ function advanceRoadworks(state) {
     } else if (w.kind === 'air') {
       (state.airstrips || (state.airstrips = [])).push(w.pts.map((p) => [p.x, p.z]));
     } else {
+      // a drawn road becomes ONE edge carrying its full smoothed polyline, so it
+      // renders as a single uniform-width ribbon (no pinching where segments meet)
+      // while still joining the network at its two endpoints for traffic.
       const roads = state.roads, node = (x, z) => {
         for (let i = 0; i < roads.nodes.length; i++) { const n = roads.nodes[i]; if (Math.hypot(n.x - x, n.z - z) < 4) return i; }
         roads.nodes.push({ x, z, y: 0 }); return roads.nodes.length - 1;
       };
-      let prev = node(w.pts[0].x, w.pts[0].z);
-      for (let i = 1; i < w.pts.length; i++) {
-        const id = node(w.pts[i].x, w.pts[i].z);
-        if (id !== prev) roads.edges.push({ a: prev, b: id, ctrl: null, type: w.type, lanes: w.lanes, elevated: w.elevated });
-        prev = id;
-      }
+      const a = node(w.pts[0].x, w.pts[0].z), b = node(w.pts[w.pts.length - 1].x, w.pts[w.pts.length - 1].z);
+      const poly = w.pts.map((p) => ({ x: p.x, z: p.z }));
+      if (a !== b) roads.edges.push({ a, b, ctrl: null, poly, type: w.type, lanes: w.lanes, elevated: w.elevated });
     }
   }
   state.roadworks = still;

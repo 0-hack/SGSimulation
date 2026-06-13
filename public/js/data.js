@@ -1,5 +1,6 @@
 // Game content: buildings, policies, and historical events.
 // All tuning lives here so the simulation in engine.js stays generic.
+import { CUSTOM_LANDMARKS } from './custom1966.js';
 
 export const START_YEAR = 1965;
 export const START_DATE = { y: 1965, m: 8, d: 9 }; // National Day: 9 Aug 1965
@@ -226,6 +227,54 @@ export const BUILDINGS = {
     desc: 'A luxury marina full of yachts and sailing boats. Big tourism and land-value boost.',
   },
 };
+
+// ---------------------------------------------------------------------------
+// PLAYER-DESIGNED LANDMARKS (from public/design.html)
+// Each 3D design becomes a buildable building. Its construction cost — and its
+// power/water demand and jobs — are derived from the design's COMPLEXITY (number
+// of parts) and VOLUME (summed part volumes × scale³), so bigger, more elaborate
+// buildings cost and consume more, just as the user asked.
+// ---------------------------------------------------------------------------
+function partVolume(p) {
+  const w = p.w || 4, h = p.h || 4, d = p.d || 4;
+  switch (p.type) {
+    case 'cyl': return Math.PI * (w / 2) * (w / 2) * h;
+    case 'pyramid': return (1 / 3) * (1.4 * w) * (1.4 * w) * h;
+    case 'dome': return (2 / 3) * Math.PI * (w / 2) ** 3;
+    case 'window': case 'door': return w * h * Math.max(0.3, d);
+    default: return w * h * d;
+  }
+}
+export function landmarkToBuilding(lm, i) {
+  const parts = lm.parts || [], scale = lm.scale || 1, sc3 = scale * scale * scale;
+  let vol = 0; for (const p of parts) vol += partVolume(p);
+  vol *= sc3;
+  const complexity = parts.length;
+  const lit = parts.filter((p) => p.light).length;
+  // cost ($M): base + volume term + complexity term
+  const cost = Math.max(5, Math.round(8 + 0.06 * vol + 2.5 * complexity));
+  const upkeep = Math.max(0.1, Math.round(cost * 0.03 * 10) / 10);
+  // utilities scale with size & complexity (lit windows draw a little extra power)
+  const power = -Math.max(1, Math.round(0.02 * vol + 0.5 * complexity + 0.4 * lit));
+  const water = -Math.max(1, Math.round(0.015 * vol + 0.4 * complexity));
+  const jobs = Math.round(vol * 0.4);
+  const happiness = Math.min(15, 2 + Math.round(complexity / 2));
+  const slug = (lm.name || 'landmark').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || 'landmark';
+  const key = 'lm_' + slug + '_' + i;
+  return [key, {
+    name: lm.name || ('Landmark ' + (i + 1)), cat: 'landmark', icon: '🏛️',
+    color: (parts[0] && parts[0].color) || '#cfc9b8',
+    cost, upkeep, year: START_YEAR, homes: 0, jobs,
+    power, water, pollution: 0, happiness, income: 0,
+    desc: `A custom-designed landmark — ${complexity} part${complexity !== 1 ? 's' : ''}, ~${Math.round(vol)} vol${lit ? `, ${lit} lit window${lit !== 1 ? 's' : ''} (glow at night)` : ''}. Cost & utilities scale with size and complexity.`,
+    landmarkParts: parts, lmScale: scale,
+  }];
+}
+for (let i = 0; i < CUSTOM_LANDMARKS.length; i++) {
+  const [key, def] = landmarkToBuilding(CUSTOM_LANDMARKS[i], i);
+  BUILDINGS[key] = def;
+}
+if (CUSTOM_LANDMARKS.length) CATEGORIES.push({ id: 'landmark', name: 'Landmarks', icon: '🏛️' });
 
 // ---------------------------------------------------------------------------
 // POLICIES & LAWS

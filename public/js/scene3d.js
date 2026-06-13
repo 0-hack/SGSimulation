@@ -15,10 +15,14 @@ function makeLandmarkPart(p, toonMat) {
     case 'cyl': geo = new THREE.CylinderGeometry(w / 2, w / 2, h, 20); break;
     case 'pyramid': geo = new THREE.ConeGeometry(w * 0.7, h, 4); extraRot = Math.PI / 4; break;
     case 'dome': geo = new THREE.SphereGeometry(w / 2, 18, 10, 0, Math.PI * 2, 0, Math.PI / 2); yoff = 0; break;
+    case 'window': case 'door': geo = new THREE.BoxGeometry(w, h, Math.max(0.3, d)); break; // thin facade panel
     default: geo = new THREE.BoxGeometry(w, h, d);
   }
-  const m = new THREE.Mesh(geo, toonMat(typeof p.color === 'string' ? parseInt(p.color.slice(1), 16) : (p.color ?? 0xcfc9b8)));
-  m.castShadow = true; m.receiveShadow = true;
+  const col = typeof p.color === 'string' ? parseInt(p.color.slice(1), 16) : (p.color ?? 0xcfc9b8);
+  // Parts flagged `light` (lit windows/signs) glow warm after dark via the
+  // global night-glow pass; everything else uses a plain toon material.
+  const m = new THREE.Mesh(geo, p.light ? litMat(col) : toonMat(col));
+  m.castShadow = p.type !== 'window' && p.type !== 'door'; m.receiveShadow = true;
   m.position.set(p.x || 0, (p.y || 0) + yoff, p.z || 0); m.rotation.y = (p.rot || 0) + extraRot;
   return m;
 }
@@ -209,7 +213,10 @@ export class Scene3D {
     this._buildTerrain();    // the nature-reserve hills (Bukit Timah massif) around the reservoirs
     this._buildAirport();    // Singapore (Paya Lebar) Airport on the east side
     this._placeStructures(CUSTOM_HOUSES, 'houseGroup'); // hand-traced houses (free-placed)
-    this._buildLandmarks(CUSTOM_LANDMARKS); // 3D-designed buildings/landmarks (design.html)
+    // 3D-designed buildings/landmarks (design.html) are now placed by the PLAYER
+    // from the build menu (see BUILDINGS landmark entries in data.js) rather than
+    // auto-dropped at a fixed spot — so they cost money and take up land like any
+    // other building. _buildLandmarks() is kept for any auto-placed world fixtures.
     this._buildSands(CUSTOM_SANDS);       // sandy coast sections (hand-traced)
     this._buildRailways(CUSTOM_RAILWAYS); // railway lines (hand-traced)
     this._buildNature();     // scatter rural greenery across the undeveloped island
@@ -1945,6 +1952,17 @@ function mat(color, opts = {}, glowK = 0.18) {
   if (!MAT.has(key)) MAT.set(key, reg(new THREE.MeshToonMaterial({ color, ...toonOpts(opts) }), glowK));
   return MAT.get(key);
 }
+// Strongly-glowing material for designer parts flagged "light" — a lit window
+// switches on warm after dark (driven by the ALL_MATS night pass).
+const LITMAT = new Map();
+function litMat(color) {
+  if (!LITMAT.has(color)) {
+    const m = new THREE.MeshToonMaterial({ color, gradientMap: toonGradient() });
+    m.emissive = new THREE.Color(0xffe2a8); m.emissiveIntensity = 0; m.userData.glowK = 1.1;
+    ALL_MATS.push(m); LITMAT.set(color, m);
+  }
+  return LITMAT.get(color);
+}
 
 // --- procedural facade textures (colour + emissive window maps) ------------
 const TEX = {};
@@ -2185,6 +2203,17 @@ function addCars(g, lx, lz, w, d) {
 export function makeBuilding(key, theme) {
   const b = BUILDINGS[key];
   const g = new THREE.Group();
+  // Player-buildable 3D-designed landmark (from design.html): render its parts.
+  // The landmark's scale is baked into each part so the build/grow animation
+  // (which drives group.scale.y) still works.
+  if (b.landmarkParts) {
+    const s = b.lmScale || 1;
+    for (const p of b.landmarkParts) {
+      const q = s === 1 ? p : { ...p, x: (p.x || 0) * s, y: (p.y || 0) * s, z: (p.z || 0) * s, w: (p.w || 4) * s, h: (p.h || 4) * s, d: (p.d || 4) * s };
+      g.add(makeLandmarkPart(q, toon));
+    }
+    return g;
+  }
   const tint = b.customizable && theme ? (typeof theme === 'string' ? parseInt(theme.slice(1), 16) : theme) : null;
   const col = tint != null ? tint : parseInt((b.color || '#888888').slice(1), 16);
   const cat = b.cat;

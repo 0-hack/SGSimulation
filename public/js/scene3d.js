@@ -1104,10 +1104,26 @@ export class Scene3D {
   // Paint the cell under screen point p (once per cell per drag).
   _paintAt(p) {
     const cell = this._raycastCell(p); if (!cell || !this.onPaint) return;
-    const id = cell.x + ',' + cell.y;
-    if (this._paintSeen && this._paintSeen.has(id)) return;
-    if (this._paintSeen) this._paintSeen.add(id);
-    this.onPaint(cell.x, cell.y);
+    // Brush: sweep a round patch of cells along the drag so reclamation feels
+    // like drawing new coastline freehand, not filling one tile at a time.
+    const r = this.paintRadius || 0;
+    if (r <= 0) {
+      const id = cell.x + ',' + cell.y;
+      if (this._paintSeen && this._paintSeen.has(id)) return;
+      if (this._paintSeen) this._paintSeen.add(id);
+      this.onPaint(cell.x, cell.y);
+      return;
+    }
+    const R = Math.ceil(r);
+    for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) {
+      if (dx * dx + dy * dy > r * r + 0.01) continue;          // round brush
+      const x = cell.x + dx, y = cell.y + dy;
+      if (x < 0 || y < 0) continue;
+      const id = x + ',' + y;
+      if (this._paintSeen && this._paintSeen.has(id)) continue;
+      if (this._paintSeen) this._paintSeen.add(id);
+      this.onPaint(x, y);                                       // onPaint guards sea/validity itself
+    }
   }
   isLand(x, y) {
     const base = (this.land[y] && this.land[y][x]) || (this.reclaimedMask && this.reclaimedMask[y] && this.reclaimedMask[y][x]);
@@ -1807,7 +1823,7 @@ export class Scene3D {
   setRoadMode(on) { this.roadMode = on; if (!on) this.clearRoadPreview(); }
   // Paint mode (land reclamation): drag across the map to apply onPaint to each
   // cell instead of orbiting the camera.
-  setPaintMode(on, onPaint) { this.paintMode = !!on; this.onPaint = onPaint || null; if (!on) { this._painting = false; this._paintSeen = null; } }
+  setPaintMode(on, onPaint, radius) { this.paintMode = !!on; this.onPaint = onPaint || null; this.paintRadius = on ? (radius || 0) : 0; if (!on) { this._painting = false; this._paintSeen = null; } }
   // Draw mode: drag across the map to trace a route (road/railway). On release,
   // onStroke([{x,z}...]) is called. `opts` sets the live-preview look.
   setDrawMode(on, onStroke, opts) { this.drawMode = !!on; this.onStroke = onStroke || null; this._drawType = (opts && opts.type) || 'street'; this._drawElevated = !!(opts && opts.elevated); this._drawRail = !!(opts && opts.rail); if (!on) { this._drawing = false; this._stroke = null; this.clearRoadPreview(); } }
@@ -1841,9 +1857,12 @@ export class Scene3D {
         else { const t = d ? (builtLen - acc) / d : 0; built.push({ x: wp[i - 1].x + (wp[i].x - wp[i - 1].x) * t, z: wp[i - 1].z + (wp[i].z - wp[i - 1].z) * t }); break; }
       }
       const toV = (p) => new THREE.Vector3(p.x, 0, p.z);
+      // match the finished road's footprint so the look doesn't jump on completion
+      const T = ROAD_TYPES[w.type] || ROAD_TYPES.street;
+      const hw = w.kind === 'rail' ? 1.7 : T.width / 2 + 0.35;
       // faint full planned route, then the solid built part on top
-      this._addRibbon(g, wp.map(toV), (w.kind === 'rail' ? 1.4 : (w.lanes || 2) * 1.6 / 2 + 0.5), 0x8a8f6a, 0.02);
-      if (built.length >= 2) this._addRibbon(g, built.map(toV), (w.kind === 'rail' ? 1.4 : (w.lanes || 2) * 1.6 / 2 + 0.5), (w.kind === 'rail' ? 0x5b5040 : 0x3a3e45), 0.05);
+      this._addRibbon(g, wp.map(toV), hw, 0x8a8f6a, 0.02);
+      if (built.length >= 2) this._addRibbon(g, built.map(toV), hw, (w.kind === 'rail' ? 0x5b5040 : 0x3a3e45), 0.05);
       const f = built[built.length - 1] || wp[0];
       const m = this._roadworkMarker(); m.position.set(f.x, this._roadY(f.x, f.z) + 0.1, f.z); g.add(m);
     }
@@ -1943,7 +1962,7 @@ export class Scene3D {
         return;
       }
       const hw = T.width / 2, L = e.lanes || T.lanes, lw = T.width / L;
-      ribbon(pave, pts, hw + 0.7, 0.0);
+      ribbon(pave, pts, hw + 0.35, 0.0);   // slim kerb/shoulder so roads aren't oversized
       ribbon(road, pts, hw, 0.03);
       for (let k = 1; k < L; k++) {                 // lane dividers
         const off = -hw + k * lw;

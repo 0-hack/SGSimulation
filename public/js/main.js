@@ -280,9 +280,22 @@ function setSpeed(s) {
 function doReclaim(x, y) {
   if (G.readOnly || !G.view.canReclaim(x, y)) return; // silently skip non-sea cells while dragging
   const cost = reclaimCost(G.state, 1);
-  if (G.state.treasury < cost) { toast(`Out of funds for reclamation (need ${money(cost)}/tile).`); return; }
+  if (G.state.treasury < cost) {
+    // the brush touches many cells per drag — only warn about funds once a second
+    const now = performance.now();
+    if (now - (G._reclaimWarn || 0) > 1000) { G._reclaimWarn = now; toast(`Out of funds for reclamation (need ${money(cost)}/tile).`); }
+    return;
+  }
   const r = reclaimLand(G.state, x, y);
-  if (r.ok) { G.view.syncReclamation(G.state); afterEdit(); } // shows land rising; it tops out over time
+  if (r.ok) scheduleReclaimRefresh(); // shows land rising; it tops out over time
+}
+// The reclaim brush touches many cells per drag — coalesce the (heavier) view &
+// HUD refresh into one per animation frame so big sweeps stay smooth.
+let _reclaimPending = false;
+function scheduleReclaimRefresh() {
+  if (_reclaimPending) return;
+  _reclaimPending = true;
+  requestAnimationFrame(() => { _reclaimPending = false; if (G.view) G.view.syncReclamation(G.state); afterEdit(); });
 }
 
 function onTileTap(x, y) {
@@ -487,9 +500,9 @@ function toggleReclaim() {
     G.build.selected = null; G.build.bulldoze = false;
     G.road.tool = null; G.view.setRoadMode(false); G.view.showRoadPreview([]);
     G.view.setPreview(null); G.view.setBulldoze(false);
-    G.view.setPaintMode(true, doReclaim); // drag across the sea to fill land
+    G.view.setPaintMode(true, doReclaim, 2.2); // brush: drag to draw new land freehand
     closeSheet();
-    toast('Reclaim mode: drag across open sea to fill new land (costs money). 🏝️ ✕ Done / Esc to stop.');
+    toast('Reclaim mode: drag across open sea to draw new land freehand (costs money). 🏝️ ✕ Done / Esc to stop.');
   } else {
     G.view.setPaintMode(false);
   }

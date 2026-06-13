@@ -25,12 +25,13 @@ export const CATEGORIES = [
   { id: 'land', name: 'Reclaim', icon: '🏝️' },
 ];
 
-// Freeform road types the player can draw.
+// Routes the player can draw, by transport mode: Road (cars), Railway (trains),
+// Airport (planes). `width` drives traffic/lane spacing; `renderHW` (when set) is
+// the drawn carriageway half-width — Road matches the slim 1966 survey-map roads.
 export const ROAD_TYPES = {
-  street:  { name: 'Street',  lanes: 2, width: 2.4, speed: 9,  cost: 6,  asphalt: '#3a3e45' },
-  avenue:  { name: 'Avenue',  lanes: 4, width: 4.0, speed: 13, cost: 14, asphalt: '#34373d' },
-  highway: { name: 'Highway', lanes: 6, width: 5.6, speed: 20, cost: 26, asphalt: '#2e3137' },
-  railway: { name: 'Railway', lanes: 1, width: 2.6, speed: 0,  cost: 30, asphalt: '#5b5040', rail: true },
+  road:    { name: 'Road',    icon: '🚗', lanes: 2, width: 1.8, renderHW: 0.34, speed: 12, cost: 6,  asphalt: '#3a3e45' },
+  railway: { name: 'Railway', icon: '🚆', lanes: 1, width: 2.6, speed: 0,  cost: 30, asphalt: '#5b5040', rail: true },
+  airport: { name: 'Airport', icon: '✈️', lanes: 1, width: 9,   speed: 0,  cost: 80, asphalt: '#35383d', air: true },
 };
 
 // Colour themes players can pick to customise a building's look.

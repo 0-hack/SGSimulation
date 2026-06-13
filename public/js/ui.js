@@ -120,23 +120,25 @@ export function renderBuild(state, ctx) {
 function renderRoads(ctx) {
   const r = ctx.road;
   const wrap = el('div', 'roads-ui');
-  wrap.append(el('p', 'policy-desc', 'Pick a type, then ✏️ Draw straight onto the map — drag to trace the route; it builds with a construction crew. Or tap points (Straight/Curve), add roundabouts, and Erase.'));
+  wrap.append(el('p', 'policy-desc', 'Pick a mode — 🚗 Road, 🚆 Railway, or ✈️ Airport — then ✏️ Draw onto the map: drag to trace the route and it builds with a construction crew. (Straight/Curve/Roundabout/Erase also work for roads.)'));
 
-  // type (roads + railway)
+  // mode: road (cars) / railway (trains) / airport (planes)
   const typeRow = el('div', 'road-types');
   for (const [id, t] of Object.entries(ROAD_TYPES)) {
-    const btn = el('button', 'opt' + (r.type === id ? ' active' : ''), t.rail ? `${t.name}` : `${t.name} · ${t.lanes}-lane`);
+    const btn = el('button', 'opt' + (r.type === id ? ' active' : ''), `${t.icon || ''} ${t.name}`);
     btn.onclick = () => ctx.setRoadType(id);
     typeRow.append(btn);
   }
-  wrap.append(el('div', 'section-title', 'Type'));
+  wrap.append(el('div', 'section-title', 'Mode'));
   wrap.append(typeRow);
 
-  // bridge toggle
-  const bridge = el('div', 'checkbox');
-  bridge.innerHTML = `<span class="switch${r.elevated ? ' on' : ''}"></span> Elevated flyover / bridge`;
-  bridge.querySelector('.switch').onclick = () => ctx.toggleBridge();
-  wrap.append(bridge);
+  // bridge / flyover toggle — only meaningful for roads & railways, not runways
+  if (!ROAD_TYPES[r.type]?.air) {
+    const bridge = el('div', 'checkbox');
+    bridge.innerHTML = `<span class="switch${r.elevated ? ' on' : ''}"></span> Elevated flyover / bridge`;
+    bridge.querySelector('.switch').onclick = () => ctx.toggleBridge();
+    wrap.append(bridge);
+  }
 
   // tools — ✏️ Draw (freehand) leads
   wrap.append(el('div', 'section-title', 'Tool'));

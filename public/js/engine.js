@@ -67,8 +67,9 @@ export function newGame({ name = 'New Singapore', owner = 'Anonymous' } = {}) {
     economy: { inflation: 0.02, priceIndex: 1, currency: 1 }, // dynamic inflation / price level / SGD strength
     constructing: [],         // [x,y] cells whose building is still being built
     landmarks: [],            // 3D-designed landmarks saved into THIS world (per-player; for build menu + visitors)
-    roadworks: [],            // routes (roads/railways) drawn on the map, still under construction
+    roadworks: [],            // routes (road/rail/air) drawn on the map, still under construction
     railways: [],             // finished player-drawn railway lines (polylines of {x,z})
+    airstrips: [],            // finished player-drawn airport runways (polylines of {x,z})
     summary: {},
     daysElapsed: 0,
   };
@@ -96,7 +97,7 @@ function injectTracedRoads(roads) {
   for (const [a, b, ow, cls] of ROAD_EDGES_1966)
     roads.edges.push({
       a: a + base, b: b + base, ctrl: null,
-      type: cls === 1 ? 'avenue' : 'street', lanes: ow ? 1 : 2, elevated: false,
+      type: 'road', lanes: ow ? 1 : 2, elevated: false,
       oneway: !!ow, traced: true, roadClass: cls || 3,
     });
   roads.seeded1966 = true;
@@ -120,6 +121,7 @@ export function ensureGrid(state) {
   if (!Array.isArray(state.landmarks)) state.landmarks = [];
   if (!Array.isArray(state.roadworks)) state.roadworks = [];
   if (!Array.isArray(state.railways)) state.railways = [];
+  if (!Array.isArray(state.airstrips)) state.airstrips = [];
   if (!state.economy) state.economy = { inflation: 0.02, priceIndex: 1, currency: 1 };
   // Rebuild the active-construction list from the grid (robust across saves).
   state.constructing = [];
@@ -306,7 +308,7 @@ export function routeLength(pts) {
 export function addRoadwork(state, route) {
   if (!state.roadworks) state.roadworks = [];
   state.roadworks.push({
-    pts: route.pts, kind: route.kind || 'road', type: route.type || 'street',
+    pts: route.pts, kind: route.kind || 'road', type: route.type || 'road',
     lanes: route.lanes || 2, elevated: !!route.elevated,
     total: route.total, left: route.total,
   });
@@ -321,6 +323,8 @@ function advanceRoadworks(state) {
     if (w.left > 0) { still.push(w); continue; }
     if (w.kind === 'rail') {
       (state.railways || (state.railways = [])).push(w.pts.map((p) => [p.x, p.z]));
+    } else if (w.kind === 'air') {
+      (state.airstrips || (state.airstrips = [])).push(w.pts.map((p) => [p.x, p.z]));
     } else {
       const roads = state.roads, node = (x, z) => {
         for (let i = 0; i < roads.nodes.length; i++) { const n = roads.nodes[i]; if (Math.hypot(n.x - x, n.z - z) < 4) return i; }

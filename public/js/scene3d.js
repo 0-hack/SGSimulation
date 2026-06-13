@@ -1252,7 +1252,7 @@ export class Scene3D {
     const c = cellToWorld(gx, gy);
     for (let e = 0; e < this.edgePts.length; e++) {
       const pts = this.edgePts[e]; if (!pts || pts.length < 2) continue;
-      const T = ROAD_TYPES[this.edgeMeta[e]?.type] || ROAD_TYPES.street;
+      const T = ROAD_TYPES[this.edgeMeta[e]?.type] || ROAD_TYPES.road;
       const margin = T.width / 2 + 2.6;          // carriageway + footpath clearance
       for (let i = 0; i < pts.length - 1; i++) {
         if (segPointDist(c.x, c.z, pts[i].x, pts[i].z, pts[i + 1].x, pts[i + 1].z) < margin) return true;
@@ -1279,7 +1279,7 @@ export class Scene3D {
   }
 
   // ---- external API (mirrors the 2D view) ----------------------------------
-  setState(state) { this.state = state; this._syncReclaimed(); this.syncAll(); this.rebuildRoadNet(); this._buildPlayerRailways(state); this.syncRoadworks(state); }
+  setState(state) { this.state = state; this._syncReclaimed(); this.syncAll(); this.rebuildRoadNet(); this._buildPlayerRailways(state); this._buildPlayerAirstrips(state); this.syncRoadworks(state); }
   setShortages(s) { this.shortages = s; }
   setPreview(key, theme) {
     this.previewKey = key; this.previewTheme = theme; this.bulldoze = false;
@@ -1471,8 +1471,8 @@ export class Scene3D {
 
   // ---- unified traffic (grid + freeform roads share ONE network) -----------
   _assignLane(a) {
-    const meta = this.edgeMeta[a.edge] || { type: 'street', lanes: 2 };
-    const T = ROAD_TYPES[meta.type] || ROAD_TYPES.street;
+    const meta = this.edgeMeta[a.edge] || { type: 'road', lanes: 2 };
+    const T = ROAD_TYPES[meta.type] || ROAD_TYPES.road;
     const hw = T.width / 2;
     if (a.group === 'veh') {
       const lpd = Math.max(1, Math.round((meta.lanes || 2) / 2));
@@ -1826,7 +1826,7 @@ export class Scene3D {
   setPaintMode(on, onPaint, radius) { this.paintMode = !!on; this.onPaint = onPaint || null; this.paintRadius = on ? (radius || 0) : 0; if (!on) { this._painting = false; this._paintSeen = null; } }
   // Draw mode: drag across the map to trace a route (road/railway). On release,
   // onStroke([{x,z}...]) is called. `opts` sets the live-preview look.
-  setDrawMode(on, onStroke, opts) { this.drawMode = !!on; this.onStroke = onStroke || null; this._drawType = (opts && opts.type) || 'street'; this._drawElevated = !!(opts && opts.elevated); this._drawRail = !!(opts && opts.rail); if (!on) { this._drawing = false; this._stroke = null; this.clearRoadPreview(); } }
+  setDrawMode(on, onStroke, opts) { this.drawMode = !!on; this.onStroke = onStroke || null; this._drawType = (opts && opts.type) || 'road'; this._drawElevated = !!(opts && opts.elevated); this._drawRail = !!(opts && opts.rail); if (!on) { this._drawing = false; this._stroke = null; this.clearRoadPreview(); } }
   // Render finished player-drawn railways (world coords) like the historic ones.
   _buildPlayerRailways(state) {
     if (this._pRailGroup) this.scene.remove(this._pRailGroup);
@@ -1837,6 +1837,52 @@ export class Scene3D {
       this._addRibbon(g, pts, 1.7, 0x5b5040, 0.13);
       const nrm = pts.map((p, i) => { const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)]; let tx = b.x - a.x, tz = b.z - a.z; const l = Math.hypot(tx, tz) || 1; return [-tz / l, tx / l]; });
       for (const sgn of [-1, 1]) this._addRibbon(g, pts.map((p, i) => new THREE.Vector3(p.x + nrm[i][0] * 0.7 * sgn, 0, p.z + nrm[i][1] * 0.7 * sgn)), 0.13, 0xb8c0c8, 0.18);
+    }
+  }
+  // Render finished player-drawn airport runways: a wide asphalt strip with pale
+  // edge lines and a dashed centreline, and an airliner that taxis & takes off.
+  _buildPlayerAirstrips(state) {
+    if (this._airGroup) this.scene.remove(this._airGroup);
+    const g = new THREE.Group(); this.scene.add(g); this._airGroup = g;
+    this._airPlanes = [];
+    const RW = 4.5; // runway half-width (matches the built-in airport)
+    for (const poly of ((state && state.airstrips) || [])) {
+      if (!poly || poly.length < 2) continue;
+      const pts = poly.map(([x, z]) => new THREE.Vector3(x, 0, z));
+      this._addRibbon(g, pts, RW, 0x35383d, 0.06);                 // runway tarmac
+      const nrm = pts.map((p, i) => { const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)]; let tx = b.x - a.x, tz = b.z - a.z; const l = Math.hypot(tx, tz) || 1; return [-tz / l, tx / l]; });
+      for (const sgn of [-1, 1]) this._addRibbon(g, pts.map((p, i) => new THREE.Vector3(p.x + nrm[i][0] * (RW - 0.3) * sgn, 0, p.z + nrm[i][1] * (RW - 0.3) * sgn)), 0.18, 0xe9e2c8, 0.12); // edge lines
+      // dashed centreline
+      const total = this._polyLen(pts); let acc = 0, dash = true;
+      for (let i = 0; i < pts.length - 1; i++) {
+        const a = pts[i], b = pts[i + 1], seg = a.distanceTo(b); let s = 0;
+        while (s < seg) { const e = Math.min(s + 3.5, seg);
+          if (dash) this._addRibbon(g, [new THREE.Vector3(a.x + (b.x - a.x) * s / seg, 0, a.z + (b.z - a.z) * s / seg), new THREE.Vector3(a.x + (b.x - a.x) * e / seg, 0, a.z + (b.z - a.z) * e / seg)], 0.22, 0xf3ecd0, 0.13);
+          dash = !dash; s = e; }
+      }
+      this._airPlanes.push({ pts, total, mesh: null, t: Math.random(), dir: 1 });
+    }
+  }
+  _polyLen(pts) { let L = 0; for (let i = 1; i < pts.length; i++) L += pts[i].distanceTo(pts[i - 1]); return L; }
+  // Point at arc-fraction u in [0,1] along a {Vector3} polyline.
+  _alongPoly(pts, u) {
+    const total = this._polyLen(pts); let target = Math.max(0, Math.min(1, u)) * total, acc = 0;
+    for (let i = 1; i < pts.length; i++) { const d = pts[i].distanceTo(pts[i - 1]); if (acc + d >= target) { const t = d ? (target - acc) / d : 0; return new THREE.Vector3(pts[i - 1].x + (pts[i].x - pts[i - 1].x) * t, 0, pts[i - 1].z + (pts[i].z - pts[i - 1].z) * t); } acc += d; }
+    return pts[pts.length - 1].clone();
+  }
+  // Taxi an airliner down each runway, lift off near the end, then loop back.
+  _updateAirstripPlanes(dt) {
+    for (const p of (this._airPlanes || [])) {
+      if (!p.mesh) { p.mesh = makeAirliner(); p.mesh.scale.setScalar(AIRPORT.planeScale); this._airGroup.add(p.mesh); }
+      p.t += dt * 0.05;
+      if (p.t > 1.25) p.t = 0;                                    // back to the threshold
+      const u = Math.min(1, p.t);
+      const pos = this._alongPoly(p.pts, u);
+      const ahead = this._alongPoly(p.pts, Math.min(1, u + 0.03));
+      const climb = Math.max(0, p.t - 0.82) * 80;                 // rotate/lift off after ~80% of the run
+      p.mesh.position.set(pos.x, 0.5 + climb, pos.z);
+      p.mesh.rotation.y = Math.atan2(ahead.x - pos.x, ahead.z - pos.z);
+      p.mesh.visible = p.t <= 1.2;
     }
   }
   // Render routes still under construction: the built part grows from the start,
@@ -1858,8 +1904,8 @@ export class Scene3D {
       }
       const toV = (p) => new THREE.Vector3(p.x, 0, p.z);
       // match the finished road's footprint so the look doesn't jump on completion
-      const T = ROAD_TYPES[w.type] || ROAD_TYPES.street;
-      const hw = w.kind === 'rail' ? 1.7 : T.width / 2 + 0.35;
+      const T = ROAD_TYPES[w.type] || ROAD_TYPES.road;
+      const hw = w.kind === 'rail' ? 1.7 : w.kind === 'air' ? T.width / 2 : (T.renderHW || T.width / 2 + 0.35);
       // faint full planned route, then the solid built part on top
       this._addRibbon(g, wp.map(toV), hw, 0x8a8f6a, 0.02);
       if (built.length >= 2) this._addRibbon(g, built.map(toV), hw, (w.kind === 'rail' ? 0x5b5040 : 0x3a3e45), 0.05);
@@ -1949,7 +1995,7 @@ export class Scene3D {
     };
 
     if (roads) roads.edges.forEach((e) => {
-      const T = ROAD_TYPES[e.type] || ROAD_TYPES.street;
+      const T = ROAD_TYPES[e.type] || ROAD_TYPES.road;
       const pts = this._sampleEdge(roads, e);
       if (pts.length < 2) return;
       if (e.traced) {
@@ -1959,6 +2005,17 @@ export class Scene3D {
         // clutter every tiny segment). The shared nodes keep it interconnected.
         const hw = e.roadClass === 1 ? 0.34 : e.roadClass === 2 ? 0.22 : 0.16; // narrow, like the survey-map line widths (~36 m/unit)
         ribbon(road, pts, hw, 0.04);     // dark asphalt only — no pale shoulder (avoids notch speckle)
+        return;
+      }
+      if (T.renderHW) {
+        // player-drawn Road: a slim carriageway matching the 1966 survey-map roads —
+        // a clean dark ribbon, no wide shoulder or lane markings.
+        ribbon(road, pts, T.renderHW, 0.04);
+        if (e.elevated) for (let i = 2; i < pts.length - 1; i += 4) {
+          const pt = pts[i];
+          const pil = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.5, pt.y, 8), toon(0x9098a0));
+          pil.position.set(pt.x, pt.y / 2, pt.z); this.roadGroup.add(pil);
+        }
         return;
       }
       const hw = T.width / 2, L = e.lanes || T.lanes, lw = T.width / L;
@@ -2023,11 +2080,11 @@ export class Scene3D {
     };
     if (this.roadEdges) for (const [[ai, aj], [bi, bj]] of this.roadEdges) {
       const a = cornerToWorld(ai, aj), b = cornerToWorld(bi, bj);
-      add([{ x: a.x, y: 0.16, z: a.z }, { x: b.x, y: 0.16, z: b.z }], 2, 'street', false, true);
+      add([{ x: a.x, y: 0.16, z: a.z }, { x: b.x, y: 0.16, z: b.z }], 2, 'road', false, true);
     }
     const roads = this.state?.roads;
     if (roads) roads.edges.forEach((e) => {
-      const T = ROAD_TYPES[e.type] || ROAD_TYPES.street;
+      const T = ROAD_TYPES[e.type] || ROAD_TYPES.road;
       add(this._sampleEdge(roads, e), e.lanes || T.lanes, e.type, e.elevated, !e.elevated);
     });
     this.navNodes = nodes; this.navAdj = adj;
@@ -2057,7 +2114,7 @@ export class Scene3D {
         const a = endNear ? pts[pts.length - 1] : pts[0];
         const b = endNear ? pts[pts.length - 2] : pts[1];
         let hx = a.x - b.x, hz = a.z - b.z; const hl = Math.hypot(hx, hz) || 1; hx /= hl; hz /= hl; // toward node
-        const T = ROAD_TYPES[this.edgeMeta[L.edge].type] || ROAD_TYPES.street;
+        const T = ROAD_TYPES[this.edgeMeta[L.edge].type] || ROAD_TYPES.road;
         const lane = T.width / 4;
         const px = node.x - hx * 6 + hz * lane, pz = node.z - hz * 6 - hx * lane;
         // which turns exist among the other roads?
@@ -2219,6 +2276,7 @@ export class Scene3D {
     this._updateDevelopment(adt);
     this._updatePeople(adt);
     this._updateBoats(adt);
+    if (!this.frozen) this._updateAirstripPlanes(dt);   // taxiing/landing aircraft on drawn runways
     this._updateDisaster(adt);
     this._updateCamera();
     this.renderer.render(this.scene, this.camera);

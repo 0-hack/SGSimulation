@@ -47,7 +47,7 @@ const G = {
   lastFrame: 0,
   hudTimer: 0,
   build: { cat: 'residential', selected: null, bulldoze: false, theme: null },
-  road: { tool: null, type: 'street', elevated: false, pending: [] },
+  road: { tool: null, type: 'road', elevated: false, pending: [] },
   reclaim: { active: false },  // land-reclamation tool: tap sea to fill land
   editPause: false,            // true while a build/road/reclaim tool is active — freezes time & the world
 
@@ -219,7 +219,7 @@ function loop(ts) {
       G.dirty = true;
       G.hudTimer += dt;
       if (G.view) { G.view.syncConstruction(G.state); G.view.syncReclamation(G.state); G.view.syncRoadworks(G.state); // advance sites/land/routes
-        if ((G.state.roadworks || []).length < rwBefore) { G.view.rebuildRoadNet(); G.view._buildPlayerRailways(G.state); } } // a route finished -> render it for real
+        if ((G.state.roadworks || []).length < rwBefore) { G.view.rebuildRoadNet(); G.view._buildPlayerRailways(G.state); G.view._buildPlayerAirstrips(G.state); } } // a route finished -> render it for real
       updateHud(G.state, G.readOnly);
       updateShortages();
       if (G.state.pendingEvent) { showEvent(); }
@@ -458,14 +458,15 @@ function onRouteDrawn(pts) {
   // a bare tap (or a stroke that never left the start point) draws nothing —
   // tell the player to hold and drag instead of failing silently.
   if (!pts || pts.length < 2) { toast('Hold and drag across the map to draw the route — a single tap is too short. ✏️'); return; }
-  const T = ROAD_TYPES[G.road.type] || ROAD_TYPES.street;
+  const T = ROAD_TYPES[G.road.type] || ROAD_TYPES.road;
   const len = routeLength(pts);
   if (len < 8) { toast('That route is too short — drag a longer line across the map.'); return; }
   const cost = priced(T.cost * Math.max(1, len / 20), G.state);
   if (G.state.treasury < cost) { toast(`Need ${money(cost)} for this ${T.name.toLowerCase()}.`); return; }
   const total = Math.max(3, Math.min(40, Math.round(len / 15)));
   G.state.treasury -= cost;
-  addRoadwork(G.state, { pts, kind: T.rail ? 'rail' : 'road', type: G.road.type, lanes: T.lanes, elevated: G.road.elevated, total });
+  const kind = T.air ? 'air' : T.rail ? 'rail' : 'road';
+  addRoadwork(G.state, { pts, kind, type: G.road.type, lanes: T.lanes, elevated: G.road.elevated, total });
   G.view.syncRoadworks(G.state);
   afterEdit();
   toast(`${T.name} — construction started (${money(cost)}). ✕ Done / Esc to stop.`);
@@ -473,7 +474,7 @@ function onRouteDrawn(pts) {
 function applyRoadToolMode() {
   const draw = G.road.tool === 'draw';
   G.view.setRoadMode(!!G.road.tool && !draw);
-  if (draw) { const T = ROAD_TYPES[G.road.type] || ROAD_TYPES.street; G.view.setDrawMode(true, onRouteDrawn, { type: G.road.type, elevated: G.road.elevated, rail: !!T.rail }); }
+  if (draw) { const T = ROAD_TYPES[G.road.type] || ROAD_TYPES.road; G.view.setDrawMode(true, onRouteDrawn, { type: G.road.type, elevated: G.road.elevated, rail: !!T.rail, air: !!T.air }); }
   else G.view.setDrawMode(false);
 }
 function selectRoadTool(tool) {

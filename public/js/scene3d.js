@@ -919,7 +919,7 @@ export class Scene3D {
     this.MIN_R = 26;             // street-level zoom (buildings unchanged)
     // Navigation limit: a generous zoom-out that still stays over drawn land
     // (Singapore + its grey neighbours) rather than an endless fogged sea.
-    this.MAX_R = WORLD * 1.7;
+    this.MAX_R = WORLD * 1.42;
     // How far the camera focus may roam (the playable navigation box) — Singapore
     // plus a margin of neighbouring land so you never pan into blank sea.
     this.PAN_X = WORLD * 0.66;   // east/west focus limit

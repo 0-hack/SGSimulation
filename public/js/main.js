@@ -75,7 +75,7 @@ const G = {
 // ===========================================================================
 // Boot
 // ===========================================================================
-const BUILD = '2026-06-14 · smooth-traced-roads v18';
+const BUILD = '2026-06-14 · level-runway-deck v19';
 function boot() {
   console.log('%cSG build: ' + BUILD, 'font-weight:bold;color:#11a39c');
   const vEl = document.querySelector('.version'); if (vEl) vEl.textContent = 'build ' + BUILD;

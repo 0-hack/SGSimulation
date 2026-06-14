@@ -108,6 +108,25 @@ try {
   });
   ok(flatBar.skip || !/Level|🏗/.test(flatBar.detail), `flat runway charges no levelling: ${(flatBar.detail||'(skipped)').replace(/<[^>]+>/g,' ').slice(0,80)}`);
 
+  // The rendered runway deck must be DEAD LEVEL end-to-end (a levelled platform),
+  // even when laid across sloping ground — not draped over the slope.
+  const deck = await p.evaluate(()=>{
+    const v=window.__sgview;
+    const dirs=[[1,0],[0,1],[0.7,0.7]];
+    const strip=(X,Z,d)=>{ const pts=[]; for(let i=-6;i<=6;i++) pts.push([X+d[0]*i*5, Z+d[1]*i*5]); return pts; };
+    let best=null;
+    for(let X=-150;X<=150;X+=10) for(let Z=-150;Z<=150;Z+=10) for(const d of dirs){
+      const pts=strip(X,Z,d); let lo=1e9,hi=-1e9,okp=true;
+      for(const q of pts){ const h=v._roadY(q[0],q[1]); if(h<=0.3){okp=false;break;} lo=Math.min(lo,h); hi=Math.max(hi,h); }
+      if(okp){ const range=hi-lo; if(!best||range>best.range) best={pts,range}; }
+    }
+    if(!best) return { skip:true };
+    v.state.airstrips=[best.pts]; v._buildPlayerAirstrips(v.state);
+    let ymin=1e9,ymax=-1e9; for(const pt of v._airPlanes[0].pts){ ymin=Math.min(ymin,pt.y); ymax=Math.max(ymax,pt.y); }
+    return { terrainRange:best.range, deckVar: ymax-ymin };
+  });
+  ok(deck.skip || (deck.terrainRange > 3 && deck.deckVar < 0.01), `runway deck is level across a ${deck.terrainRange?.toFixed(1)} m slope (deck varies ${deck.deckVar?.toFixed(3)} m)`);
+
   ok(errs.length===0, 'no console/page errors'+(errs.length?': '+errs[0]:''));
 } catch(e){ fail++; console.error('  ✗ threw:', e.message, e.stack); }
 finally { await browser.close(); server.close(); }

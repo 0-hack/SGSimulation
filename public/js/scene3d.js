@@ -2376,14 +2376,19 @@ export class Scene3D {
       const dense = this._resamplePoly(poly.map(([x, z]) => ({ x, z })), 2.5);
       const base = dense.map((q) => new THREE.Vector3(q.x, this._roadY(q.x, q.z), q.z));
       const nrm = base.map((p, i) => { const a = base[Math.max(0, i - 1)], b = base[Math.min(base.length - 1, i + 1)]; let tx = b.x - a.x, tz = b.z - a.z; const l = Math.hypot(tx, tz) || 1; return [-tz / l, tx / l]; });
-      // A runway is FLAT across its width. Set each cross-section to the MAX terrain
-      // across the full width (+clearance) so a hill can never poke up through it,
-      // and drop an embankment skirt to the ground — i.e. a raised flat platform.
-      const topY = base.map((p, i) => {
+      // A runway is FLAT in BOTH directions — a levelled platform, not draped over
+      // the slope. Use ONE level for the whole strip: the MAX terrain anywhere under
+      // it (across the full width along its whole length) + clearance, so a hill can
+      // never poke through and the deck is dead level end to end. An embankment skirt
+      // fills down to the ground (taller at the low end, like real earthworks).
+      let level = -Infinity;
+      for (let i = 0; i < base.length; i++) {
         const nx = nrm[i][0], nz = nrm[i][1];
-        return Math.max(this._roadY(p.x, p.z), this._roadY(p.x + nx * RW, p.z + nz * RW), this._roadY(p.x - nx * RW, p.z - nz * RW)) + 0.35;
-      });
-      const pts = base.map((p, i) => new THREE.Vector3(p.x, topY[i], p.z));
+        level = Math.max(level, this._roadY(base[i].x, base[i].z), this._roadY(base[i].x + nx * RW, base[i].z + nz * RW), this._roadY(base[i].x - nx * RW, base[i].z - nz * RW));
+      }
+      level += 0.35;
+      const topY = base.map(() => level);
+      const pts = base.map((p) => new THREE.Vector3(p.x, level, p.z));
       this._addRibbon(g, pts, RW, 0x35383d, 0.0);                  // runway tarmac (flat platform)
       for (const sgn of [-1, 1]) {                                 // embankment skirt down to the terrain on each side
         const v = [], idx = [];

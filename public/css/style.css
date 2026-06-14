@@ -110,6 +110,10 @@ body.edit-mode::after {
   animation: editPulse 1.6s ease-in-out infinite;
 }
 @keyframes editPulse { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }
+/* a build (hammer) cursor while editing, so it's clear you're placing/drawing */
+body.edit-mode #city {
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='30' height='30' viewBox='0 0 30 30'%3E%3Cpath d='M4 26l8-8' stroke='%23222' stroke-width='6' stroke-linecap='round'/%3E%3Cpath d='M4 26l8-8' stroke='%23ffd24a' stroke-width='3' stroke-linecap='round'/%3E%3Cpath d='M12.5 5.5l12 12-3.5 3.5-12-12z' fill='%23ffd24a' stroke='%23222' stroke-width='2'/%3E%3C/svg%3E") 4 26, crosshair;
+}
 /* a "Paused" pill next to the date, and the running speed button dimmed */
 .edit-mode .hud-date::after {
   content: '⏸ Paused'; margin-left: 4px; background: var(--teal, #11a39c); color: #fff;

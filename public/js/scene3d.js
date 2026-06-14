@@ -1045,7 +1045,7 @@ export class Scene3D {
     };
     c.addEventListener('pointerup', end);
     c.addEventListener('pointercancel', end);
-    c.addEventListener('pointerleave', () => { if (this.ghost) this.ghost.visible = false; });
+    c.addEventListener('pointerleave', () => { if (this.ghost) this.ghost.visible = false; this._hideHoverTile(); this._clearSnapMarker(); });
     c.addEventListener('wheel', (e) => {
       e.preventDefault();
       this.cam.radius = THREE.MathUtils.clamp(this.cam.radius * (e.deltaY < 0 ? 0.92 : 1.08), this.MIN_R, this.MAX_R);
@@ -1207,6 +1207,9 @@ export class Scene3D {
     const c = cellToWorld(x, y), H = 1.5;
     const m = new THREE.Mesh(new THREE.BoxGeometry(TILE, H, TILE), toon(0x8a7c54)); // wet, under-construction fill
     m.position.set(c.x, -2.15, c.z); m.receiveShadow = true; // starts submerged, rises with progress
+    // a marine works buoy with a blinking light marks the reclamation zone
+    const buoy = new THREE.Mesh(new THREE.BoxGeometry(0.3, 1.1, 0.3), toon(0xff7a3c)); buoy.position.set(TILE * 0.34, H / 2 + 0.55, TILE * 0.34); m.add(buoy);
+    const blink = new THREE.Mesh(new THREE.SphereGeometry(0.28, 8, 6), new THREE.MeshBasicMaterial({ color: 0xffd23a, transparent: true })); blink.position.set(TILE * 0.34, H / 2 + 1.2, TILE * 0.34); blink.userData.blink = true; m.add(blink);
     this.reclaimSiteGroup.add(m); this.reclaimSites.set(id, m);
     this._spawnDust(c.x, c.z, 0x9fb6c9, 8); // sea spray as filling begins
     const g = this.natureCells && this.natureCells.get(id); if (g) g.visible = false;
@@ -1295,12 +1298,45 @@ export class Scene3D {
   }
 
   _hover(p) {
-    if (this.drawMode) { this._drawHover(p); return; }   // road/area drawing: snap to existing road ends
-    if (!this.previewKey && !this.bulldoze) { if (this.ghost) this.ghost.visible = false; return; }
+    if (this.drawMode) {                                  // road/area drawing
+      this._drawHover(p);                                 // snap to existing road ends
+      const cell = this._raycastCell(p);
+      if (cell) {
+        const ok = this._drawArea ? this.canReclaim(cell.x, cell.y) : this.isLand(cell.x, cell.y);
+        this._updateHoverTile(cell.x, cell.y, ok);
+      } else this._hideHoverTile();
+      return;
+    }
+    if (!this.previewKey && !this.bulldoze) { if (this.ghost) this.ghost.visible = false; this._hideHoverTile(); return; }
     const cell = this._raycastCell(p);
     this.hoverCell = cell;
     this._updateGhost();
+    if (cell) {
+      const occupied = this.buildings.has(`${cell.x},${cell.y}`);
+      const ok = this.bulldoze ? occupied : (this.isLand(cell.x, cell.y) && !occupied && !this.isRoadAt(cell.x, cell.y));
+      this._updateHoverTile(cell.x, cell.y, ok);
+    } else this._hideHoverTile();
   }
+  // A Sims-style highlight on the grid tile under the cursor: a translucent fill
+  // with a bright border, green when the action is valid, red when it isn't.
+  _updateHoverTile(x, y, ok) {
+    if (!this._tileHi) {
+      const g = new THREE.Group();
+      const geo = new THREE.PlaneGeometry(TILE * 0.94, TILE * 0.94);
+      const fill = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.26, depthWrite: false }));
+      fill.rotation.x = -Math.PI / 2; g.add(fill);
+      const ring = new THREE.LineSegments(new THREE.EdgesGeometry(geo), new THREE.LineBasicMaterial({ transparent: true, opacity: 0.95 }));
+      ring.rotation.x = -Math.PI / 2; g.add(ring);
+      g.renderOrder = 4; this.scene.add(g);
+      this._tileHi = g; this._tileHiFill = fill.material; this._tileHiRing = ring.material;
+    }
+    const c = cellToWorld(x, y);
+    this._tileHi.position.set(c.x, this.terrainHeight(x, y) + 0.14, c.z);
+    this._tileHiFill.color.setHex(ok ? 0x5fe05f : 0xff5a5a);
+    this._tileHiRing.color.setHex(ok ? 0xbafd7a : 0xff8a7a);
+    this._tileHi.visible = true;
+  }
+  _hideHoverTile() { if (this._tileHi) this._tileHi.visible = false; }
   // While in draw mode (and not mid-stroke), light up the nearest existing road
   // end the cursor/pencil is near, so the player knows they can start there.
   _drawHover(p) {
@@ -2081,6 +2117,29 @@ export class Scene3D {
       if (built.length >= 2) this._addRibbon(g, built.map(toV), hw, (w.kind === 'rail' ? 0x5b5040 : 0x3a3e45), 0.05);
       const f = built[built.length - 1] || wp[0];
       const m = this._roadworkMarker(); m.position.set(f.x, this._roadY(f.x, f.z) + 0.1, f.z); g.add(m);
+      this._addWorksFence(g, wp, hw + 0.8);   // hoarding + blinking lights ring the work zone
+    }
+  }
+  // A construction barrier along a route: striped posts on both sides with amber
+  // lights that blink (pulsed in render). Signals "works in progress — keep out".
+  _addWorksFence(group, wp, off) {
+    const post = (x, z) => {
+      const y = this._roadY(x, z);
+      const p = new THREE.Mesh(new THREE.BoxGeometry(0.32, 1.3, 0.32), toon(0xff7a3c));
+      p.position.set(x, y + 0.65, z); group.add(p);
+      const top = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.18, 0.42), toon(0xf2f2f2));
+      top.position.set(x, y + 1.3, z); group.add(top);
+      const light = new THREE.Mesh(new THREE.SphereGeometry(0.3, 8, 6), new THREE.MeshBasicMaterial({ color: 0xffd23a, transparent: true }));
+      light.position.set(x, y + 1.55, z); light.userData.blink = true; group.add(light);
+    };
+    for (let i = 1; i < wp.length; i++) {
+      const a = wp[i - 1], b = wp[i];
+      const dx = b.x - a.x, dz = b.z - a.z, l = Math.hypot(dx, dz) || 1, ux = dx / l, uz = dz / l, nx = -uz, nz = ux;
+      for (let s = 0; s < l; s += 8) {
+        const px = a.x + ux * s, pz = a.z + uz * s;
+        post(px + nx * off, pz + nz * off);
+        post(px - nx * off, pz - nz * off);
+      }
     }
   }
   _roadworkMarker() {
@@ -2473,6 +2532,12 @@ export class Scene3D {
     this._updateDisaster(adt);
     this._commitSky();   // paint the gradient sky after day/night + weather + haze tints
     if (this._snapMarker && this._snapMarker.visible) { const s = 1 + 0.18 * Math.sin(performance.now() / 180); this._snapMarker.scale.set(s, s, 1); } // pulse the "start here" ring
+    // blink the amber construction-barrier lights (roadworks + reclamation)
+    const blink = 0.25 + 0.75 * (0.5 + 0.5 * Math.sin(performance.now() / 170));
+    for (const grp of [this._roadworksGroup, this.reclaimSiteGroup]) {
+      if (grp) grp.traverse((o) => { if (o.userData && o.userData.blink) o.material.opacity = blink; });
+    }
+    if (this._tileHi && this._tileHi.visible) { const k = 0.34 + 0.18 * (0.5 + 0.5 * Math.sin(performance.now() / 320)); this._tileHiFill.opacity = k; } // gentle tile pulse
     this._updateCamera();
     this.renderer.render(this.scene, this.camera);
   }

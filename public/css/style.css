@@ -198,16 +198,16 @@ body.edit-mode::after {
 #city { flex: 1; width: 100%; display: block; touch-action: none; }
 
 .alerts {
-  position: absolute; left: 11px; right: 11px;
-  bottom: calc(var(--tb) + 12px); display: flex; flex-direction: column;
-  gap: 6px; pointer-events: none; align-items: center;
+  position: absolute; left: 12px; right: auto;
+  top: calc(112px + env(safe-area-inset-top, 0px)); display: flex; flex-direction: column;
+  gap: 3px; pointer-events: none; align-items: flex-start; max-width: 64vw;
 }
 .alert {
-  background: var(--glass); color: var(--bad); padding: 8px 14px;
-  border-radius: 22px; font-size: 12.5px; font-weight: 700; border: 1px solid #f3cdcf;
-  box-shadow: var(--shadow-s); backdrop-filter: blur(8px);
+  background: transparent; color: var(--bad); padding: 0;
+  border-radius: 0; font-size: 13px; font-weight: 800; border: none;
+  box-shadow: none; text-shadow: 0 1px 4px rgba(0,0,0,0.9), 0 0 3px rgba(0,0,0,0.85);
 }
-.alert.warn { color: var(--warn); border-color: #f3e0bd; }
+.alert.warn { color: var(--warn); border-color: transparent; }
 
 .cam-hint {
   position: absolute; left: 50%; top: 64px; transform: translateX(-50%);

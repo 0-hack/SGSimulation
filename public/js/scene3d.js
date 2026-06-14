@@ -176,8 +176,22 @@ export class Scene3D {
   _initScene() {
     const scene = new THREE.Scene();
     this.scene = scene;
-    this.skyColor = new THREE.Color(0x8ec5e8);
-    scene.background = this.skyColor.clone();
+    // Sky is a vertical GRADIENT (zenith -> horizon) painted into a canvas texture,
+    // so dawn/dusk show realistic bands of colour instead of one flat tone.
+    this.skyTop = new THREE.Color(0x3f86d8);   // zenith
+    this.skyBot = new THREE.Color(0x8ec5e8);   // horizon (just above the land)
+    this.skyColor = this.skyBot.clone();
+    this._skyCanvas = (typeof document !== 'undefined') ? document.createElement('canvas') : null;
+    if (this._skyCanvas) {
+      this._skyCanvas.width = 2; this._skyCanvas.height = 160;
+      this._skyCtx = this._skyCanvas.getContext('2d');
+      this._skyTex = new THREE.CanvasTexture(this._skyCanvas);
+      if ('colorSpace' in this._skyTex) this._skyTex.colorSpace = THREE.SRGBColorSpace;
+      scene.background = this._skyTex;
+      this._commitSky();
+    } else {
+      scene.background = this.skyColor.clone();
+    }
     // Linear fog fades the sea into the horizon so the world edge is never seen.
     // Pushed out so that at full zoom-out Singapore and its grey neighbours stay
     // clear, with only the undrawn sea beyond them fading away.
@@ -1781,12 +1795,12 @@ export class Scene3D {
       if (cl.position.x > lim) cl.position.x = -lim; if (cl.position.x < -lim) cl.position.x = lim;
       if (cl.position.z > lim) cl.position.z = -lim; if (cl.position.z < -lim) cl.position.z = lim;
     }
-    // overcast dims the sun and greys the sky
+    // overcast dims the sun and greys the sky gradient
     this.sun.intensity *= (1 - w.cloud * 0.55);
-    if (this.scene.background.lerp) {
+    if (this.skyTop) {
       const grey = new THREE.Color(0xb7bdc2);
-      this.scene.background.lerp(grey, w.cloud * 0.5);
-      this.fog.color.lerp(grey, w.cloud * 0.5);
+      this.skyTop.lerp(grey, w.cloud * 0.5);
+      this.skyBot.lerp(grey, w.cloud * 0.5);
     }
     // rain
     const eff = Math.max(w.rain, this._floodRain ? 1 : 0);
@@ -1829,8 +1843,7 @@ export class Scene3D {
       const intensity = Math.sin(Math.min(k, 1) * Math.PI);
       this.fog.far = THREE.MathUtils.lerp(this.fogFar, 150, intensity);
       const brown = new THREE.Color(0xb59b6a);
-      this.scene.background.lerp(brown, intensity * 0.6);
-      this.fog.color.lerp(brown, intensity * 0.6);
+      if (this.skyTop) { this.skyTop.lerp(brown, intensity * 0.6); this.skyBot.lerp(brown, intensity * 0.6); }
       if (k >= 1) this.disaster = null;
     } else if (d.type === 'quake') {
       const a = (1 - k) * 1.4;
@@ -1840,6 +1853,20 @@ export class Scene3D {
     }
   }
 
+  // Paint the current zenith->horizon colours into the sky gradient texture and
+  // match the fog to the horizon. Called once per frame after all sky tints.
+  _commitSky() {
+    if (!this._skyCtx) { this.fog?.color.copy(this.skyBot); return; }
+    const ctx = this._skyCtx, h = this._skyCanvas.height;
+    const mid = this.skyTop.clone().lerp(this.skyBot, 0.62);
+    const g = ctx.createLinearGradient(0, 0, 0, h);     // canvas top = screen top = zenith (flipY)
+    g.addColorStop(0, '#' + this.skyTop.getHexString());
+    g.addColorStop(0.6, '#' + mid.getHexString());
+    g.addColorStop(1, '#' + this.skyBot.getHexString());
+    ctx.fillStyle = g; ctx.fillRect(0, 0, this._skyCanvas.width, h);
+    this._skyTex.needsUpdate = true;
+    this.fog?.color.copy(this.skyBot);   // fog is created after the sky in setup
+  }
   // ---- day / night (driven by the in-game clock) ---------------------------
   advanceClock(days) { this.gameDays += days; this._pendingDays = (this._pendingDays || 0) + days; }
   // Freeze the living world (traffic, people, boats, sea shimmer, weather) while
@@ -1863,11 +1890,25 @@ export class Scene3D {
     this.sun.color.copy(sunCol).lerp(new THREE.Color(0x9fb6ff), this.nightFactor * 0.6);
     this.hemi.intensity = 0.10 + dayness * 0.8;
 
-    const night = new THREE.Color(0x0c1830), day = new THREE.Color(0x8ec5e8);
-    const sky = night.clone().lerp(day, dayness).lerp(new THREE.Color(0xf2935a), horizon * 0.6 * (1 - dayness * 0.3));
-    this.scene.background = sky;          // weather/haze may tint this in place
-    this.fog.color.copy(sky);
-    this.skyColor = sky.clone();
+    // --- sky gradient colours: zenith (top) and horizon (bottom) ---
+    const C = (h) => new THREE.Color(h);
+    this.skyTop = C(0x070d1e).lerp(C(0x3f86d8), dayness);   // night indigo -> day blue (zenith)
+    this.skyBot = C(0x131a30).lerp(C(0xb2d6ef), dayness);   // night -> pale day blue (horizon)
+    // Golden-hour / twilight wash as the sun nears the horizon: the band at the
+    // horizon glows orange (sun up) shifting to red->magenta->purple as it sinks,
+    // while the zenith goes pink->indigo. This paints a realistic sunrise/sunset.
+    if (horizon > 0) {
+      const e = THREE.MathUtils.clamp(elev / 0.28, -1, 1); // +1 just-risen(gold), 0 on horizon(orange), -1 twilight(purple)
+      const horizGlow = e >= 0
+        ? C(0xff6a34).lerp(C(0xffc26a), e)        // orange -> warm gold as it climbs
+        : C(0xff6a34).lerp(C(0x5e376f), -e);      // orange -> deep purple as it sinks
+      const zenGlow = C(0xd06ea0).lerp(C(0x36306e), Math.abs(e)); // pink -> indigo overhead
+      this.skyBot.lerp(horizGlow, horizon);
+      this.skyTop.lerp(zenGlow, horizon * 0.65);
+    }
+    this.skyColor = this.skyBot.clone();
+    // (scene.background gradient + fog colour are committed at the end of render,
+    //  after weather/haze have had a chance to tint skyTop/skyBot.)
 
     const glow = this.nightFactor;
     for (const m of ALL_MATS) {
@@ -2378,6 +2419,7 @@ export class Scene3D {
     this._updateBoats(adt);
     if (!this.frozen) this._updateAirstripPlanes(dt);   // taxiing/landing aircraft on drawn runways
     this._updateDisaster(adt);
+    this._commitSky();   // paint the gradient sky after day/night + weather + haze tints
     if (this._snapMarker && this._snapMarker.visible) { const s = 1 + 0.18 * Math.sin(performance.now() / 180); this._snapMarker.scale.set(s, s, 1); } // pulse the "start here" ring
     this._updateCamera();
     this.renderer.render(this.scene, this.camera);

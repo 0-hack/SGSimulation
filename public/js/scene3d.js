@@ -1082,7 +1082,10 @@ export class Scene3D {
       }
       const quick = performance.now() - this._downTime < 400;
       if (!this._moved && quick && this._pointers.size <= 1) {
-        if (this.roadMode && this.onGroundTap) {
+        if (this.pieceMode && this.onPiecePlace) {           // drop the ghosted Lego piece
+          this._piecePreview(p);                              // make sure the ghost matches the tap point
+          if (this._piecePts && this._piecePts.length >= 2) this.onPiecePlace(this._piecePts);
+        } else if (this.roadMode && this.onGroundTap) {
           const g = this._raycastGround(p);
           if (g) this.onGroundTap(g.x, g.z);
         } else {
@@ -1096,7 +1099,7 @@ export class Scene3D {
     };
     c.addEventListener('pointerup', end);
     c.addEventListener('pointercancel', end);
-    c.addEventListener('pointerleave', () => { if (this.ghost) this.ghost.visible = false; this._hideHoverTile(); this._clearSnapMarker(); this._hideDrawCursor(); });
+    c.addEventListener('pointerleave', () => { if (this.ghost) this.ghost.visible = false; this._hideHoverTile(); this._clearSnapMarker(); this._hideDrawCursor(); if (this.pieceMode) this.clearRoadPreview(); });
     c.addEventListener('wheel', (e) => {
       e.preventDefault();
       this.cam.radius = THREE.MathUtils.clamp(this.cam.radius * (e.deltaY < 0 ? 0.92 : 1.08), this.MIN_R, this.MAX_R);
@@ -1449,6 +1452,7 @@ export class Scene3D {
   }
 
   _hover(p) {
+    if (this.pieceMode) { this._lastHover = p; this._piecePreview(p); this._hideHoverTile(); return; } // placing a fixed Lego piece
     if (this.drawMode) {                                  // road/area drawing — fully free-style
       this._drawHover(p);                                 // free cursor at the exact point; snap ring only AT a road end
       this._hideHoverTile();                              // no grid tile (this isn't a per-cell placement)
@@ -1506,7 +1510,7 @@ export class Scene3D {
   // nearest railway/runway endpoint when drawing those. Radius scales with zoom.
   _drawSnap(x, z) {
     if (this._drawArea) return null;
-    const maxD = Math.max(3.5, this.cam.radius * 0.05);
+    const maxD = Math.min(10, Math.max(3.5, this.cam.radius * 0.05));
     if (this._drawRail) return this._nearestPolyEnd((this.state && this.state.railways) || [], x, z, maxD);
     if (this._drawAir) return this._nearestPolyEnd((this.state && this.state.airstrips) || [], x, z, maxD);
     let best = null;
@@ -1545,6 +1549,67 @@ export class Scene3D {
     this._drawCursor.visible = true;
   }
   _hideDrawCursor() { if (this._drawCursor) this._drawCursor.visible = false; }
+  // ---- Lego-style fixed road/rail/runway pieces ----------------------------
+  // Turn placement on/off. opts: { piece:'straight'|'curveL'|'curveR', kind, type,
+  // elevated, onPlace(pts) }. A ghost follows the cursor and snaps to route ends.
+  setPieceMode(on, opts) {
+    this.pieceMode = on ? (opts || {}) : null;
+    this.onPiecePlace = on && opts ? opts.onPlace : null;
+    if (this._pieceRot == null) this._pieceRot = 0;
+    if (!on) { this._piecePts = null; this.clearRoadPreview(); this._clearSnapMarker(); }
+  }
+  rotatePiece(d) { this._pieceRot = (this._pieceRot || 0) + d; if (this.pieceMode && this._lastHover) this._piecePreview(this._lastHover); }
+  // Build a fixed piece polyline anchored at `anchor` (an end or the cursor),
+  // heading `h` (radians, dir = cos h, sin h in x/z). Fixed length / radius.
+  _buildPiece(piece, anchor, h) {
+    const L = 22, R = 22, ANG = Math.PI / 2, N = 12;
+    const dx = Math.cos(h), dz = Math.sin(h);
+    if (piece === 'straight') return [{ x: anchor.x, z: anchor.z }, { x: anchor.x + dx * L, z: anchor.z + dz * L }];
+    const left = piece === 'curveL';
+    const px = left ? -dz : dz, pz = left ? dx : -dx;            // toward the turn centre
+    const cx = anchor.x + px * R, cz = anchor.z + pz * R;
+    const phi0 = Math.atan2(anchor.z - cz, anchor.x - cx), sweep = left ? ANG : -ANG;
+    const pts = [];
+    for (let i = 0; i <= N; i++) { const phi = phi0 + sweep * (i / N); pts.push({ x: cx + Math.cos(phi) * R, z: cz + Math.sin(phi) * R }); }
+    return pts;
+  }
+  // Nearest existing route END to (x,z) for the active piece kind, with the OUTWARD
+  // heading there so a piece continues the line (chaining like track).
+  _pieceSnap(x, z) {
+    const maxD = Math.min(10, Math.max(4, this.cam.radius * 0.06)), kind = this.pieceMode.kind;
+    if (kind === 'rail' || kind === 'air') {
+      const list = kind === 'rail' ? ((this.state && this.state.railways) || []) : ((this.state && this.state.airstrips) || []);
+      let best = null;
+      for (const entry of list) {
+        const poly = Array.isArray(entry) ? entry : (entry && entry.pts); if (!poly || poly.length < 2) continue;
+        for (const [e, q] of [[poly[0], poly[1]], [poly[poly.length - 1], poly[poly.length - 2]]]) {
+          const d = Math.hypot(e[0] - x, e[1] - z); if (d < (best ? best.d : maxD)) best = { x: e[0], z: e[1], d, heading: Math.atan2(e[1] - q[1], e[0] - q[0]) };
+        }
+      }
+      return best;
+    }
+    let best = null, bi = -1;
+    for (let i = 0; i < (this.navNodes || []).length; i++) { const n = this.navNodes[i]; const d = Math.hypot(n.x - x, n.z - z); if (d < (best ? best.d : maxD)) { best = { x: n.x, z: n.z, d }; bi = i; } }
+    if (best) best.heading = this._nodeOutHeading(bi);
+    return best;
+  }
+  _nodeOutHeading(ni) {
+    for (let e = 0; e < this.edgePts.length; e++) {
+      const pts = this.edgePts[e]; if (!pts || pts.length < 2) continue;
+      if (this.edgeN1[e] === ni) return Math.atan2(pts[0].z - pts[1].z, pts[0].x - pts[1].x);
+      if (this.edgeN2[e] === ni) { const m = pts.length - 1; return Math.atan2(pts[m].z - pts[m - 1].z, pts[m].x - pts[m - 1].x); }
+    }
+    return this._pieceRot || 0;
+  }
+  _piecePreview(p) {
+    const g = this._raycastGround(p); if (!g) { this._piecePts = null; this.clearRoadPreview(); this._clearSnapMarker(); return; }
+    const snap = this._pieceSnap(g.x, g.z);
+    const anchor = snap ? { x: snap.x, z: snap.z } : { x: g.x, z: g.z };
+    const heading = snap ? snap.heading : (this._pieceRot || 0);
+    this._piecePts = this._buildPiece(this.pieceMode.piece, anchor, heading);
+    this._renderDrawPreview(this._piecePts.map((q) => ({ x: q.x, z: q.z })));
+    if (snap) this._showSnapMarker(snap.x, snap.z); else this._clearSnapMarker();
+  }
   _showSnapMarker(x, z) {
     if (!this._snapMarker) {
       const ring = new THREE.Mesh(new THREE.TorusGeometry(2.8, 0.55, 8, 24), toon(0xffd24a));

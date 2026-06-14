@@ -120,7 +120,7 @@ export function renderBuild(state, ctx) {
 function renderRoads(ctx) {
   const r = ctx.road;
   const wrap = el('div', 'roads-ui');
-  wrap.append(el('p', 'policy-desc', 'Pick a mode — 🚗 Road, 🚆 Railway, or ✈️ Airport — then ✏️ Draw onto the map: drag to trace the route and it builds with a construction crew. (Straight/Curve/Roundabout/Erase also work for roads.)'));
+  wrap.append(el('p', 'policy-desc', 'Pick a mode — 🚗 Road, 🚆 Railway, or ✈️ Airport — then either ✏️ Draw a freeform route, or pick a fixed PIECE (Straight / Curve) and tap to drop it. Pieces snap onto route ends so you can click them together like track, and they auto-connect for traffic.'));
 
   // mode: road (cars) / railway (trains) / airport (planes)
   const typeRow = el('div', 'road-types');
@@ -143,15 +143,19 @@ function renderRoads(ctx) {
   // tools — ✏️ Draw (freehand) leads
   wrap.append(el('div', 'section-title', 'Tool'));
   const tools = el('div', 'road-tools');
+  const onLand = !ROAD_TYPES[r.type]?.rail && !ROAD_TYPES[r.type]?.air;   // roundabout is road-only
   const defs = [
-    ['draw', '✏️ Draw'], ['straight', 'Straight'], ['curve', 'Curve'], ['roundabout', 'Roundabout'], ['erase', 'Erase'],
+    ['draw', '✏️ Draw'], ['straight', '▭ Straight'], ['curveL', '↰ Curve'], ['curveR', '↱ Curve'],
+    ...(onLand ? [['roundabout', 'Roundabout']] : []), ['erase', 'Erase'],
   ];
   for (const [id, label] of defs) {
+    const ico = ICONS[id] || (id.startsWith('curve') ? ICONS.curve : '');
     const b = el('button', 'road-tool' + (r.tool === id ? ' active' : ''),
-      `<span class="rt-ico">${ICONS[id] || ''}</span><span>${label}</span>`);
+      `<span class="rt-ico">${ico}</span><span>${label}</span>`);
     b.onclick = () => ctx.selectRoadTool(id);
     tools.append(b);
   }
+  wrap.append(el('p', 'tool-hint', 'Tip: pieces snap onto an existing end (yellow ring) to chain. ↻ Rotate or press R to aim a free piece.'));
   wrap.append(tools);
   return wrap;
 }

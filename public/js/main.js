@@ -3,7 +3,7 @@ import {
   newGame, tickDay, build, demolish, canPlace, derive,
   resolveEvent, snapshot, refreshSummary, ensureGrid, issueBond, repayDebt,
   reclaimLand, reclaimCost, buildingCost, priced,
-  routeLength, addRoadwork, smoothRoute,
+  routeLength, addRoadwork, smoothRoute, spliceRoad,
   polyArea, reclaimAreaCost, addReclaimArea,
 } from './engine.js';
 import { Scene3D } from './scene3d.js';
@@ -75,7 +75,7 @@ const G = {
 // ===========================================================================
 // Boot
 // ===========================================================================
-const BUILD = '2026-06-14 · smart-connect-junctions v20';
+const BUILD = '2026-06-14 · lego-road-pieces v21';
 function boot() {
   console.log('%cSG build: ' + BUILD, 'font-weight:bold;color:#11a39c');
   const vEl = document.querySelector('.version'); if (vEl) vEl.textContent = 'build ' + BUILD;
@@ -97,6 +97,7 @@ function boot() {
 
   // exit "place mode": the ✕ Done button or the Esc key
   $('tool-banner-stop').onclick = cancelTools;
+  $('tool-banner-rotate').onclick = () => { if (G.view && G.view.pieceMode) G.view.rotatePiece(Math.PI / 4); };
   // commit bar for a drawn route / reclaim area
   $('dc-build').onclick = () => { const fn = G._pendingCommit; closeCommit(false); if (fn) fn(); };
   $('dc-cancel').onclick = () => { closeCommit(true); toast('Discarded.'); };
@@ -105,6 +106,7 @@ function boot() {
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
     if (e.key === 'Escape' && G._pendingCommit) { closeCommit(true); toast('Discarded.'); e.preventDefault(); return; }
     if (e.key === 'Escape' && activeTool()) { cancelTools(); toast('Stopped placing.'); e.preventDefault(); }
+    if ((e.key === 'r' || e.key === 'R') && G.view && G.view.pieceMode) { G.view.rotatePiece(Math.PI / 4); e.preventDefault(); }
   });
 
   // speed buttons + adjustable rate chip
@@ -406,6 +408,8 @@ function updateToolBanner() {
   if (!el) return;
   if (!t) { el.classList.add('hidden'); return; }
   $('tool-banner-text').innerHTML = `<b>⏸ Edit mode · ${t.label}</b><br><span class="tb-sub">Time paused — tap the map to ${t.verb}</span>`;
+  const piece = G.road.tool === 'straight' || G.road.tool === 'curveL' || G.road.tool === 'curveR';
+  $('tool-banner-rotate').classList.toggle('hidden', !piece);   // rotate only matters for free piece placement
   el.classList.remove('hidden');
 }
 // Enter/leave edit mode: pause time (the loop checks G.editPause), freeze the
@@ -428,40 +432,6 @@ function cancelTools() {
 // ===========================================================================
 // Freeform road drawing
 // ===========================================================================
-const SNAP = 4; // world units to snap onto an existing node
-function roadNodeAt(roads, x, z) {
-  for (let i = 0; i < roads.nodes.length; i++) {
-    const n = roads.nodes[i];
-    if (Math.hypot(n.x - x, n.z - z) < SNAP) return i;
-  }
-  roads.nodes.push({ x, z, y: 0 });
-  return roads.nodes.length - 1;
-}
-function addRoadEdge(a, b, ctrl) {
-  const t = G.road.type;
-  const T = ROAD_TYPES[t];
-  // Railways & runways are NOT part of the car-road graph. Route the Straight/Curve
-  // tools through the same drawn-route flow as freehand so they store correctly as
-  // a railway/runway AND get the flat-ground / tunnel prompts (was: silently pushed
-  // as a mis-typed road edge with no prompt — the cause of "no tunnel option").
-  if (T.rail || T.air) {
-    let pts;
-    if (ctrl) { pts = []; for (let i = 0; i <= 14; i++) { const s = i / 14, it = 1 - s; pts.push({ x: it * it * a.x + 2 * it * s * ctrl.x + s * s * b.x, z: it * it * a.z + 2 * it * s * ctrl.z + s * s * b.z }); } }
-    else pts = [{ x: a.x, z: a.z }, { x: b.x, z: b.z }];
-    onRouteDrawn(pts);
-    return true;
-  }
-  const cost = priced(T.cost, G.state);
-  if (G.state.treasury < cost) { toast(`Need ${money(cost)} for this ${T.name.toLowerCase()}.`); return false; }
-  const roads = G.state.roads;
-  const ai = roadNodeAt(roads, a.x, a.z), bi = roadNodeAt(roads, b.x, b.z);
-  if (ai === bi) return false;
-  roads.edges.push({ a: ai, b: bi, ctrl: ctrl || null, type: t, lanes: T.lanes, elevated: G.road.elevated });
-  G.state.treasury -= cost;
-  G.view.rebuildRoadNet();
-  afterEdit();
-  return true;
-}
 function placeRoundabout(x, z) {
   const T = ROAD_TYPES[G.road.type];
   if (T.rail || T.air) { toast('Roundabouts are for roads only — use Draw for a railway/runway.'); return; }
@@ -509,19 +479,6 @@ function onGroundTap(x, z) {
   if (G.view.isReserveAt(x, z)) { toast('Protected Central Catchment — no roads on the reservoir.'); return; }
   if (G.view.isRiverAt(x, z)) { toast('That\'s the Singapore River — roads can\'t cross open water.'); return; }
   if (R.tool === 'roundabout') { placeRoundabout(x, z); return; }
-  const pt = { x, z };
-  if (R.tool === 'straight') {
-    R.pending.push(pt);
-    if (R.pending.length >= 2) {
-      if (addRoadEdge(R.pending[0], pt)) R.pending = [pt]; else R.pending = [];
-    }
-  } else if (R.tool === 'curve') {
-    R.pending.push(pt);
-    if (R.pending.length >= 3) {
-      if (addRoadEdge(R.pending[0], pt, R.pending[1])) R.pending = [pt]; else R.pending = [];
-    }
-  }
-  G.view.showRoadPreview(R.pending, R.type, R.elevated);
 }
 // A route drawn freehand on the map → show a commit prompt with the cost; on
 // confirm, queue it for construction (cost reflects the live price/inflation).
@@ -618,10 +575,30 @@ function closeCommit(discard) {
   if (discard && G.view) G.view.clearRoadPreview();
 }
 function applyRoadToolMode() {
-  const draw = G.road.tool === 'draw';
-  G.view.setRoadMode(!!G.road.tool && !draw);
-  if (draw) { const T = ROAD_TYPES[G.road.type] || ROAD_TYPES.road; G.view.setDrawMode(true, onRouteDrawn, { type: G.road.type, elevated: G.road.elevated, rail: !!T.rail, air: !!T.air }); }
+  const tool = G.road.tool;
+  const T = ROAD_TYPES[G.road.type] || ROAD_TYPES.road;
+  const piece = tool === 'straight' || tool === 'curveL' || tool === 'curveR';   // fixed Lego pieces
+  if (tool === 'draw') G.view.setDrawMode(true, onRouteDrawn, { type: G.road.type, elevated: G.road.elevated, rail: !!T.rail, air: !!T.air });
   else G.view.setDrawMode(false);
+  G.view.setPieceMode(piece, piece ? { piece: tool, kind: T.air ? 'air' : T.rail ? 'rail' : 'road', type: G.road.type, elevated: G.road.elevated, onPlace: onPiecePlace } : null);
+  G.view.setRoadMode(!!tool && !piece && tool !== 'draw');   // roundabout / erase use plain taps
+}
+// Drop a fixed Lego piece (straight/curve) instantly so it can be chained: charge,
+// build, and auto-connect (roads splice into the graph; rail/runway append).
+function onPiecePlace(pts) {
+  if (G.readOnly || !pts || pts.length < 2) return;
+  const T = ROAD_TYPES[G.road.type] || ROAD_TYPES.road;
+  for (const p of pts) {
+    if (G.view.isReserveAt(p.x, p.z)) { toast('Protected Central Catchment — not there.'); return; }
+    if (G.view.isRiverAt(p.x, p.z)) { toast('Can\'t cross open water.'); return; }
+  }
+  const cost = priced(T.cost * Math.max(1, routeLength(pts) / 20), G.state);
+  if (G.state.treasury < cost) { toast(`Need ${money(cost)} for this ${T.name.toLowerCase()} piece.`); return; }
+  G.state.treasury -= cost;
+  if (T.air) { (G.state.airstrips || (G.state.airstrips = [])).push(pts.map((p) => [p.x, p.z])); G.view._buildPlayerAirstrips(G.state); }
+  else if (T.rail) { (G.state.railways || (G.state.railways = [])).push({ pts: pts.map((p) => [p.x, p.z]), tunnel: false }); G.view._buildPlayerRailways(G.state); }
+  else { spliceRoad(G.state.roads, pts.map((p) => ({ x: p.x, z: p.z })), { type: G.road.type, lanes: T.lanes, elevated: G.road.elevated }); G.view.rebuildRoadNet(); }
+  afterEdit();
 }
 function selectRoadTool(tool) {
   G.road.tool = G.road.tool === tool ? null : tool;
@@ -634,8 +611,9 @@ function selectRoadTool(tool) {
   if (G.road.tool) {
     closeSheet();
     const msg = { draw: 'Draw freely by dragging. Hover an existing road end to continue from it. Release to see the cost, then Build.',
-      straight: 'Tap two points to lay a straight road (keep tapping to chain).',
-      curve: 'Tap start, a curve point, then the end. Chains on.',
+      straight: 'Tap to drop a straight piece. It snaps onto route ends — keep tapping to click them together. R / ↻ to rotate.',
+      curveL: 'Tap to drop a left-curve piece. Snaps onto ends to chain. R / ↻ to rotate.',
+      curveR: 'Tap to drop a right-curve piece. Snaps onto ends to chain. R / ↻ to rotate.',
       roundabout: 'Tap to place a roundabout.', erase: 'Tap a road to remove it.' }[G.road.tool];
     toast(msg + ' ✕ Done / Esc to stop.');
   }

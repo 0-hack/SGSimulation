@@ -63,7 +63,9 @@ export function newGame({ name = 'New Singapore', owner = 'Anonymous' } = {}) {
     pendingEvent: null,       // event awaiting player choice
     roads: { nodes: [], edges: [], islands: [] }, // player-drawn freeform road network
     reclaimed: [],            // [x,y] sea cells reclaimed into finished, buildable land
-    reclaiming: [],           // { x,y,total,left } cells still rising from the sea
+    reclaiming: [],           // { x,y,total,left } cells still rising from the sea (legacy per-cell)
+    reclaimAreas: [],         // { poly:[[x,z]..], cells:[[x,y]..], total,left } free-shaped areas rising
+    reclaimedAreas: [],       // { poly, cells } finished free-shaped reclaimed land (smooth coastline)
     economy: { inflation: 0.02, priceIndex: 1, currency: 1 }, // dynamic inflation / price level / SGD strength
     constructing: [],         // [x,y] cells whose building is still being built
     landmarks: [],            // 3D-designed landmarks saved into THIS world (per-player; for build menu + visitors)
@@ -118,6 +120,8 @@ export function ensureGrid(state) {
   if (!state.roads) state.roads = { nodes: [], edges: [], islands: [] };
   if (!Array.isArray(state.reclaimed)) state.reclaimed = [];
   if (!Array.isArray(state.reclaiming)) state.reclaiming = [];
+  if (!Array.isArray(state.reclaimAreas)) state.reclaimAreas = [];
+  if (!Array.isArray(state.reclaimedAreas)) state.reclaimedAreas = [];
   if (!Array.isArray(state.landmarks)) state.landmarks = [];
   if (!Array.isArray(state.roadworks)) state.roadworks = [];
   if (!Array.isArray(state.railways)) state.railways = [];
@@ -216,6 +220,22 @@ export const RECLAIM = { basePerCell: 2, days: 8 }; // $M/cell at 1965 prices (�
 export function reclaimCost(state, cells = 1) {
   return Math.round(RECLAIM.basePerCell * priceIndex(state) * cells * 10) / 10;
 }
+// Area of a polygon of [x,z] points (shoelace), in world units².
+export function polyArea(poly) {
+  let a = 0; for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) a += (poly[j][0] + poly[i][0]) * (poly[j][1] - poly[i][1]);
+  return Math.abs(a) / 2;
+}
+// Reclamation priced by the actual LAND AREA drawn (a cell is 10×10 = 100 units²).
+export function reclaimAreaCost(state, areaUnits) {
+  return Math.round(RECLAIM.basePerCell * priceIndex(state) * (areaUnits / 100) * 10) / 10;
+}
+// Queue a free-shaped reclamation. `cells` are the grid cells it covers (for
+// buildability); `poly` is the smooth outline (for rendering). Charges by area.
+export function addReclaimArea(state, { poly, cells, total }) {
+  if (!Array.isArray(state.reclaimAreas)) state.reclaimAreas = [];
+  state.reclaimAreas.push({ poly, cells, total: total || RECLAIM.days, left: total || RECLAIM.days });
+  return { ok: true };
+}
 // ---------------------------------------------------------------------------
 // Inflation & prices — a live price level (priceIndex) compounds from a dynamic
 // inflation rate that responds to how well the player runs the economy. All
@@ -284,16 +304,22 @@ export function reclaimLand(state, x, y) {
   state.treasury -= cost;
   return { ok: true, cost };
 }
-// Advance every active reclamation by a day; finished cells become real land.
+// Advance every active reclamation by a day; finished cells/areas become real land.
 function advanceReclamation(state) {
-  if (!state.reclaiming || !state.reclaiming.length) return;
-  const still = [];
-  for (const r of state.reclaiming) {
-    r.left -= 1;
-    if (r.left <= 0) { (state.reclaimed || (state.reclaimed = [])).push([r.x, r.y]); }
-    else still.push(r);
+  if (state.reclaiming && state.reclaiming.length) {            // legacy per-cell
+    const still = [];
+    for (const r of state.reclaiming) { r.left -= 1; if (r.left <= 0) (state.reclaimed || (state.reclaimed = [])).push([r.x, r.y]); else still.push(r); }
+    state.reclaiming = still;
   }
-  state.reclaiming = still;
+  if (state.reclaimAreas && state.reclaimAreas.length) {        // free-shaped areas
+    const still = [];
+    for (const a of state.reclaimAreas) {
+      a.left -= 1;
+      if (a.left <= 0) (state.reclaimedAreas || (state.reclaimedAreas = [])).push({ poly: a.poly, cells: a.cells });
+      else still.push(a);
+    }
+    state.reclaimAreas = still;
+  }
 }
 
 // ---------------------------------------------------------------------------

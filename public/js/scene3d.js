@@ -1227,6 +1227,58 @@ export class Scene3D {
       this._removeReclaimSite(id);
       this._finishReclaim(x, y);
     }
+    this._syncReclaimAreas(state);             // free-shaped (polygon) reclamations
+  }
+  // Render free-shaped reclamations: finished areas as smooth permanent land, and
+  // in-progress areas as the same shape rising from the sea with works buoys.
+  _syncReclaimAreas(state) {
+    if (!this.reclaimedMask) return;
+    if (this._reclaimAreaGroup) this.scene.remove(this._reclaimAreaGroup);
+    const grp = new THREE.Group(); this.scene.add(grp); this._reclaimAreaGroup = grp;
+    const markCells = (cells, mask) => { for (const [x, y] of (cells || [])) if (x >= 0 && y >= 0 && x < N && y < N) { mask[y][x] = true; const g = this.natureCells?.get(x + ',' + y); if (g) g.visible = false; } };
+    for (const a of (state.reclaimedAreas || [])) {                 // finished -> permanent buildable land
+      const m = this._reclaimLandMesh(a.poly); m.position.y = 0.05; grp.add(m);
+      markCells(a.cells, this.reclaimedMask);
+    }
+    for (const a of (state.reclaimAreas || [])) {                   // rising
+      const prog = Math.max(0, Math.min(1, 1 - a.left / Math.max(1, a.total)));
+      const m = this._reclaimLandMesh(a.poly); m.position.y = -2.6 + prog * 2.65; grp.add(m);
+      markCells(a.cells, this.reclaimingMask);
+      this._addReclaimBuoys(grp, a.poly);
+    }
+  }
+  // A smooth landmass from a world polygon: green top + sandy skirt down to the
+  // seabed + a beach line, so the reclaimed coastline follows the freehand shape.
+  _reclaimLandMesh(poly) {
+    const grp = new THREE.Group();
+    const shape = new THREE.Shape(poly.map(([x, z]) => new THREE.Vector2(x, -z)));
+    const topGeo = new THREE.ShapeGeometry(shape); topGeo.rotateX(-Math.PI / 2);
+    const top = new THREE.Mesh(topGeo, toon(0x86a85f)); top.receiveShadow = true; grp.add(top);
+    const D = 2.6, v = [], idx = [];                                 // skirt walls (solid land edge)
+    for (let i = 0; i < poly.length; i++) {
+      const a = poly[i], b = poly[(i + 1) % poly.length], n = v.length / 3;
+      v.push(a[0], 0, a[1], b[0], 0, b[1], b[0], -D, b[1], a[0], -D, a[1]);
+      idx.push(n, n + 1, n + 2, n, n + 2, n + 3);
+    }
+    const sg = new THREE.BufferGeometry(); sg.setAttribute('position', new THREE.Float32BufferAttribute(v, 3)); sg.setIndex(idx); sg.computeVertexNormals();
+    grp.add(new THREE.Mesh(sg, toon(0xb9a06f, { side: THREE.DoubleSide })));
+    const loop = poly.map(([x, z]) => new THREE.Vector3(x, 0, z)); loop.push(loop[0]);
+    this._addRibbon(grp, loop, 1.4, 0xded2a6, 0.07);                 // sandy beach edge
+    return grp;
+  }
+  _addReclaimBuoys(group, poly) {
+    let dist = 0, nextAt = 0; const SPACE = 14;
+    for (let i = 0; i < poly.length; i++) {
+      const a = poly[i], b = poly[(i + 1) % poly.length], segL = Math.hypot(b[0] - a[0], b[1] - a[1]) || 0.0001;
+      const ux = (b[0] - a[0]) / segL, uz = (b[1] - a[1]) / segL;
+      while (nextAt <= dist + segL) {
+        const s = nextAt - dist, x = a[0] + ux * s, z = a[1] + uz * s;
+        const post = new THREE.Mesh(new THREE.BoxGeometry(0.32, 1.5, 0.32), toon(0xff7a3c)); post.position.set(x, 0.75, z); group.add(post);
+        const light = new THREE.Mesh(new THREE.SphereGeometry(0.3, 8, 6), new THREE.MeshBasicMaterial({ color: 0xffd23a, transparent: true })); light.position.set(x, 1.7, z); light.userData.blink = true; group.add(light);
+        nextAt += SPACE;
+      }
+      dist += segL;
+    }
   }
   _startReclaimSite(x, y) {
     this._ensureReclaimGroups();
@@ -1416,7 +1468,7 @@ export class Scene3D {
     const g = new THREE.Group(); this.scene.add(g); this._drawPreviewGroup = g;
     if (!pts || !pts.length) return;
     // smooth the live stroke so the preview matches the finished road (same zoom-scaled tolerance)
-    const sm = smoothRoute(pts, Math.max(4, this.cam.radius * 0.05));
+    const sm = smoothRoute(pts, Math.min(12, Math.max(4, this.cam.radius * 0.05)));
     const V = sm.map((q) => new THREE.Vector3(q.x, this._roadY(q.x, q.z), q.z));
     // a terrain-FOLLOWING ribbon (per-point height) — a flat ribbon would sink
     // under the hills and vanish, which is why the preview wasn't visible before.
@@ -2618,7 +2670,7 @@ export class Scene3D {
     if (this._snapMarker && this._snapMarker.visible) { const s = 1 + 0.18 * Math.sin(performance.now() / 180); this._snapMarker.scale.set(s, s, 1); } // pulse the "start here" ring
     // blink the amber construction-barrier lights (roadworks + reclamation)
     const blink = 0.25 + 0.75 * (0.5 + 0.5 * Math.sin(performance.now() / 170));
-    for (const grp of [this._roadworksGroup, this.reclaimSiteGroup]) {
+    for (const grp of [this._roadworksGroup, this.reclaimSiteGroup, this._reclaimAreaGroup]) {
       if (grp) grp.traverse((o) => { if (o.userData && o.userData.blink) o.material.opacity = blink; });
     }
     if (this._tileHi && this._tileHi.visible) { const k = 0.34 + 0.18 * (0.5 + 0.5 * Math.sin(performance.now() / 320)); this._tileHiFill.opacity = k; } // gentle tile pulse

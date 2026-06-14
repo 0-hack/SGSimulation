@@ -4,6 +4,7 @@ import {
   resolveEvent, snapshot, refreshSummary, ensureGrid, issueBond, repayDebt,
   reclaimLand, reclaimCost, buildingCost, priced,
   routeLength, addRoadwork, smoothRoute,
+  polyArea, reclaimAreaCost, addReclaimArea,
 } from './engine.js';
 import { Scene3D } from './scene3d.js';
 import { api } from './api.js';
@@ -66,7 +67,7 @@ const G = {
 // ===========================================================================
 // Boot
 // ===========================================================================
-const BUILD = '2026-06-14 · free-style-cursor v8';
+const BUILD = '2026-06-14 · free-shape-reclaim v9';
 function boot() {
   console.log('%cSG build: ' + BUILD, 'font-weight:bold;color:#11a39c');
   const vEl = document.querySelector('.version'); if (vEl) vEl.textContent = 'build ' + BUILD;
@@ -318,20 +319,26 @@ function promptDayRate() {
 // and on release we fill every reclaimable cell inside it — after a cost prompt.
 function onReclaimArea(pts) {
   if (G.readOnly) { G.view.clearRoadPreview(); return; }
-  const cells = (pts && pts.length >= 3) ? G.view._cellsInArea(pts) : [];
-  if (!cells.length) { G.view.clearRoadPreview(); toast('Draw a loop over open sea to reclaim it. 🏝️'); return; }
-  const cost = reclaimCost(G.state, cells.length); // priced with the live inflation/price index
+  if (!pts || pts.length < 3) { G.view.clearRoadPreview(); toast('Draw a loop over open sea to reclaim it. 🏝️'); return; }
+  // smooth the freehand loop into a clean shape; the land takes this exact form
+  const poly = smoothRoute(pts, Math.min(12, Math.max(4, (G.view?.cam?.radius || 70) * 0.05))).map((q) => [q.x, q.z]);
+  const cells = G.view._cellsInArea(poly.map(([x, z]) => ({ x, z })));
+  if (!cells.length) { G.view.clearRoadPreview(); toast('That loop encloses no open sea — draw it around the water. 🏝️'); return; }
+  const area = polyArea(poly);                       // world units² of land
+  const cost = reclaimAreaCost(G.state, area);       // priced by area + live inflation
+  const total = Math.max(4, Math.min(30, Math.round(Math.sqrt(area) / 4))); // bigger fills take longer to rise
   promptCommit({
     title: '🏝 Reclaim land',
-    detail: `${cells.length} tiles · ${money(cost)}`,
+    detail: `${Math.round(area / 100)} tiles (${(area / 1e6).toFixed(2)} km²) · ${money(cost)}`,
     confirm: 'Reclaim',
     onConfirm: () => {
-      let n = 0;
-      for (const [x, y] of cells) { const r = reclaimLand(G.state, x, y); if (r.ok) n++; else break; } // reclaimLand charges per tile at current prices
+      if (G.state.treasury < cost) { toast(`Need ${money(cost)} to reclaim this area.`); return; }
+      G.state.treasury -= cost;
+      addReclaimArea(G.state, { poly, cells, total });
       G.view.syncReclamation(G.state);
       G.view.clearRoadPreview();
       afterEdit();
-      toast(n < cells.length ? `Reclaimed ${n}/${cells.length} tiles — ran out of funds.` : `Reclaiming ${n} tiles. 🏝️`);
+      toast(`Reclaiming new land (${money(cost)}). 🏝️ It rises over ${total} days.`);
     },
   });
 }
@@ -516,7 +523,7 @@ function onRouteDrawn(pts) {
       const total = Math.max(8, Math.min(80, Math.round(len / 8)));
       G.state.treasury -= cost;
       const kind = T.air ? 'air' : T.rail ? 'rail' : 'road';
-      const route = smoothRoute(pts, Math.max(4, (G.view?.cam?.radius || 70) * 0.05));   // straight stays straight, real bends flow (tolerance scales with zoom)
+      const route = smoothRoute(pts, Math.min(12, Math.max(4, (G.view?.cam?.radius || 70) * 0.05)));   // straight stays straight, real bends flow (tolerance scales with zoom)
       addRoadwork(G.state, { pts: route, kind, type: G.road.type, lanes: T.lanes, elevated: G.road.elevated, total });
       G.view.syncRoadworks(G.state);
       G.view.clearRoadPreview();

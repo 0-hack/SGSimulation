@@ -2435,7 +2435,9 @@ export class Scene3D {
       const prof = this._railProfile(poly.map(([x, z]) => ({ x, z })), 1.4);
       if (prof.dense.length >= 2) rails.push(prof);
     }
-    this._railCarves = rails.map((r) => ({ poly: r.dense, halfW: 2.6, blend: 6, floors: r.grade }));
+    // full-cut half-width must exceed a terrain-mesh cell (~6.7 m) so the coarse mesh
+    // is actually cut to grade right under the track (else a hill covers the rails)
+    this._railCarves = rails.map((r) => ({ poly: r.dense, halfW: 7, blend: 6, floors: r.grade }));
     this._syncCarves();   // cut the hills down to each railway's grade (+ airport pads)
     for (const r of rails) {
       const pts = r.dense.map((q, i) => new THREE.Vector3(q.x, r.grade[i], q.z));
@@ -2660,7 +2662,21 @@ export class Scene3D {
 
   // Sample an edge's centre-line into world points (with bridge elevation).
   // ground height a road sits on: follow the terrain so it doesn't sink into hills
-  _roadY(x, z) { return this._terrainHN(x / WORLD + 0.5, 0.5 - z / WORLD) + 0.28; }
+  // Height of the RENDERED terrain mesh at a world point — bilinear over the same
+  // 240-grid the mesh is built from, so roads/rails sit ON the visible surface
+  // instead of floating above it (the fine analytic height overshoots the coarse
+  // mesh on convex hills). Falls back to the analytic height outside the grid.
+  _meshY(x, z) {
+    const RES = 240, x0 = HEIGHTS_1966.x0, x1 = HEIGHTS_1966.x1, y0 = HEIGHTS_1966.y0, y1 = HEIGHTS_1966.y1;
+    const nx = x / WORLD + 0.5, ny = 0.5 - z / WORLD;
+    const fi = (nx - x0) / (x1 - x0) * RES, fj = (ny - y0) / (y1 - y0) * RES;
+    if (fi < 0 || fi >= RES || fj < 0 || fj >= RES) return this._terrainHN(nx, ny);
+    const i = Math.floor(fi), j = Math.floor(fj), tx = fi - i, tz = fj - j;
+    const hn = (gi, gj) => this._terrainHN(x0 + (x1 - x0) * gi / RES, y0 + (y1 - y0) * gj / RES);
+    const h0 = hn(i, j) * (1 - tx) + hn(i + 1, j) * tx, h1 = hn(i, j + 1) * (1 - tx) + hn(i + 1, j + 1) * tx;
+    return h0 * (1 - tz) + h1 * tz;
+  }
+  _roadY(x, z) { return this._meshY(x, z) + 0.12; }   // sit just on the rendered mesh
   _sampleEdge(roads, e) {
     // a traced or freehand-drawn road carries its own smoothed polyline
     if (e.poly && e.poly.length >= 2) {

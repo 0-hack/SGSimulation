@@ -38,6 +38,18 @@ try {
   ok(r.found && Math.abs(r.mean - r.target) < 0.06, `road width matches the fixed size (${r.mean?.toFixed(3)} m ≈ ${r.target?.toFixed(3)} m)`);
   ok(r.found && r.spread < 0.05, `width is CONSTANT through the bends (spread ${r.spread?.toFixed(3)} m, min ${r.min?.toFixed(3)} / max ${r.max?.toFixed(3)})`);
 
+  // a road on a hillside sits ON the rendered mesh (small constant lift, not the old
+  // analytic height that overshot the coarse mesh on convex hills and floated)
+  const grounded = await p.evaluate(()=>{
+    const v=window.__sgview;
+    let best=null;
+    for(let X=-150;X<=150;X+=10) for(let Z=-150;Z<=150;Z+=10){ const h=v._meshY(X,Z); const s=Math.abs(v._meshY(X+8,Z)-h)+Math.abs(v._meshY(X,Z+8)-h); if(h>5 && (!best||s>best.s)) best={X,Z,s}; }
+    if(!best) return { skip:true };
+    return { skip:false, gap: v._roadY(best.X,best.Z) - v._meshY(best.X,best.Z), slope:best.s };
+  });
+  ok(!grounded.skip, 'found a hillside to test road grounding');
+  ok(grounded.skip || (grounded.gap >= 0 && grounded.gap < 0.2), `road hugs the hill surface (sits only ${grounded.gap?.toFixed(3)} m above the mesh, not floating)`);
+
   ok(errs.length===0, 'no console/page errors'+(errs.length?': '+errs[0]:''));
 } catch(e){ fail++; console.error('  ✗ threw:', e.message, e.stack); }
 finally { await browser.close(); server.close(); }

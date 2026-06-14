@@ -2479,12 +2479,14 @@ export class Scene3D {
     this._clearNatureAlong(pts, 1.6);          // clear trees along the track
   }
   // Profile a railway against a straight grade between its endpoints: where the
-  // ground rises above that grade the line is "buried". A tunnel is only worth it
-  // (and only looks right) where the hill is TALLER than the tunnel itself, so we
-  // additionally mark `tunnelMask` = buried samples that belong to a hill whose peak
-  // rises above TUNNEL_MIN_HILL — shallow bumps stay surface track (ridden over).
+  // ground rises above that grade the line is "buried". A tunnel is only proposed
+  // through a GENUINE hill — tall enough to bury the tunnel AND with a steep face at
+  // the entry/exit so a portal seats cleanly into the hillside (a real-life tunnel).
+  // Gentle rises/slopes stay surface track (ridden over) and get no tunnel option.
   _railProfile(pts2d, halfW) {
-    const TUNNEL_MIN_HILL = 4.5;             // hill must clear the ~3 m portal + cover
+    const MIN_HILL = 8;      // the hill must peak this far above the line (well over the ~3 m portal)
+    const FACE_COVER = 3;    // ground must rise this much to seat a portal…
+    const FACE_RUN = 9;      // …within this horizontal distance → a steep hill FACE (not a gentle slope)
     const dense = this._resamplePoly(pts2d, 1.5);
     if (dense.length < 2) return { dense, grade: [], buried: [], tunnelMask: [], hasTunnel: false, buriedLen: 0, boreVolume: 0, maxAbove: 0, len: 0 };
     const arc = [0]; let len = 0;
@@ -2499,12 +2501,16 @@ export class Scene3D {
       if (a > maxAbove) maxAbove = a;
       buried.push(a > 1.0);                   // a metre or more above grade → inside the hill
     }
-    // promote only the buried runs whose hill peak clears the tunnel height
+    // promote a buried run to a tunnel only if it's a real hill: a tall peak AND a
+    // steep face at BOTH ends (rises to FACE_COVER within FACE_RUN), so the portals
+    // bed into the hillside instead of poking out of low/gently-sloping ground.
     const tunnelMask = new Array(dense.length).fill(false);
     for (let i = 0; i < dense.length;) {
       if (!buried[i]) { i++; continue; }
       let j = i, peak = 0; while (j < dense.length && buried[j]) { if (above[j] > peak) peak = above[j]; j++; }
-      if (peak > TUNNEL_MIN_HILL) for (let k = i; k < j; k++) tunnelMask[k] = true;
+      let entryRun = Infinity; for (let k = i; k < j; k++) if (above[k] >= FACE_COVER) { entryRun = arc[k] - arc[i]; break; }
+      let exitRun = Infinity; for (let k = j - 1; k >= i; k--) if (above[k] >= FACE_COVER) { exitRun = arc[j - 1] - arc[k]; break; }
+      if (peak > MIN_HILL && entryRun <= FACE_RUN && exitRun <= FACE_RUN) for (let k = i; k < j; k++) tunnelMask[k] = true;
       i = j;
     }
     let buriedLen = 0, boreVolume = 0;

@@ -32,21 +32,21 @@ try {
   ok(probe.maxAbove > 3, `rail profile detects high ground (max ${probe.maxAbove.toFixed(1)} m above grade)`);
   ok(probe.boreVolume > 0 && probe.buriedCount > 0, `bore volume + buried length computed (${Math.round(probe.boreVolume)} m³, ${Math.round(probe.buriedLen)} m)`);
 
-  // a tall hill IS tunnelable; a small bump (shorter than the tunnel) is NOT —
-  // so the portals can never poke out of low ground.
+  // a tall steep hill IS tunnelable; a LOW hill (under the hill-height threshold) is
+  // NOT — so portals can never poke out of low / gently-sloping ground.
   const gating = await p.evaluate((b)=>{
     const v=window.__sgview;
     const strip=(X,Z,d)=>{ const pts=[]; for(let i=-7;i<=7;i++) pts.push({x:X+d[0]*i*4, z:Z+d[1]*i*4}); return pts; };
     const tall=v._railProfile(strip(b.X,b.Z,b.dir),2.0);
-    // find a shallow bump: a strip whose terrain rises a little above grade but under the tunnel height
-    let bump=null;
-    for(let X=-120;X<=120 && !bump;X+=8) for(let Z=-120;Z<=120 && !bump;Z+=8) for(const d of [[1,0],[0,1]]){
-      const pr=v._railProfile(strip(X,Z,d),2.0); if(pr.maxAbove>1.6 && pr.maxAbove<4.0){ bump={maxAbove:pr.maxAbove, hasTunnel:pr.hasTunnel}; break; }
+    // find a LOW hill: terrain rises clearly above grade but below the hill threshold
+    let low=null;
+    for(let X=-120;X<=120 && !low;X+=6) for(let Z=-120;Z<=120 && !low;Z+=6) for(const d of [[1,0],[0,1]]){
+      const pr=v._railProfile(strip(X,Z,d),2.0); if(pr.maxAbove>1.6 && pr.maxAbove<7.5){ low={maxAbove:pr.maxAbove, hasTunnel:pr.hasTunnel}; break; }
     }
-    return { tallHas:tall.hasTunnel, bump };
+    return { tallHas:tall.hasTunnel, low };
   }, probe.best);
-  ok(gating.tallHas, 'a tall hill offers a tunnel (hasTunnel)');
-  ok(!gating.bump || gating.bump.hasTunnel===false, `a small bump (${gating.bump?gating.bump.maxAbove.toFixed(1):'n/a'} m, under the tunnel height) offers NO tunnel`);
+  ok(gating.tallHas, 'a tall steep hill offers a tunnel (hasTunnel)');
+  ok(!gating.low || gating.low.hasTunnel===false, `a low hill (${gating.low?gating.low.maxAbove.toFixed(1):'n/a'} m, under the hill threshold) offers NO tunnel`);
 
   // Draw a railway over the hill and confirm the two-choice commit bar.
   await p.click('.tool[data-panel="build"]'); await p.waitForSelector('.cat-tab');

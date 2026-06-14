@@ -8,7 +8,7 @@
     "start": "node server/server.js",
     "dev": "node --watch server/server.js",
     "test": "node server/test/smoke.test.js && node server/test/connect.test.js && node server/test/smooth.test.js",
-    "test:e2e": "node server/test/browser.test.js && node server/test/visit.test.js && node server/test/roads.test.js && node server/test/runway.test.js && node server/test/railtunnel.test.js && node server/test/tracematch.test.js && node server/test/roadsmooth.test.js && node server/test/connectui.test.js && node server/test/pieces.test.js && node server/test/editfix.test.js && node server/test/roadwidth.test.js",
+    "test:e2e": "node server/test/browser.test.js && node server/test/visit.test.js && node server/test/roads.test.js && node server/test/runway.test.js && node server/test/railgrade.test.js && node server/test/tracematch.test.js && node server/test/roadsmooth.test.js && node server/test/connectui.test.js && node server/test/pieces.test.js && node server/test/editfix.test.js && node server/test/roadwidth.test.js",
     "test:all": "npm test && npm run test:e2e",
     "shots": "node server/test/shots.mjs"
   },

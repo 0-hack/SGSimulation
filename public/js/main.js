@@ -42,11 +42,11 @@ const SPEED_MULT = [0, 1, 5, 20];   // pause / play / fast / hyper multipliers
 const SUN_CAP = 0.5;                // max in-game days/sec the day-night cycle visibly advances
 // Airport runways must be on flat ground. If the chosen strip varies in height by
 // more than FLAT_TOL, the player pays EARTHWORK_RATE per m³ of earth moved to level it.
+// Airport runways AND railways are laid on flat/graded ground: if the strip crosses
+// terrain that varies by more than FLAT_TOL, the player pays EARTHWORK_RATE per m³ to
+// cut the hills (and fill the dips) to a smooth line.
 const FLAT_TOL = 1.5;               // metres of height variation tolerated before clearing/flattening is required
 const EARTHWORK_RATE = 0.012;       // $M per m³ of cut/fill (× live price index)
-// A railway crossing a hill TALLER than the tunnel (see _railProfile.hasTunnel) can
-// be bored through instead of climbing over; the bore costs TUNNEL_RATE per m³ of rock.
-const TUNNEL_RATE = 0.02;           // $M per m³ of rock bored (× live price index)
 const currentRate = () => G.dayRate * SPEED_MULT[G.speed];
 
 const $ = (id) => document.getElementById(id);
@@ -74,7 +74,7 @@ const G = {
 // ===========================================================================
 // Boot
 // ===========================================================================
-const BUILD = '2026-06-14 · tunnel-real-hill-only v29';
+const BUILD = '2026-06-14 · railway-grade-not-tunnel v30';
 function boot() {
   console.log('%cSG build: ' + BUILD, 'font-weight:bold;color:#11a39c');
   const vEl = document.querySelector('.version'); if (vEl) vEl.textContent = 'build ' + BUILD;
@@ -522,26 +522,18 @@ function onRouteDrawn(pts, opts = {}) {
       return;
     }
   }
-  // RAILWAY through high ground: offer a choice — run the line OVER the hill
-  // (cheaper, follows the slope) or bore a TUNNEL straight through it (costs
-  // extra for the excavation). Only offered when the route actually crosses a hill.
+  // RAILWAY across uneven ground: like a runway, the line is laid on a SMOOTH grade
+  // and any hill in the way is CUT down (dips filled) so the track never climbs at
+  // silly angles. Charge the earthworks and show the breakdown (same as the runway).
   if (T.rail) {
-    const prof = G.view._railProfile(route.map((p) => ({ x: p.x, z: p.z })), 2.0);
-    // only offer a tunnel through a hill TALLER than the tunnel (else the portals
-    // would poke out of low ground and look wrong) — prof.hasTunnel checks this.
-    if (prof.hasTunnel) {
-      const bore = priced(TUNNEL_RATE * prof.boreVolume, G.state);
-      const tTotal = cost + bore, tDays = days + Math.min(90, Math.round(prof.boreVolume / 300));
-      detail = `${Math.round(len)} m railway — ⛰ crosses a hill (up to ${prof.maxAbove.toFixed(1)} m above grade).<br>` +
-        `⛰ <b>Over</b> the hill ${money(cost)}<br>` +
-        `🚇 <b>Tunnel</b> through — bore ${Math.round(prof.boreVolume).toLocaleString()} m³ (~${Math.round(prof.buriedLen)} m): track ${money(cost)} + ${money(bore)} = <b>${money(tTotal)}</b>`;
-      promptCommit({
-        title, detail,
-        actions: [
-          { label: `⛰ Over ${money(cost)}`, onPick: () => doBuild(cost, days, false, 'laying track over the hill') },
-          { label: `🚇 Tunnel ${money(tTotal)}`, primary: true, onPick: () => doBuild(tTotal, tDays, true, 'boring the tunnel & laying track') },
-        ],
-      });
+    const prof = G.view._railProfile(route.map((p) => ({ x: p.x, z: p.z })), 1.4);
+    if (prof.cutMax > FLAT_TOL) {
+      const fcost = priced(EARTHWORK_RATE * prof.earthVolume, G.state);
+      total += fcost; days += Math.min(60, Math.round(prof.earthVolume / 350));
+      const where = prof.cutMax > 6 ? 'a hill' : 'a slope';
+      detail = `${Math.round(len)} m railway — ⛰ crosses ${where} (rises ${prof.cutMax.toFixed(1)} m). The line is graded & the hill cut flat for a smooth track.<br>` +
+        `🚆 Track ${money(cost)}<br>🏗 Clear &amp; flatten ${Math.round(prof.earthVolume).toLocaleString()} m³ ${money(fcost)}<br><b>Total ${money(total)}</b>`;
+      promptCommit({ title, detail, confirm: 'Build', onConfirm: () => doBuild(total, days, false, 'cutting the hill flat & laying track') });
       return;
     }
   }

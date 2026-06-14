@@ -23,22 +23,22 @@ try {
   await p.evaluate(()=>[...document.querySelectorAll('.road-types .opt')].find(b=>/Railway/.test(b.textContent))?.click());
   await p.evaluate(()=>[...document.querySelectorAll('.road-tool')].find(b=>/Draw/.test(b.textContent))?.click());
   await new Promise(r=>setTimeout(r,150));
-  const tunnel = await p.evaluate(()=>{
+  const rail = await p.evaluate(()=>{
     const v=window.__sgview;
-    // find the strip crossing a summit (max terrain above the straight grade)
+    // find the strip crossing a hill (most terrain above the straight grade)
     const dirs=[[1,0],[0,1],[0.7,0.7],[0.7,-0.7]];
     const strip=(X,Z,d)=>{ const pts=[]; for(let i=-7;i<=7;i++) pts.push({x:X+d[0]*i*4, z:Z+d[1]*i*4}); return pts; };
     let best=null;
-    for(let X=-120;X<=120;X+=10) for(let Z=-120;Z<=120;Z+=10) for(const d of dirs){ const pr=v._railProfile(strip(X,Z,d),2.0); if(!best||pr.maxAbove>best.maxAbove) best={X,Z,d,maxAbove:pr.maxAbove}; }
+    for(let X=-120;X<=120;X+=10) for(let Z=-120;Z<=120;Z+=10) for(const d of dirs){ const pr=v._railProfile(strip(X,Z,d),1.4); if(!best||pr.cutMax>best.cutMax) best={X,Z,d,cutMax:pr.cutMax}; }
     // a railway drawn over the hill (Draw tool → onStroke → onRouteDrawn)
     const pts=[]; for(let i=-7;i<=7;i++) pts.push({x:best.X+best.d[0]*i*4, z:best.Z+best.d[1]*i*4, y:0});
     v.onStroke && v.onStroke(pts);
-    const acts=[...document.querySelectorAll('#dc-actions button')].filter(x=>!x.classList.contains('hidden'));
-    return { maxAbove:best.maxAbove, open:!document.getElementById('draw-confirm').classList.contains('hidden'),
-             labels:acts.map(x=>x.textContent.trim()), detail:document.getElementById('dc-detail').innerHTML };
+    const dyn=[...document.querySelectorAll('#dc-actions .dc-dyn')];
+    return { cutMax:best.cutMax, open:!document.getElementById('draw-confirm').classList.contains('hidden'),
+             dyn:dyn.length, detail:document.getElementById('dc-detail').innerHTML };
   });
-  ok(tunnel.maxAbove>2.5, `found a hill strip for the railway (${tunnel.maxAbove.toFixed(1)} m above grade)`);
-  ok(tunnel.open && tunnel.labels.some(l=>/Over/.test(l)) && tunnel.labels.some(l=>/Tunnel/.test(l)), `drawn railway over a hill offers Over + Tunnel: ${JSON.stringify(tunnel.labels)}`);
+  ok(rail.cutMax>2.5, `found a hill strip for the railway (${rail.cutMax.toFixed(1)} m above grade)`);
+  ok(rail.open && rail.dyn===0 && /flatten|🏗|graded/.test(rail.detail), `drawn railway over a hill shows the flatten breakdown (single Build): ${rail.detail.replace(/<[^>]+>/g,' ').slice(0,70)}`);
 
   // (2) snap detection for the draw cursor.
   const snap = await p.evaluate(()=>{

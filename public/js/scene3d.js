@@ -525,13 +525,13 @@ export class Scene3D {
     if (this._carves) { const wx = (nx - 0.5) * WORLD, wz = (0.5 - ny) * WORLD; H = this._applyCarves(wx, wz, H); }
     return H;
   }
-  // Combine railway-tunnel + airport-pad carves and re-cut the terrain mesh when
-  // they change. (Tunnel recesses are managed by the railway builder, flat runway
+  // Combine railway-cutting + airport-pad carves and re-cut the terrain mesh when
+  // they change. (Railway gradings are managed by the railway builder, flat runway
   // pads by the airstrip builder; both feed this so they coexist.)
   _syncCarves() {
     const all = [...(this._railCarves || []), ...(this._airCarves || [])];
     this._carves = all.length ? all : null;
-    const sig = all.map((c) => c.poly ? `f${c.floor.toFixed(1)}:${c.poly.length}:${c.poly[0].x.toFixed(0)},${c.poly[0].z.toFixed(0)}` : `${c.x.toFixed(1)},${c.z.toFixed(1)},${c.tx.toFixed(2)}`).join('|');
+    const sig = all.map((c) => `${c.poly.length}:${c.poly[0].x.toFixed(0)},${c.poly[0].z.toFixed(0)}:${(c.floors ? c.floors[0] : c.floor).toFixed(1)}:${(c.floors ? c.floors[c.floors.length - 1] : c.floor).toFixed(1)}`).join('|');
     if (sig !== (this._carveSig ?? '')) { this._carveSig = sig; this._buildTerrain(); }
   }
   // Lower the heightfield inside carves so linear features sit IN the ground rather
@@ -545,13 +545,14 @@ export class Scene3D {
     for (let k = 0; k < cs.length; k++) {
       const c = cs[k];
       let floor, kk;
-      if (c.poly) {                                   // flat pad following a runway centreline
-        let d = Infinity;
-        for (let i = 0; i < c.poly.length - 1; i++) { const pr = this._projOnSeg(x, z, c.poly[i], c.poly[i + 1]); if (pr.d < d) d = pr.d; }
+      if (c.poly) {                                   // a pad/cutting following a centreline
+        let d = Infinity, bestSeg = 0, bestT = 0;
+        for (let i = 0; i < c.poly.length - 1; i++) { const pr = this._projOnSeg(x, z, c.poly[i], c.poly[i + 1]); if (pr.d < d) { d = pr.d; bestSeg = i; bestT = pr.t; } }
         if (d > c.halfW + c.blend) continue;
-        floor = c.floor;
+        // floor is one flat level (runway pad) or a per-vertex grade (railway cutting)
+        floor = c.floors ? c.floors[bestSeg] + (c.floors[bestSeg + 1] - c.floors[bestSeg]) * bestT : c.floor;
         kk = d <= c.halfW ? 0 : (d - c.halfW) / c.blend;
-      } else {                                        // tunnel approach cutting (capsule)
+      } else {                                        // (legacy capsule carve — unused)
         const dx = x - c.x, dz = z - c.z, u = dx * c.tx + dz * c.tz;
         if (u < -c.outset || u > c.length) continue;
         const lat = Math.abs(dx * c.nx + dz * c.nz);
@@ -1562,7 +1563,7 @@ export class Scene3D {
   _projOnSeg(x, z, a, b) {
     const dx = b.x - a.x, dz = b.z - a.z, l2 = dx * dx + dz * dz || 1;
     let t = ((x - a.x) * dx + (z - a.z) * dz) / l2; t = Math.max(0, Math.min(1, t));
-    const px = a.x + dx * t, pz = a.z + dz * t; return { x: px, z: pz, d: Math.hypot(x - px, z - pz) };
+    const px = a.x + dx * t, pz = a.z + dz * t; return { x: px, z: pz, t, d: Math.hypot(x - px, z - pz) };
   }
   // A small free cursor that sits exactly where you point on the terrain (no grid).
   _updateDrawCursor(g) {
@@ -2422,40 +2423,45 @@ export class Scene3D {
   _buildPlayerRailways(state) {
     if (this._pRailGroup) this.scene.remove(this._pRailGroup);
     const g = new THREE.Group(); this.scene.add(g); this._pRailGroup = g;
-    // Profile tunnels against the RAW hill (ignore existing carves) so the mouths
-    // are stable, then carve a recess at each mouth before re-cutting the terrain.
+    // Like a runway, a railway is laid on a SMOOTH graded line (the straight grade
+    // between its endpoints). Any hill in the way is CUT down to that line and dips
+    // are filled, so the track never climbs at silly angles. Profile against the RAW
+    // ground first (bypass existing carves), then carve the corridor to the grade.
     this._carves = null;
-    const surfaces = [], tunnels = [];
+    const rails = [];
     for (const entry of ((state && state.railways) || [])) {
-      // entries are legacy [[x,z],…] arrays or new { pts:[[x,z],…], tunnel } objects
-      const poly = Array.isArray(entry) ? entry : (entry && entry.pts);
+      const poly = Array.isArray(entry) ? entry : (entry && entry.pts);   // legacy arrays or { pts, … }
       if (!poly || poly.length < 2) continue;
-      if (!Array.isArray(entry) && entry.tunnel) tunnels.push(this._railProfile(poly.map(([x, z]) => ({ x, z })), 2.0));
-      else surfaces.push(poly);
+      const prof = this._railProfile(poly.map(([x, z]) => ({ x, z })), 1.4);
+      if (prof.dense.length >= 2) rails.push(prof);
     }
-    const carves = [];
-    for (const prof of tunnels) {
-      const { dense, grade } = prof;
-      // cut an OPEN APPROACH CUTTING from each open mouth down to its portal seat in
-      // the hill body: floor stays at grade right up to the portal (flatLen), then
-      // ramps back to natural just past it so the hill closes over the bore.
-      for (const mo of this._tunnelMouths(prof)) {
-        const m = dense[mo.openIdx], pp = dense[mo.portalIdx];
-        let tx = pp.x - m.x, tz = pp.z - m.z, l = Math.hypot(tx, tz);
-        if (l < 0.5) { const into = dense[Math.max(0, Math.min(dense.length - 1, mo.portalIdx + mo.dir))]; tx = into.x - pp.x; tz = into.z - pp.z; l = Math.hypot(tx, tz) || 1; }
-        tx /= l; tz /= l;
-        const flatLen = l + 3;
-        carves.push({ x: m.x, z: m.z, tx, tz, nx: -tz, nz: tx, length: flatLen + 12, flatLen, halfW: 5.5, blend: 11, floor: grade[mo.openIdx] - 0.6, outset: 9 });
+    this._railCarves = rails.map((r) => ({ poly: r.dense, halfW: 2.6, blend: 6, floors: r.grade }));
+    this._syncCarves();   // cut the hills down to each railway's grade (+ airport pads)
+    for (const r of rails) {
+      const pts = r.dense.map((q, i) => new THREE.Vector3(q.x, r.grade[i], q.z));
+      this._railEmbankment(g, r);            // fill embankment under the track over any dip
+      this._railTrack(g, pts);               // ballast + sleepers + rails on the smooth grade
+    }
+  }
+  // A fill embankment under the track wherever the graded line sits above the (now
+  // cut) ground — a skirt from the ballast edge down to the terrain on each side.
+  _railEmbankment(g, prof) {
+    const { dense, grade } = prof, HW = 1.7;
+    let any = false;
+    for (let i = 0; i < dense.length; i++) if (grade[i] - this._roadY(dense[i].x, dense[i].z) > 0.4) { any = true; break; }
+    if (!any) return;                        // nothing to fill (level / cutting only)
+    const nrm = dense.map((p, i) => { const a = dense[Math.max(0, i - 1)], b = dense[Math.min(dense.length - 1, i + 1)]; let tx = b.x - a.x, tz = b.z - a.z; const l = Math.hypot(tx, tz) || 1; return [-tz / l, tx / l]; });
+    for (const sgn of [-1, 1]) {
+      const v = [], idx = [];
+      for (let i = 0; i < dense.length; i++) {
+        const ex = dense[i].x + nrm[i][0] * HW * sgn, ez = dense[i].z + nrm[i][1] * HW * sgn;
+        const top = grade[i] + 0.1, bot = Math.min(top - 0.02, this._roadY(ex, ez) - 0.1);
+        v.push(ex, top, ez, ex, bot, ez);
       }
+      for (let i = 0; i < dense.length - 1; i++) { const a = i * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+      const sg = new THREE.BufferGeometry(); sg.setAttribute('position', new THREE.Float32BufferAttribute(v, 3)); sg.setIndex(idx); sg.computeVertexNormals();
+      const m = new THREE.Mesh(sg, toon(0x6e6457, { side: THREE.DoubleSide })); m.receiveShadow = true; g.add(m);
     }
-    this._railCarves = carves;
-    this._syncCarves();   // combine with airport pads + re-cut the hill mesh
-    // Render: surface track follows the (now carved) terrain; tunnels use their profile.
-    for (const poly of surfaces) {
-      const dense = this._resamplePoly(poly.map(([x, z]) => ({ x, z })), 1.4);     // even spacing for clean ties & rails
-      this._railTrack(g, dense.map((q) => new THREE.Vector3(q.x, this._roadY(q.x, q.z), q.z)));
-    }
-    for (const prof of tunnels) this._buildRailTunnel(g, prof);
   }
   // Lay ballast, sleepers and rails along a polyline of Vector3 points (already at
   // the desired height). Shared by surface track and the open mouths of tunnels.
@@ -2478,116 +2484,24 @@ export class Scene3D {
     }
     this._clearNatureAlong(pts, 1.6);          // clear trees along the track
   }
-  // Profile a railway against a straight grade between its endpoints: where the
-  // ground rises above that grade the line is "buried". A tunnel is only proposed
-  // through a GENUINE hill — tall enough to bury the tunnel AND with a steep face at
-  // the entry/exit so a portal seats cleanly into the hillside (a real-life tunnel).
-  // Gentle rises/slopes stay surface track (ridden over) and get no tunnel option.
+  // Grade a railway onto the straight line between its endpoints, and measure the
+  // earth that must be moved (hills cut down, dips filled) to that smooth grade.
   _railProfile(pts2d, halfW) {
-    const MIN_HILL = 8;      // the hill must peak this far above the line (well over the ~3 m portal)
-    const FACE_COVER = 3;    // ground must rise this much to seat a portal…
-    const FACE_RUN = 9;      // …within this horizontal distance → a steep hill FACE (not a gentle slope)
-    const dense = this._resamplePoly(pts2d, 1.5);
-    if (dense.length < 2) return { dense, grade: [], buried: [], tunnelMask: [], hasTunnel: false, buriedLen: 0, boreVolume: 0, maxAbove: 0, len: 0 };
+    const dense = this._resamplePoly(pts2d, 1.4);
+    if (dense.length < 2) return { dense, grade: [], above: [], earthVolume: 0, cutMax: 0, len: 0 };
     const arc = [0]; let len = 0;
     for (let i = 1; i < dense.length; i++) { len += Math.hypot(dense[i].x - dense[i - 1].x, dense[i].z - dense[i - 1].z); arc.push(len); }
     const y0 = this._roadY(dense[0].x, dense[0].z), y1 = this._roadY(dense[dense.length - 1].x, dense[dense.length - 1].z);
-    const width = (halfW || 2) * 2;
-    const grade = [], buried = [], above = []; let maxAbove = 0;
+    const width = (halfW || 1.5) * 2;
+    const grade = [], above = []; let cutMax = 0, earthVolume = 0;
     for (let i = 0; i < dense.length; i++) {
-      const gY = len ? y0 + (y1 - y0) * (arc[i] / len) : y0;
+      const gY = len ? y0 + (y1 - y0) * (arc[i] / len) : y0;     // a smooth, even gradient
       grade.push(gY);
       const a = this._roadY(dense[i].x, dense[i].z) - gY; above.push(a);
-      if (a > maxAbove) maxAbove = a;
-      buried.push(a > 1.0);                   // a metre or more above grade → inside the hill
+      if (a > cutMax) cutMax = a;                                // tallest hill above the line
+      earthVolume += Math.abs(a) * (i ? arc[i] - arc[i - 1] : 0) * width;   // cut (a>0) + fill (a<0)
     }
-    // promote a buried run to a tunnel only if it's a real hill: a tall peak AND a
-    // steep face at BOTH ends (rises to FACE_COVER within FACE_RUN), so the portals
-    // bed into the hillside instead of poking out of low/gently-sloping ground.
-    const tunnelMask = new Array(dense.length).fill(false);
-    for (let i = 0; i < dense.length;) {
-      if (!buried[i]) { i++; continue; }
-      let j = i, peak = 0; while (j < dense.length && buried[j]) { if (above[j] > peak) peak = above[j]; j++; }
-      let entryRun = Infinity; for (let k = i; k < j; k++) if (above[k] >= FACE_COVER) { entryRun = arc[k] - arc[i]; break; }
-      let exitRun = Infinity; for (let k = j - 1; k >= i; k--) if (above[k] >= FACE_COVER) { exitRun = arc[j - 1] - arc[k]; break; }
-      if (peak > MIN_HILL && entryRun <= FACE_RUN && exitRun <= FACE_RUN) for (let k = i; k < j; k++) tunnelMask[k] = true;
-      i = j;
-    }
-    let buriedLen = 0, boreVolume = 0;
-    for (let i = 1; i < dense.length; i++) if (tunnelMask[i]) { const segLen = arc[i] - arc[i - 1]; buriedLen += segLen; boreVolume += Math.max(0, above[i]) * segLen * width; }
-    return { dense, grade, buried, above, tunnelMask, hasTunnel: tunnelMask.some(Boolean), buriedLen, boreVolume, maxAbove, len };
-  }
-  // For each open↔tunnel boundary, march INTO the hill until the ground rises enough
-  // to seat the portal (terrain ≥ grade + PORTAL_COVER) — so portals are built into
-  // the HILL BODY, not poking out of the low mouth. Returns the open + portal indices.
-  _tunnelMouths(prof) {
-    const { dense, above, tunnelMask } = prof;
-    if (!dense || dense.length < 2) return [];
-    const PORTAL_COVER = 3.0, MAX_APPROACH = 28;
-    const seg = (a, b) => { let d = 0, lo = Math.min(a, b), hi = Math.max(a, b); for (let k = lo + 1; k <= hi; k++) d += Math.hypot(dense[k].x - dense[k - 1].x, dense[k].z - dense[k - 1].z); return d; };
-    const mouths = [];
-    for (let i = 1; i < dense.length; i++) {
-      if (tunnelMask[i] === tunnelMask[i - 1]) continue;
-      const entering = tunnelMask[i], openIdx = entering ? i - 1 : i, dir = entering ? 1 : -1;
-      let pIdx = entering ? i : i - 1;
-      for (let k = pIdx; k >= 0 && k < dense.length; k += dir) { pIdx = k; if (above[k] >= PORTAL_COVER || seg(openIdx, k) > MAX_APPROACH) break; }
-      mouths.push({ openIdx, portalIdx: pIdx, dir });
-    }
-    return mouths;
-  }
-  // Render a tunnelled railway from its profile: surface track on the approaches, an
-  // open cutting down to the portal seated in the hill body, then nothing inside.
-  _buildRailTunnel(g, prof) {
-    const { dense, grade, tunnelMask } = prof;
-    if (!dense || dense.length < 2) return;
-    const mouths = this._tunnelMouths(prof);
-    // the buried INTERIOR (between each entry & exit portal) is hidden inside the hill;
-    // the approach cuttings (open mouth → portal) stay visible at grade.
-    const hidden = new Array(dense.length).fill(false);
-    for (let m = 0; m + 1 < mouths.length; m += 2) {
-      const a = mouths[m].portalIdx, b = mouths[m + 1].portalIdx;
-      for (let k = Math.min(a, b) + 1; k < Math.max(a, b); k++) hidden[k] = true;
-    }
-    const yAt = (i) => tunnelMask[i] ? grade[i] : this._roadY(dense[i].x, dense[i].z);
-    let run = [];
-    const flush = () => { if (run.length >= 2) this._railTrack(g, run); run = []; };
-    for (let i = 0; i < dense.length; i++) {
-      if (hidden[i]) { flush(); continue; }
-      run.push(new THREE.Vector3(dense[i].x, yAt(i), dense[i].z));
-    }
-    flush();
-    // a portal at each seat, set into the hill body, facing back out along the track
-    for (const mo of mouths) {
-      const pp = dense[mo.portalIdx];
-      const into = dense[Math.max(0, Math.min(dense.length - 1, mo.portalIdx + mo.dir))];
-      this._addTunnelPortal(g, pp.x, grade[mo.portalIdx], pp.z, Math.atan2(into.x - pp.x, into.z - pp.z));
-    }
-  }
-  // A concrete tunnel portal at (x,y,z) — y is the track level — facing along the
-  // track (local +Z runs into the hill). Built to nestle into the carved recess:
-  // the headwall is rooted below grade and kept low, with splayed wing walls that
-  // retain the cutting on the open approach so it ties into the slope.
-  _addTunnelPortal(g, x, y, z, rotY) {
-    const grp = new THREE.Group();
-    const concrete = toon(0x8d897f);
-    const wall = new THREE.Mesh(new THREE.BoxGeometry(5.0, 3.6, 0.7), concrete);   // headwall, base sunk below grade
-    wall.position.set(0, 1.0, 0.55); wall.castShadow = true; wall.receiveShadow = true; grp.add(wall);
-    const cap = new THREE.Mesh(new THREE.BoxGeometry(5.4, 0.45, 0.95), concrete);  // cornice along the top
-    cap.position.set(0, 2.65, 0.6); grp.add(cap);
-    // The opening is a shallow recess in CLEAN CONCRETE GREY (a soft shadow) set
-    // flush into the headwall — never an exposed black hole sticking out, even
-    // where the hill is low or the ground was cut flat.
-    const ring = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.5, 1.5, 22, 1, true), toon(0x726d65, { side: THREE.DoubleSide }));
-    ring.rotation.x = Math.PI / 2; ring.position.set(0, 1.1, 1.0); grp.add(ring);     // tube recessed into +Z (the hill)
-    const back = new THREE.Mesh(new THREE.CircleGeometry(1.5, 22), toon(0x5d594f));    // back of the recess, a touch darker
-    back.rotation.y = Math.PI; back.position.set(0, 1.1, 1.72); grp.add(back);
-    const rim = new THREE.Mesh(new THREE.TorusGeometry(1.55, 0.16, 8, 24), concrete);  // concrete arch ring around the mouth
-    rim.position.set(0, 1.1, 0.28); grp.add(rim);
-    for (const sgn of [-1, 1]) {                   // wing walls splaying out into the cutting on the open side
-      const wing = new THREE.Mesh(new THREE.BoxGeometry(0.45, 2.4, 3.6), concrete);
-      wing.position.set(sgn * 2.3, 0.55, -1.0); wing.rotation.y = sgn * 0.34; wing.receiveShadow = true; grp.add(wing);
-    }
-    grp.position.set(x, y, z); grp.rotation.y = rotY; g.add(grp);
+    return { dense, grade, above, earthVolume, cutMax, len };
   }
   // Render finished player-drawn airport runways: a wide asphalt strip with pale
   // edge lines and a dashed centreline, and an airliner that taxis & takes off.

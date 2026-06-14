@@ -213,6 +213,12 @@ export class Scene3D {
     this.sun = sun;
     scene.add(sun);
 
+    // Visible sun & moon discs in the sky (positioned/faded by the day-night clock)
+    this.sunSprite = this._makeCelestial('sun', 220);
+    this.moonSprite = this._makeCelestial('moon', 185);
+    if (this.sunSprite) scene.add(this.sunSprite);
+    if (this.moonSprite) scene.add(this.moonSprite);
+
     // Sea
     const seaGeo = new THREE.PlaneGeometry(WORLD * 4, WORLD * 4, 1, 1);
     const seaMat = new THREE.MeshToonMaterial({ color: SEA_COLOR, transparent: true, opacity: 0.95, gradientMap: toonGradient() });
@@ -312,10 +318,10 @@ export class Scene3D {
       const tmat = new THREE.MeshToonMaterial({ color: 0x8a6b43, gradientMap: toonGradient() });
       for (const [dx, dz] of [[-5, -2], [4, 2], [0, 4]]) {
         // keep island trees the same small scale as the mainland's scattered trees
-        const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.2, 1.5, 8), tmat);
-        trunk.position.set(cx + dx, 0.75, cz + dz); trunk.castShadow = true; this.scene.add(trunk);
-        const fr = new THREE.Mesh(new THREE.SphereGeometry(1.0, 8, 6), gmat);
-        fr.position.set(cx + dx, 1.6, cz + dz); fr.scale.y = 0.5; fr.castShadow = true; this.scene.add(fr);
+        const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.15, 1.1, 8), tmat);
+        trunk.position.set(cx + dx, 0.55, cz + dz); trunk.castShadow = true; this.scene.add(trunk);
+        const fr = new THREE.Mesh(new THREE.SphereGeometry(0.72, 8, 6), gmat);
+        fr.position.set(cx + dx, 1.15, cz + dz); fr.scale.y = 0.5; fr.castShadow = true; this.scene.add(fr);
       }
     }
   }
@@ -1675,10 +1681,11 @@ export class Scene3D {
       ? (r < 0.32 ? 'car' : r < 0.44 ? 'taxi' : r < 0.64 ? 'trishaw' : r < 0.8 ? 'bike' : r < 0.92 ? 'lorry' : 'bus')
       : (r < 0.46 ? 'car' : r < 0.6 ? 'taxi' : r < 0.76 ? 'bike' : r < 0.88 ? 'lorry' : 'bus');
     const { mesh, len } = makeVehicle(kind, vintage);
+    const VS = 0.6; mesh.scale.setScalar(VS);   // smaller vehicles relative to roads/buildings
     this.scene.add(mesh);
     const speed = { car: 11, taxi: 11, bike: 14, trishaw: 5, lorry: 8, bus: 7.5 }[kind];
     const ag = {
-      mesh, len, group: 'veh', kind, edge: Math.floor(Math.random() * this.edgePts.length),
+      mesh, len: len * VS, group: 'veh', kind, edge: Math.floor(Math.random() * this.edgePts.length),
       dir: Math.random() < 0.5 ? 1 : -1, t: Math.random(), phase: 0,
       speed: speed * (0.85 + Math.random() * 0.3), animK: 1, laneIdx: Math.floor(Math.random() * 3),
     };
@@ -1727,6 +1734,7 @@ export class Scene3D {
       const kinds = ['man', 'woman', 'man', 'woman', 'child', 'elderly'];
       const kind = kinds[Math.floor(Math.random() * kinds.length)];
       const { mesh, len } = makePerson(kind);
+      mesh.scale.multiplyScalar(0.62);   // smaller pedestrians relative to the scene
       this.scene.add(mesh);
       const speed = { man: 2.7, woman: 2.5, child: 2.4, elderly: 1.6 }[kind];
       const ag = { mesh, len, group: 'ped', kind, edge: list[Math.floor(Math.random() * list.length)],
@@ -1867,6 +1875,30 @@ export class Scene3D {
     this._skyTex.needsUpdate = true;
     this.fog?.color.copy(this.skyBot);   // fog is created after the sky in setup
   }
+  // A sky disc (sun or moon) as a camera-facing sprite drawn behind the world.
+  _makeCelestial(type, size) {
+    if (typeof document === 'undefined') return null;
+    const cv = document.createElement('canvas'); cv.width = cv.height = 128;
+    const c = cv.getContext('2d'), g = c.createRadialGradient(64, 64, 2, 64, 64, 64);
+    if (type === 'sun') {
+      g.addColorStop(0, 'rgba(255,255,250,1)'); g.addColorStop(0.16, 'rgba(255,243,200,1)');
+      g.addColorStop(0.34, 'rgba(255,205,120,0.85)'); g.addColorStop(0.7, 'rgba(255,170,80,0.18)');
+      g.addColorStop(1, 'rgba(255,160,70,0)');
+      c.fillStyle = g; c.fillRect(0, 0, 128, 128);
+    } else {
+      g.addColorStop(0, 'rgba(247,249,255,1)'); g.addColorStop(0.42, 'rgba(222,230,244,1)');
+      g.addColorStop(0.5, 'rgba(206,216,234,0.95)'); g.addColorStop(0.62, 'rgba(200,210,230,0.18)');
+      g.addColorStop(1, 'rgba(200,210,230,0)');
+      c.fillStyle = g; c.fillRect(0, 0, 128, 128);
+      c.fillStyle = 'rgba(180,190,208,0.7)';           // a few soft craters
+      for (const [x, y, r] of [[52, 50, 7], [74, 60, 5], [60, 74, 4], [80, 44, 3]]) { c.beginPath(); c.arc(x, y, r, 0, 7); c.fill(); }
+    }
+    const tex = new THREE.CanvasTexture(cv);
+    if ('colorSpace' in tex) tex.colorSpace = THREE.SRGBColorSpace;
+    const m = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false, depthWrite: false, fog: false, opacity: 0 });
+    const sp = new THREE.Sprite(m); sp.renderOrder = -1; sp.scale.setScalar(size); sp.visible = false;
+    return sp;
+  }
   // ---- day / night (driven by the in-game clock) ---------------------------
   advanceClock(days) { this.gameDays += days; this._pendingDays = (this._pendingDays || 0) + days; }
   // Freeze the living world (traffic, people, boats, sea shimmer, weather) while
@@ -1889,6 +1921,26 @@ export class Scene3D {
     const sunCol = new THREE.Color(0xfff4e0).lerp(new THREE.Color(0xff8a3c), horizon * (1 - dayness * 0.5));
     this.sun.color.copy(sunCol).lerp(new THREE.Color(0x9fb6ff), this.nightFactor * 0.6);
     this.hemi.intensity = 0.10 + dayness * 0.8;
+
+    // Visible sun & moon discs. They sweep east->west with the clock but ride low
+    // in the sky (the camera looks down at the island, so a true overhead arc would
+    // sit above the frame) — this keeps them easy to spot. The directional LIGHT
+    // still uses the full arc above for realistic shadows.
+    const discDir = (turn, up) => {                 // turn: 0=sunrise(E) .. 0.5=noon .. 1=sunset(W)
+      const az = 2 * Math.PI * (turn - 0.25);
+      return new THREE.Vector3(Math.cos(az), 0.10 + 0.07 * Math.max(0, Math.sin(az)) + up, Math.sin(az)).normalize();
+    };
+    if (this.sunSprite) {
+      this.sunSprite.position.copy(discDir(this.timeOfDay, 0)).multiplyScalar(WORLD * 1.7);
+      this.sunSprite.material.color.copy(new THREE.Color(0xfff6e0).lerp(new THREE.Color(0xff7a2e), horizon));
+      this.sunSprite.material.opacity = THREE.MathUtils.clamp(dayness * 1.2, 0, 1);
+      this.sunSprite.visible = dayness > 0.03;
+    }
+    if (this.moonSprite) {                           // half-day offset: up when the sun is down
+      this.moonSprite.position.copy(discDir((this.timeOfDay + 0.5) % 1, 0)).multiplyScalar(WORLD * 1.7);
+      this.moonSprite.material.opacity = THREE.MathUtils.clamp(this.nightFactor * 1.1, 0, 0.96);
+      this.moonSprite.visible = this.nightFactor > 0.05;
+    }
 
     // --- sky gradient colours: zenith (top) and horizon (bottom) ---
     const C = (h) => new THREE.Color(h);
@@ -2140,7 +2192,7 @@ export class Scene3D {
         // graph of short segments, so we draw just a thin asphalt ribbon with a
         // pale shoulder — no per-joint stop lines or centre dashes (which would
         // clutter every tiny segment). The shared nodes keep it interconnected.
-        const hw = e.roadClass === 1 ? 0.34 : e.roadClass === 2 ? 0.22 : 0.16; // narrow, like the survey-map line widths (~36 m/unit)
+        const hw = ROAD_TYPES.road.renderHW || 0.34; // uniform width — every road matches the player-drawn ones
         ribbon(road, pts, hw, 0.04);     // dark asphalt only — no pale shoulder (avoids notch speckle)
         return;
       }
@@ -2558,7 +2610,7 @@ function roofKit(g, x, z, w, d, topY) {
   g.add(partBox(1.2, 0.7, 1.2, mat(0x7d848b), x + w * 0.18, topY + 0.6, z + d * 0.18));
 }
 function treeAt(g, x, z, s = 1) {
-  s *= 0.62;   // trees were oversized — scale every tree down uniformly
+  s *= 0.45;   // trees kept small relative to buildings
   g.add(cyl(0.18 * s, 0.22 * s, 1.4 * s, 0x7a5836, x, 0.7 * s, z));
   const f = new THREE.Mesh(new THREE.SphereGeometry(1.0 * s, 7, 6), mat(0x4f9e3f));
   f.position.set(x, 1.9 * s, z); f.scale.y = 1.2; f.castShadow = true; g.add(f);

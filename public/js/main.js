@@ -42,7 +42,7 @@ const SPEED_MULT = [0, 1, 5, 20];   // pause / play / fast / hyper multipliers
 const SUN_CAP = 0.5;                // max in-game days/sec the day-night cycle visibly advances
 // Airport runways must be on flat ground. If the chosen strip varies in height by
 // more than FLAT_TOL, the player pays EARTHWORK_RATE per m³ of earth moved to level it.
-const FLAT_TOL = 2;                 // metres of height variation tolerated before levelling is required
+const FLAT_TOL = 1.5;               // metres of height variation tolerated before clearing/flattening is required
 const EARTHWORK_RATE = 0.012;       // $M per m³ of cut/fill (× live price index)
 // A railway crossing ground more than RAIL_HILL_TOL above its grade can be bored
 // as a tunnel instead of climbing over; the bore costs TUNNEL_RATE per m³ of rock.
@@ -75,7 +75,7 @@ const G = {
 // ===========================================================================
 // Boot
 // ===========================================================================
-const BUILD = '2026-06-14 · clean-tunnel-portal v24';
+const BUILD = '2026-06-14 · runway-cut-breakdown v25';
 function boot() {
   console.log('%cSG build: ' + BUILD, 'font-weight:bold;color:#11a39c');
   const vEl = document.querySelector('.version'); if (vEl) vEl.textContent = 'build ' + BUILD;
@@ -508,16 +508,18 @@ function onRouteDrawn(pts, opts = {}) {
     cancelTools();   // confirming a build exits edit mode (clears the hovering ghost, resumes time)
   };
   const title = `${T.icon || ''} ${T.name}`;
-  // HARD RULE: an airport runway must sit on flat ground. If the chosen strip is
-  // uneven, the player pays for earthworks to level it (cost breakdown by volume).
+  // HARD RULE: an airport runway must sit on FLAT GROUND. While drawing, detect the
+  // terrain under the strip; if it crosses a slope/hill, break down the cost to clear
+  // & flatten it (cut the hill down to the low ground) so the runway lies flat.
   if (T.air) {
     const st = G.view._corridorTerrainStats(route, 4.5);
     if (st.range > FLAT_TOL) {
       const fcost = priced(EARTHWORK_RATE * st.volume, G.state);
       total += fcost; days += Math.min(60, Math.round(st.volume / 350));
-      detail = `${Math.round(len)} m runway — ⚠ ground is uneven (Δ${st.range.toFixed(1)} m).<br>` +
-        `🛬 Runway ${money(cost)}<br>🏗 Level ${Math.round(st.volume).toLocaleString()} m³ ${money(fcost)}<br><b>Total ${money(total)}</b>`;
-      promptCommit({ title, detail, confirm: 'Build', onConfirm: () => doBuild(total, days, false, 'levelling ground & building') });
+      const where = st.range > 6 ? 'a hill' : 'a slope';
+      detail = `${Math.round(len)} m runway — ⛰ drawn across ${where} (ground rises ${st.range.toFixed(1)} m). It will be cut down to flat ground.<br>` +
+        `🛬 Runway ${money(cost)}<br>🏗 Clear &amp; flatten the hill — ${Math.round(st.volume).toLocaleString()} m³ ${money(fcost)}<br><b>Total ${money(total)}</b>`;
+      promptCommit({ title, detail, confirm: 'Build', onConfirm: () => doBuild(total, days, false, 'clearing the hill flat & building') });
       return;
     }
   }

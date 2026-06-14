@@ -121,11 +121,15 @@ try {
       if(okp){ const range=hi-lo; if(!best||range>best.range) best={pts,range}; }
     }
     if(!best) return { skip:true };
+    let rawMin=1e9,rawMax=-1e9; for(const q of best.pts){ const h=v._roadY(q[0],q[1]); rawMin=Math.min(rawMin,h); rawMax=Math.max(rawMax,h); }
     v.state.airstrips=[best.pts]; v._buildPlayerAirstrips(v.state);
     let ymin=1e9,ymax=-1e9; for(const pt of v._airPlanes[0].pts){ ymin=Math.min(ymin,pt.y); ymax=Math.max(ymax,pt.y); }
-    return { terrainRange:best.range, deckVar: ymax-ymin };
+    const cutMid = v._roadY(best.pts[6][0], best.pts[6][1]);   // terrain at centre AFTER the cut
+    return { terrainRange:best.range, deckVar: ymax-ymin, deckY:ymin, rawMin, rawMax, cutMid };
   });
   ok(deck.skip || (deck.terrainRange > 3 && deck.deckVar < 0.01), `runway deck is level across a ${deck.terrainRange?.toFixed(1)} m slope (deck varies ${deck.deckVar?.toFixed(3)} m)`);
+  ok(deck.skip || (deck.deckY < deck.rawMin + 1.5), `runway sits on the GROUND (deck ${deck.deckY?.toFixed(1)} m ≈ low ground ${deck.rawMin?.toFixed(1)} m, not raised to ${deck.rawMax?.toFixed(1)} m)`);
+  ok(deck.skip || (deck.cutMid < deck.rawMax - 2), `the hill is CUT down under the runway (centre ${deck.rawMax?.toFixed(1)} m → ${deck.cutMid?.toFixed(1)} m)`);
 
   ok(errs.length===0, 'no console/page errors'+(errs.length?': '+errs[0]:''));
 } catch(e){ fail++; console.error('  ✗ threw:', e.message, e.stack); }

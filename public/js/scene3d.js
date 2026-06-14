@@ -969,7 +969,7 @@ export class Scene3D {
         const start = (this._snap && !this._drawArea) ? { x: this._snap.x, z: this._snap.z } : (g ? { x: g.x, z: g.z } : null);
         this._drawing = true; this._stroke = start ? [start] : [];
         this._lastSamplePx = pos(e);   // sample by screen distance (zoom-independent, like trace.html)
-        this._clearSnapMarker();   // hide the "start here" ring once the stroke begins
+        this._clearSnapMarker(); this._hideDrawCursor();   // hide hover markers once the stroke begins
         this._renderDrawPreview(this._stroke);
       }
       // paint mode: a drag fills cells (no camera orbit). Paint the first cell now.
@@ -1052,7 +1052,7 @@ export class Scene3D {
     };
     c.addEventListener('pointerup', end);
     c.addEventListener('pointercancel', end);
-    c.addEventListener('pointerleave', () => { if (this.ghost) this.ghost.visible = false; this._hideHoverTile(); this._clearSnapMarker(); });
+    c.addEventListener('pointerleave', () => { if (this.ghost) this.ghost.visible = false; this._hideHoverTile(); this._clearSnapMarker(); this._hideDrawCursor(); });
     c.addEventListener('wheel', (e) => {
       e.preventDefault();
       this.cam.radius = THREE.MathUtils.clamp(this.cam.radius * (e.deltaY < 0 ? 0.92 : 1.08), this.MIN_R, this.MAX_R);
@@ -1327,13 +1327,9 @@ export class Scene3D {
   }
 
   _hover(p) {
-    if (this.drawMode) {                                  // road/area drawing
-      this._drawHover(p);                                 // snap to existing road ends
-      const cell = this._raycastCell(p);
-      if (cell) {
-        const ok = this._drawArea ? this.canReclaim(cell.x, cell.y) : this.isLand(cell.x, cell.y);
-        this._updateHoverTile(cell.x, cell.y, ok);
-      } else this._hideHoverTile();
+    if (this.drawMode) {                                  // road/area drawing — fully free-style
+      this._drawHover(p);                                 // free cursor at the exact point; snap ring only AT a road end
+      this._hideHoverTile();                              // no grid tile (this isn't a per-cell placement)
       return;
     }
     if (!this.previewKey && !this.bulldoze) { if (this.ghost) this.ghost.visible = false; this._hideHoverTile(); return; }
@@ -1373,12 +1369,30 @@ export class Scene3D {
   // While in draw mode (and not mid-stroke), light up the nearest existing road
   // end the cursor/pencil is near, so the player knows they can start there.
   _drawHover(p) {
-    if (this._drawing || this._drawArea) { this._clearSnapMarker(); return; }
+    if (this._drawing) { this._clearSnapMarker(); this._hideDrawCursor(); return; }
     const g = this._raycastGround(p);
-    const s = g ? this._nearestSnap(g.x, g.z, 9) : null;
+    // Only SNAP when the cursor is genuinely on top of an existing road end (small
+    // radius), otherwise the cursor stays perfectly free. Area-draw never snaps.
+    const s = (g && !this._drawArea) ? this._nearestSnap(g.x, g.z, 3.5) : null;
     this._snap = s;
-    if (s) this._showSnapMarker(s.x, s.z); else this._clearSnapMarker();
+    if (s) { this._showSnapMarker(s.x, s.z); this._hideDrawCursor(); }
+    else { this._clearSnapMarker(); this._updateDrawCursor(g); }   // free-floating marker exactly under the cursor
   }
+  // A small free cursor that sits exactly where you point on the terrain (no grid).
+  _updateDrawCursor(g) {
+    if (!g) { this._hideDrawCursor(); return; }
+    if (!this._drawCursor) {
+      const grp = new THREE.Group();
+      const ring = new THREE.Mesh(new THREE.RingGeometry(0.7, 1.25, 28), new THREE.MeshBasicMaterial({ color: 0x2bd4c0, transparent: true, opacity: 0.95, side: THREE.DoubleSide, depthWrite: false, depthTest: false }));
+      ring.rotation.x = -Math.PI / 2; grp.add(ring);
+      const dot = new THREE.Mesh(new THREE.CircleGeometry(0.32, 16), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9, depthWrite: false, depthTest: false }));
+      dot.rotation.x = -Math.PI / 2; grp.add(dot);
+      grp.renderOrder = 6; this.scene.add(grp); this._drawCursor = grp;
+    }
+    this._drawCursor.position.set(g.x, this._roadY(g.x, g.z) + 0.12, g.z);
+    this._drawCursor.visible = true;
+  }
+  _hideDrawCursor() { if (this._drawCursor) this._drawCursor.visible = false; }
   _nearestSnap(x, z, maxD) {
     const nodes = this.navNodes || [];
     let best = null, bd = maxD;
@@ -2534,7 +2548,7 @@ export class Scene3D {
   clearRoadPreview() {
     if (this._roadPreview) { this.scene.remove(this._roadPreview); this._roadPreview = null; }
     if (this._drawPreviewGroup) { this.scene.remove(this._drawPreviewGroup); this._drawPreviewGroup = null; }
-    this._clearSnapMarker();
+    this._clearSnapMarker(); this._hideDrawCursor();
   }
 
   // ---- per-frame update + render -------------------------------------------

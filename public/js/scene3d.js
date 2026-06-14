@@ -2537,6 +2537,36 @@ export class Scene3D {
     return pts;
   }
 
+  // Walk the traced-road graph into maximal polylines: chains run through degree-2
+  // nodes and break at endpoints/junctions (degree ≠ 2), so each returned chain is
+  // a continuous run of node indices that can be drawn as one smooth ribbon.
+  _tracedChains(roads) {
+    const edges = roads.edges, adj = new Map();
+    const push = (n, rec) => { let a = adj.get(n); if (!a) { a = []; adj.set(n, a); } a.push(rec); };
+    const tracedIdx = [];
+    edges.forEach((e, i) => { if (!e.traced) return; tracedIdx.push(i); push(e.a, { e: i }); push(e.b, { e: i }); });
+    const deg = (n) => (adj.get(n)?.length || 0);
+    const used = new Set(), chains = [];
+    const walk = (start, ei) => {
+      const nodes = [start]; let cur = start, edge = ei;
+      while (true) {
+        used.add(edge);
+        const e = edges[edge], nxt = (e.a === cur) ? e.b : e.a;
+        nodes.push(nxt); cur = nxt;
+        if (deg(cur) !== 2) break;                       // stop at a junction or dead end
+        const nb = adj.get(cur).find((x) => !used.has(x.e));
+        if (!nb) break;
+        edge = nb.e;
+      }
+      return nodes;
+    };
+    for (const [node, list] of adj) {                    // start chains at endpoints/junctions
+      if (deg(node) === 2) continue;
+      for (const nb of list) if (!used.has(nb.e)) chains.push(walk(node, nb.e));
+    }
+    for (const i of tracedIdx) if (!used.has(i)) chains.push(walk(edges[i].a, i)); // leftover pure loops
+    return chains;
+  }
   // Render freeform road meshes (asphalt, pavement, lane markings, stop lines,
   // bridge pillars, roundabout islands) then rebuild the unified nav graph.
   rebuildRoadNet() {
@@ -2597,19 +2627,23 @@ export class Scene3D {
       idx.push(n, n + 1, n + 2, n, n + 2, n + 3);
     };
 
+    // Traced 1966 roads are a dense graph of short 2-point edges. Drawing each as
+    // its own quad leaves notches on the OUTSIDE of bends (each segment mitres to
+    // its own normal). Instead, chain connected traced edges into continuous
+    // polylines and draw each as ONE mitred ribbon — smooth like the trace map.
+    if (roads) {
+      const hw = ROAD_TYPES.road.renderHW || 0.34; // uniform width — matches player-drawn roads
+      for (const chain of this._tracedChains(roads)) {
+        const pts = chain.map((ni) => { const nd = roads.nodes[ni]; return nd && { x: nd.x, y: this._roadY(nd.x, nd.z), z: nd.z }; }).filter(Boolean);
+        if (pts.length >= 2) ribbonSmooth(road, pts, hw, 0.04);
+      }
+    }
+
     if (roads) roads.edges.forEach((e) => {
+      if (e.traced) return;              // already drawn as smooth chains above
       const T = ROAD_TYPES[e.type] || ROAD_TYPES.road;
       const pts = this._sampleEdge(roads, e);
       if (pts.length < 2) return;
-      if (e.traced) {
-        // a traced historical road: a slim carriageway. The network is a dense
-        // graph of short segments, so we draw just a thin asphalt ribbon with a
-        // pale shoulder — no per-joint stop lines or centre dashes (which would
-        // clutter every tiny segment). The shared nodes keep it interconnected.
-        const hw = ROAD_TYPES.road.renderHW || 0.34; // uniform width — every road matches the player-drawn ones
-        ribbon(road, pts, hw, 0.04);     // dark asphalt only — no pale shoulder (avoids notch speckle)
-        return;
-      }
       if (T.renderHW) {
         // player-drawn Road: a slim carriageway matching the 1966 survey-map roads —
         // a clean dark ribbon of uniform width (mitred so bends don't pinch).

@@ -74,7 +74,7 @@ const G = {
 // ===========================================================================
 // Boot
 // ===========================================================================
-const BUILD = '2026-06-14 · portal-in-hill-realtime-draw v27';
+const BUILD = '2026-06-14 · smooth-constant-width-roads v28';
 function boot() {
   console.log('%cSG build: ' + BUILD, 'font-weight:bold;color:#11a39c');
   const vEl = document.querySelector('.version'); if (vEl) vEl.textContent = 'build ' + BUILD;
@@ -489,7 +489,7 @@ function onRouteDrawn(pts, opts = {}) {
   const len = routeLength(pts);
   if (len < 8) { G.view.clearRoadPreview(); toast('That route is too short — drag a longer line.'); return; }
   // freeform strokes get smoothed; staged Lego pieces keep their exact geometry
-  const route = opts.raw ? pts.map((p) => ({ x: p.x, z: p.z })) : smoothRoute(pts, Math.min(12, Math.max(4, (G.view?.cam?.radius || 70) * 0.05)));
+  const route = opts.raw ? pts.map((p) => ({ x: p.x, z: p.z })) : smoothRoute(pts, Math.min(7, Math.max(3, (G.view?.cam?.radius || 70) * 0.035)));
   const cost = priced(T.cost * Math.max(1, len / 20), G.state);
   let total = cost, days = Math.max(8, Math.min(80, Math.round(len / 8)));
   let detail = `${Math.round(len)} m · ${money(cost)}`;

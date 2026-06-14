@@ -1713,7 +1713,7 @@ export class Scene3D {
     const g = new THREE.Group(); this.scene.add(g); this._drawPreviewGroup = g;
     if (!pts || !pts.length) return;
     // smooth the live stroke so the preview matches the finished road (same zoom-scaled tolerance)
-    const sm = smoothRoute(pts, Math.min(12, Math.max(4, this.cam.radius * 0.05)));
+    const sm = smoothRoute(pts, Math.min(7, Math.max(3, this.cam.radius * 0.035)));
     const V = sm.map((q) => new THREE.Vector3(q.x, this._roadY(q.x, q.z), q.z));
     // a terrain-FOLLOWING ribbon (per-point height) — a flat ribbon would sink
     // under the hills and vanish, which is why the preview wasn't visible before.
@@ -2823,10 +2823,22 @@ export class Scene3D {
     const ribbonSmooth = (buf, pts, hw, yOff) => {
       const [v, idx] = buf, base = v.length / 3;
       for (let i = 0; i < pts.length; i++) {
-        const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)];
-        let tx = b.x - a.x, tz = b.z - a.z; const l = Math.hypot(tx, tz) || 1; tx /= l; tz /= l;
-        const nx = -tz, nz = tx, p = pts[i];
-        v.push(p.x + nx * hw, p.y + yOff, p.z + nz * hw, p.x - nx * hw, p.y + yOff, p.z - nz * hw);
+        const p = pts[i], a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)];
+        // unit directions of the segments meeting at this vertex
+        let pdx = p.x - a.x, pdz = p.z - a.z, pl = Math.hypot(pdx, pdz);
+        let ndx = b.x - p.x, ndz = b.z - p.z, nl = Math.hypot(ndx, ndz);
+        if (pl < 1e-6) { pdx = ndx; pdz = ndz; pl = nl; }       // start cap: use the next segment
+        if (nl < 1e-6) { ndx = pdx; ndz = pdz; nl = pl; }       // end cap: use the prev segment
+        pdx /= pl || 1; pdz /= pl || 1; ndx /= nl || 1; ndz /= nl || 1;
+        const n1x = -pdz, n1z = pdx, n2x = -ndz, n2z = ndx;     // the two segment normals
+        let mx = n1x + n2x, mz = n1z + n2z, ml = Math.hypot(mx, mz);
+        if (ml < 1e-6) { mx = n2x; mz = n2z; ml = 1; }          // ~180° reversal guard
+        mx /= ml; mz /= ml;
+        // miter join: offset along the bisector by hw/cos(½angle) so the road keeps
+        // a CONSTANT perpendicular width through bends (clamped to avoid spikes)
+        let cosv = mx * n2x + mz * n2z; if (cosv < 0.5) cosv = 0.5;
+        const off = hw / cosv;
+        v.push(p.x + mx * off, p.y + yOff, p.z + mz * off, p.x - mx * off, p.y + yOff, p.z - mz * off);
       }
       for (let i = 0; i < pts.length - 1; i++) { const a = base + i * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
     };

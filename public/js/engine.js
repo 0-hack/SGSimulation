@@ -361,7 +361,7 @@ export function smoothRoute(pts, eps = 4) {
   if (P.length < 3) return P;
   P = _rdp(P, eps);                 // straight sections -> just their endpoints; jitter gone
   if (P.length < 3) return P;       // a straight line stays perfectly straight
-  for (let it = 0; it < 2; it++) {  // Chaikin: round only the bends that survived simplification
+  for (let it = 0; it < 3; it++) {  // Chaikin ×3: round the bends smoothly (straights stay straight)
     const out = [P[0]];
     for (let i = 0; i < P.length - 1; i++) {
       const a = P[i], b = P[i + 1];

@@ -46,7 +46,7 @@ const FLAT_TOL = 2;                 // metres of height variation tolerated befo
 const EARTHWORK_RATE = 0.012;       // $M per m³ of cut/fill (× live price index)
 // A railway crossing ground more than RAIL_HILL_TOL above its grade can be bored
 // as a tunnel instead of climbing over; the bore costs TUNNEL_RATE per m³ of rock.
-const RAIL_HILL_TOL = 3;            // metres above grade before a tunnel is offered
+const RAIL_HILL_TOL = 2.5;          // metres above grade before a tunnel is offered
 const TUNNEL_RATE = 0.02;           // $M per m³ of rock bored (× live price index)
 const currentRate = () => G.dayRate * SPEED_MULT[G.speed];
 
@@ -75,7 +75,7 @@ const G = {
 // ===========================================================================
 // Boot
 // ===========================================================================
-const BUILD = '2026-06-14 · level-runway-deck v19';
+const BUILD = '2026-06-14 · smart-connect-junctions v20';
 function boot() {
   console.log('%cSG build: ' + BUILD, 'font-weight:bold;color:#11a39c');
   const vEl = document.querySelector('.version'); if (vEl) vEl.textContent = 'build ' + BUILD;
@@ -440,6 +440,17 @@ function roadNodeAt(roads, x, z) {
 function addRoadEdge(a, b, ctrl) {
   const t = G.road.type;
   const T = ROAD_TYPES[t];
+  // Railways & runways are NOT part of the car-road graph. Route the Straight/Curve
+  // tools through the same drawn-route flow as freehand so they store correctly as
+  // a railway/runway AND get the flat-ground / tunnel prompts (was: silently pushed
+  // as a mis-typed road edge with no prompt — the cause of "no tunnel option").
+  if (T.rail || T.air) {
+    let pts;
+    if (ctrl) { pts = []; for (let i = 0; i <= 14; i++) { const s = i / 14, it = 1 - s; pts.push({ x: it * it * a.x + 2 * it * s * ctrl.x + s * s * b.x, z: it * it * a.z + 2 * it * s * ctrl.z + s * s * b.z }); } }
+    else pts = [{ x: a.x, z: a.z }, { x: b.x, z: b.z }];
+    onRouteDrawn(pts);
+    return true;
+  }
   const cost = priced(T.cost, G.state);
   if (G.state.treasury < cost) { toast(`Need ${money(cost)} for this ${T.name.toLowerCase()}.`); return false; }
   const roads = G.state.roads;
@@ -453,6 +464,7 @@ function addRoadEdge(a, b, ctrl) {
 }
 function placeRoundabout(x, z) {
   const T = ROAD_TYPES[G.road.type];
+  if (T.rail || T.air) { toast('Roundabouts are for roads only — use Draw for a railway/runway.'); return; }
   const cost = priced(T.cost * 4, G.state);
   if (G.state.treasury < cost) { toast(`Need ${money(cost)} for a roundabout.`); return; }
   const roads = G.state.roads, r = 6, k = 8, base = roads.nodes.length;

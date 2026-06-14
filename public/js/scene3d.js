@@ -1054,10 +1054,15 @@ export class Scene3D {
     const end = (e) => {
       const p = pos(e);
       if (this._drawing) { // finish a route/area stroke
-        // make sure the point where the finger/mouse lifts is part of the route.
+        // make sure the point where the finger/mouse lifts is part of the route, and
+        // SNAP that final point onto a road/rail/runway end if we're releasing on one
+        // (so the new route visibly joins it — connectivity is then exact).
         const g = this._raycastGround(p);
-        if (g && this._stroke) { const last = this._stroke[this._stroke.length - 1];
-          if (!last || Math.hypot(g.x - last.x, g.z - last.z) > 0.5) this._stroke.push({ x: g.x, z: g.z }); }
+        if (g && this._stroke) {
+          const e = this._drawSnap(g.x, g.z) || g;
+          const last = this._stroke[this._stroke.length - 1];
+          if (!last || Math.hypot(e.x - last.x, e.z - last.z) > 0.5) this._stroke.push({ x: e.x, z: e.z });
+        }
         const stroke = this._stroke;
         this._drawing = false; this._stroke = null;
         this._renderDrawPreview(stroke);   // keep the drawn shape on screen until the player commits/cancels
@@ -1488,12 +1493,42 @@ export class Scene3D {
   _drawHover(p) {
     if (this._drawing) { this._clearSnapMarker(); this._hideDrawCursor(); return; }
     const g = this._raycastGround(p);
-    // Only SNAP when the cursor is genuinely on top of an existing road end (small
-    // radius), otherwise the cursor stays perfectly free. Area-draw never snaps.
-    const s = (g && !this._drawArea) ? this._nearestSnap(g.x, g.z, 3.5) : null;
+    // SNAP onto an existing road end/junction (or onto a road itself for a T) — and
+    // onto a railway/runway end when drawing those — so the player can continue or
+    // join a route. The marker shows what was detected. Area-draw never snaps.
+    const s = g ? this._drawSnap(g.x, g.z) : null;
     this._snap = s;
     if (s) { this._showSnapMarker(s.x, s.z); this._hideDrawCursor(); }
     else { this._clearSnapMarker(); this._updateDrawCursor(g); }   // free-floating marker exactly under the cursor
+  }
+  // The best snap target near (x,z) for the active draw tool: a road node/junction
+  // or a point on a road (so a new road can tee onto it) when drawing roads, or the
+  // nearest railway/runway endpoint when drawing those. Radius scales with zoom.
+  _drawSnap(x, z) {
+    if (this._drawArea) return null;
+    const maxD = Math.max(3.5, this.cam.radius * 0.05);
+    if (this._drawRail) return this._nearestPolyEnd((this.state && this.state.railways) || [], x, z, maxD);
+    if (this._drawAir) return this._nearestPolyEnd((this.state && this.state.airstrips) || [], x, z, maxD);
+    let best = null;
+    for (const n of (this.navNodes || [])) { const d = Math.hypot(n.x - x, n.z - z); if (d < (best ? best.d : maxD)) best = { x: n.x, z: n.z, d, kind: 'node' }; }
+    for (let e = 0; e < this.edgePts.length; e++) {
+      const pts = this.edgePts[e]; if (!pts) continue;
+      for (let i = 0; i < pts.length - 1; i++) { const pr = this._projOnSeg(x, z, pts[i], pts[i + 1]); if (pr.d < (best ? best.d : maxD)) best = { x: pr.x, z: pr.z, d: pr.d, kind: 'edge' }; }
+    }
+    return best;
+  }
+  _nearestPolyEnd(list, x, z, maxD) {
+    let best = null;
+    for (const entry of list) {
+      const poly = Array.isArray(entry) ? entry : (entry && entry.pts); if (!poly || poly.length < 2) continue;
+      for (const idx of [0, poly.length - 1]) { const px = poly[idx][0], pz = poly[idx][1], d = Math.hypot(px - x, pz - z); if (d < (best ? best.d : maxD)) best = { x: px, z: pz, d, kind: 'end' }; }
+    }
+    return best;
+  }
+  _projOnSeg(x, z, a, b) {
+    const dx = b.x - a.x, dz = b.z - a.z, l2 = dx * dx + dz * dz || 1;
+    let t = ((x - a.x) * dx + (z - a.z) * dz) / l2; t = Math.max(0, Math.min(1, t));
+    const px = a.x + dx * t, pz = a.z + dz * t; return { x: px, z: pz, d: Math.hypot(x - px, z - pz) };
   }
   // A small free cursor that sits exactly where you point on the terrain (no grid).
   _updateDrawCursor(g) {
@@ -1510,12 +1545,6 @@ export class Scene3D {
     this._drawCursor.visible = true;
   }
   _hideDrawCursor() { if (this._drawCursor) this._drawCursor.visible = false; }
-  _nearestSnap(x, z, maxD) {
-    const nodes = this.navNodes || [];
-    let best = null, bd = maxD;
-    for (const n of nodes) { const d = Math.hypot(n.x - x, n.z - z); if (d < bd) { bd = d; best = n; } }
-    return best ? { x: best.x, z: best.z } : null;
-  }
   _showSnapMarker(x, z) {
     if (!this._snapMarker) {
       const ring = new THREE.Mesh(new THREE.TorusGeometry(2.8, 0.55, 8, 24), toon(0xffd24a));

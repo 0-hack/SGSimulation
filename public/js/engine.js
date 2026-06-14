@@ -383,6 +383,109 @@ export function addRoadwork(state, route) {
   });
   return { ok: true };
 }
+// ---------------------------------------------------------------------------
+// Road-network connectivity — splice a freshly built road into the graph so it
+// JOINS whatever it touches: end-to-end at a shared node, a T where one end meets
+// the middle of another road, and an X where two roads cross. Junctions become
+// shared nodes, so the unified nav graph lets vehicles drive through them.
+// ---------------------------------------------------------------------------
+// Intersection of segment a→b with c→d, interior to BOTH (touches exactly at an
+// endpoint are left to node-merging). Returns the crossing point + params, else null.
+function _segCross(a, b, c, d) {
+  const r1x = b.x - a.x, r1z = b.z - a.z, r2x = d.x - c.x, r2z = d.z - c.z, den = r1x * r2z - r1z * r2x;
+  if (Math.abs(den) < 1e-9) return null;                       // parallel / degenerate
+  const t = ((c.x - a.x) * r2z - (c.z - a.z) * r2x) / den, u = ((c.x - a.x) * r1z - (c.z - a.z) * r1x) / den;
+  if (t < 1e-4 || t > 1 - 1e-4 || u < 1e-4 || u > 1 - 1e-4) return null;
+  return { t, u, x: a.x + r1x * t, z: a.z + r1z * t };
+}
+function _projSeg(pt, a, b) {
+  const dx = b.x - a.x, dz = b.z - a.z, l2 = dx * dx + dz * dz || 1;
+  let t = ((pt.x - a.x) * dx + (pt.z - a.z) * dz) / l2; t = Math.max(0, Math.min(1, t));
+  const x = a.x + dx * t, z = a.z + dz * t; return { x, z, t, d: Math.hypot(pt.x - x, pt.z - z) };
+}
+// The world polyline of an edge (straight a→b, quadratic-Bézier ctrl, or stored poly).
+function _edgeLine(roads, e) {
+  if (e.poly && e.poly.length >= 2) return e.poly.map((p) => ({ x: p.x, z: p.z }));
+  const a = roads.nodes[e.a], b = roads.nodes[e.b]; if (!a || !b) return [];
+  if (e.ctrl) { const o = []; for (let i = 0; i <= 10; i++) { const t = i / 10, it = 1 - t; o.push({ x: it * it * a.x + 2 * it * t * e.ctrl.x + t * t * b.x, z: it * it * a.z + 2 * it * t * e.ctrl.z + t * t * b.z }); } return o; }
+  return [{ x: a.x, z: a.z }, { x: b.x, z: b.z }];
+}
+// Split existing edge `ei` at the given world points (projected onto it). Replaces
+// the edge in place with the first piece and appends the rest; returns the new
+// junction nodes. Pieces inherit the edge's attributes (type/lanes/traced/…).
+function _splitEdge(roads, ei, pts, nodeAt) {
+  const e = roads.edges[ei], line = _edgeLine(roads, e); if (line.length < 2) return [];
+  const straight = !(e.poly && e.poly.length >= 2) && !e.ctrl;
+  const segArc = [0]; for (let i = 1; i < line.length; i++) segArc.push(segArc[i - 1] + Math.hypot(line[i].x - line[i - 1].x, line[i].z - line[i - 1].z));
+  const total = segArc[segArc.length - 1];
+  const cuts = [];
+  for (const pt of pts) {
+    let bd = Infinity, bs = 0, bx = pt.x, bz = pt.z;
+    for (let i = 0; i < line.length - 1; i++) { const pr = _projSeg(pt, line[i], line[i + 1]); if (pr.d < bd) { bd = pr.d; bs = segArc[i] + pr.t * (segArc[i + 1] - segArc[i]); bx = pr.x; bz = pr.z; } }
+    if (bs > 2 && bs < total - 2) cuts.push({ s: bs, x: bx, z: bz });   // ignore cuts at the very ends (use the endpoint node)
+  }
+  if (!cuts.length) return [];
+  cuts.sort((a, b) => a.s - b.s);
+  const uniq = [cuts[0]]; for (let i = 1; i < cuts.length; i++) if (cuts[i].s - uniq[uniq.length - 1].s > 1.5) uniq.push(cuts[i]);
+  const made = uniq.map((c) => ({ x: c.x, z: c.z, node: nodeAt(c.x, c.z) }));
+  const attr = (a, b, poly2) => { const o = { a, b, ctrl: null, type: e.type, lanes: e.lanes, elevated: e.elevated }; if (e.traced) o.traced = true; if (e.oneway) o.oneway = e.oneway; if (e.roadClass != null) o.roadClass = e.roadClass; if (!straight) o.poly = poly2; return o; };
+  const slice = (s0, p0, s1, p1) => { const out = [{ x: p0.x, z: p0.z }]; for (let i = 0; i < line.length; i++) if (segArc[i] > s0 + 1e-6 && segArc[i] < s1 - 1e-6) out.push({ x: line[i].x, z: line[i].z }); out.push({ x: p1.x, z: p1.z }); return out; };
+  const A = roads.nodes[e.a], B = roads.nodes[e.b];
+  const stops = [{ s: 0, x: A.x, z: A.z, node: e.a }, ...uniq.map((c, k) => ({ s: c.s, x: made[k].x, z: made[k].z, node: made[k].node })), { s: total, x: B.x, z: B.z, node: e.b }];
+  for (let k = 0; k < stops.length - 1; k++) {
+    const s = stops[k], t = stops[k + 1];
+    if (s.node === t.node) continue;
+    const piece = attr(s.node, t.node, straight ? null : slice(s.s, s, t.s, t));
+    if (k === 0) roads.edges[ei] = piece; else roads.edges.push(piece);
+  }
+  return made;
+}
+// Splice the drawn polyline P (array of {x,z}) into the road graph.
+export function spliceRoad(roads, P, meta) {
+  if (!P || P.length < 2) return;
+  const JOIN = 4.5, nodes = roads.nodes, edges = roads.edges, nE = edges.length;
+  const nodeAt = (x, z) => { for (let i = 0; i < nodes.length; i++) { const n = nodes[i]; if (Math.hypot(n.x - x, n.z - z) < JOIN) return i; } nodes.push({ x, z, y: 0 }); return nodes.length - 1; };
+  let minX = Infinity, minZ = Infinity, maxX = -Infinity, maxZ = -Infinity;
+  for (const p of P) { minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x); minZ = Math.min(minZ, p.z); maxZ = Math.max(maxZ, p.z); }
+  minX -= JOIN; minZ -= JOIN; maxX += JOIN; maxZ += JOIN;
+  const arc = [0]; for (let i = 1; i < P.length; i++) arc.push(arc[i - 1] + Math.hypot(P[i].x - P[i - 1].x, P[i].z - P[i - 1].z));
+  const events = [], edgeSplits = new Map();
+  const addSplit = (ei, pt) => { let a = edgeSplits.get(ei); if (!a) { a = []; edgeSplits.set(ei, a); } a.push(pt); };
+  for (let ei = 0; ei < nE; ei++) {
+    const line = _edgeLine(roads, edges[ei]); if (line.length < 2) continue;
+    let exmin = Infinity, exmax = -Infinity, ezmin = Infinity, ezmax = -Infinity;
+    for (const p of line) { exmin = Math.min(exmin, p.x); exmax = Math.max(exmax, p.x); ezmin = Math.min(ezmin, p.z); ezmax = Math.max(ezmax, p.z); }
+    if (exmax < minX || exmin > maxX || ezmax < minZ || ezmin > maxZ) continue;     // bbox prefilter
+    for (let i = 0; i < P.length - 1; i++) for (let j = 0; j < line.length - 1; j++) {
+      const h = _segCross(P[i], P[i + 1], line[j], line[j + 1]);
+      if (h) { events.push({ s: arc[i] + (arc[i + 1] - arc[i]) * h.t, x: h.x, z: h.z }); addSplit(ei, { x: h.x, z: h.z }); }
+    }
+  }
+  // endpoint T-joins: an end that lands on the MIDDLE of an existing road (not near a node)
+  const endJoin = (pi, sVal) => {
+    const pt = P[pi];
+    for (const n of nodes) if (Math.hypot(n.x - pt.x, n.z - pt.z) < JOIN) return;     // already meets a node
+    let best = null;
+    for (let ei = 0; ei < nE; ei++) { const line = _edgeLine(roads, edges[ei]); for (let j = 0; j < line.length - 1; j++) { const pr = _projSeg(pt, line[j], line[j + 1]); if (pr.d < JOIN && (!best || pr.d < best.d)) best = { d: pr.d, x: pr.x, z: pr.z, ei }; } }
+    if (best) { events.push({ s: sVal, x: best.x, z: best.z }); addSplit(best.ei, { x: best.x, z: best.z }); }
+  };
+  endJoin(0, 0); endJoin(P.length - 1, arc[arc.length - 1]);
+  for (const [ei, pts] of edgeSplits) _splitEdge(roads, ei, pts, nodeAt);            // cut existing roads at junctions
+  // build the new road, broken at each junction so it shares those nodes
+  events.sort((a, b) => a.s - b.s);
+  const startNode = nodeAt(P[0].x, P[0].z), endNode = nodeAt(P[P.length - 1].x, P[P.length - 1].z);
+  const stops = [{ s: 0, x: P[0].x, z: P[0].z, node: startNode }];
+  for (const ev of events) { const node = nodeAt(ev.x, ev.z); if (node !== stops[stops.length - 1].node) stops.push({ s: ev.s, x: ev.x, z: ev.z, node }); }
+  if (endNode !== stops[stops.length - 1].node) stops.push({ s: arc[arc.length - 1], x: P[P.length - 1].x, z: P[P.length - 1].z, node: endNode });
+  for (let k = 0; k < stops.length - 1; k++) {
+    const A = stops[k], B = stops[k + 1]; if (A.node === B.node) continue;
+    const sub = [{ x: A.x, z: A.z }];
+    for (let i = 0; i < P.length; i++) if (arc[i] > A.s + 1e-6 && arc[i] < B.s - 1e-6) sub.push({ x: P[i].x, z: P[i].z });
+    sub.push({ x: B.x, z: B.z });
+    if (sub.length >= 2) edges.push({ a: A.node, b: B.node, ctrl: null, poly: sub, type: meta.type, lanes: meta.lanes, elevated: meta.elevated });
+  }
+}
+
 // Advance route construction; finished routes become real roads/railways.
 function advanceRoadworks(state) {
   if (!state.roadworks || !state.roadworks.length) return;
@@ -396,16 +499,11 @@ function advanceRoadworks(state) {
     } else if (w.kind === 'air') {
       (state.airstrips || (state.airstrips = [])).push(w.pts.map((p) => [p.x, p.z]));
     } else {
-      // a drawn road becomes ONE edge carrying its full smoothed polyline, so it
-      // renders as a single uniform-width ribbon (no pinching where segments meet)
-      // while still joining the network at its two endpoints for traffic.
-      const roads = state.roads, node = (x, z) => {
-        for (let i = 0; i < roads.nodes.length; i++) { const n = roads.nodes[i]; if (Math.hypot(n.x - x, n.z - z) < 4) return i; }
-        roads.nodes.push({ x, z, y: 0 }); return roads.nodes.length - 1;
-      };
-      const a = node(w.pts[0].x, w.pts[0].z), b = node(w.pts[w.pts.length - 1].x, w.pts[w.pts.length - 1].z);
-      const poly = w.pts.map((p) => ({ x: p.x, z: p.z }));
-      if (a !== b) roads.edges.push({ a, b, ctrl: null, poly, type: w.type, lanes: w.lanes, elevated: w.elevated });
+      // a drawn road is spliced into the graph: it carries its full smoothed
+      // polyline (so it renders as one uniform ribbon) AND is broken at every place
+      // it meets/crosses an existing road, sharing a junction node there so traffic
+      // can drive straight through end-to-end joins, T-junctions and crossings.
+      spliceRoad(state.roads, w.pts.map((p) => ({ x: p.x, z: p.z })), { type: w.type, lanes: w.lanes, elevated: w.elevated });
     }
   }
   state.roadworks = still;

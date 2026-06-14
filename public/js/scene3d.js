@@ -551,13 +551,14 @@ export class Scene3D {
         if (d > c.halfW + c.blend) continue;
         floor = c.floor;
         kk = d <= c.halfW ? 0 : (d - c.halfW) / c.blend;
-      } else {                                        // tunnel-mouth ramp capsule
+      } else {                                        // tunnel approach cutting (capsule)
         const dx = x - c.x, dz = z - c.z, u = dx * c.tx + dz * c.tz;
         if (u < -c.outset || u > c.length) continue;
         const lat = Math.abs(dx * c.nx + dz * c.nz);
         if (lat > c.halfW + c.blend) continue;
-        const along = u < 0 ? 0 : u;
-        floor = c.floor + (along / c.length) * Math.max(0, H - c.floor);
+        const along = u < 0 ? 0 : u, flat = c.flatLen || 0;
+        // floor stays at the cut level up to the portal (flat), then ramps to natural
+        floor = along <= flat ? c.floor : c.floor + ((along - flat) / Math.max(1, c.length - flat)) * Math.max(0, H - c.floor);
         kk = lat <= c.halfW ? 0 : (lat - c.halfW) / c.blend;
       }
       const target = floor + kk * (H - floor);        // cut down to `floor`, blend back to natural
@@ -1053,13 +1054,17 @@ export class Scene3D {
       const dx = p.x - this._last.x, dy = p.y - this._last.y;
       this._last = p;
       if (Math.abs(p.x - this._down.x) > 5 || Math.abs(p.y - this._down.y) > 5) this._moved = true;
-      if (this._drawing) { // trace a route in real time. Sample every few SCREEN pixels
-        // (zoom-independent, like trace.html) so the stroke is always dense & smooth.
-        const lp = this._lastSamplePx;
-        if (!lp || Math.hypot(p.x - lp.x, p.y - lp.y) > 5) {
-          const g = this._raycastGround(p);
-          if (g) { const last = this._stroke[this._stroke.length - 1];
-            if (!last || Math.hypot(g.x - last.x, g.z - last.z) > 0.3) { this._stroke.push({ x: g.x, z: g.z }); this._renderDrawPreview(this._stroke); this._lastSamplePx = p; } }
+      if (this._drawing) { // trace a route in real time
+        const g = this._raycastGround(p);
+        if (g) {
+          const lp = this._lastSamplePx;
+          // commit a sample every few SCREEN pixels (zoom-independent, keeps it dense)
+          if (!lp || Math.hypot(p.x - lp.x, p.y - lp.y) > 5) {
+            const last = this._stroke[this._stroke.length - 1];
+            if (!last || Math.hypot(g.x - last.x, g.z - last.z) > 0.3) { this._stroke.push({ x: g.x, z: g.z }); this._lastSamplePx = p; }
+          }
+          // ALWAYS draw the line right up to the cursor so there's zero lag/direction delay
+          this._renderDrawPreview(this._stroke.concat([{ x: g.x, z: g.z }]));
         }
         return;
       }
@@ -2430,15 +2435,17 @@ export class Scene3D {
     }
     const carves = [];
     for (const prof of tunnels) {
-      const { dense, grade, tunnelMask } = prof;
-      for (let i = 1; i < dense.length; i++) {
-        if (tunnelMask[i] === tunnelMask[i - 1]) continue;               // a mouth: open ↔ tunnelled hill
-        const openIdx = tunnelMask[i] ? i - 1 : i, hillIdx = tunnelMask[i] ? i : i - 1;
-        const m = dense[openIdx], hp = dense[hillIdx];
-        let tx = hp.x - m.x, tz = hp.z - m.z; const l = Math.hypot(tx, tz) || 1; tx /= l; tz /= l;
-        // a generous approach cutting (several terrain-mesh cells wide/long) so the
-        // recess actually renders on the coarse heightfield, not just in _roadY
-        carves.push({ x: m.x, z: m.z, tx, tz, nx: -tz, nz: tx, length: 26, halfW: 5.5, blend: 11, floor: grade[openIdx] - 0.6, outset: 9 });
+      const { dense, grade } = prof;
+      // cut an OPEN APPROACH CUTTING from each open mouth down to its portal seat in
+      // the hill body: floor stays at grade right up to the portal (flatLen), then
+      // ramps back to natural just past it so the hill closes over the bore.
+      for (const mo of this._tunnelMouths(prof)) {
+        const m = dense[mo.openIdx], pp = dense[mo.portalIdx];
+        let tx = pp.x - m.x, tz = pp.z - m.z, l = Math.hypot(tx, tz);
+        if (l < 0.5) { const into = dense[Math.max(0, Math.min(dense.length - 1, mo.portalIdx + mo.dir))]; tx = into.x - pp.x; tz = into.z - pp.z; l = Math.hypot(tx, tz) || 1; }
+        tx /= l; tz /= l;
+        const flatLen = l + 3;
+        carves.push({ x: m.x, z: m.z, tx, tz, nx: -tz, nz: tx, length: flatLen + 12, flatLen, halfW: 5.5, blend: 11, floor: grade[mo.openIdx] - 0.6, outset: 9 });
       }
     }
     this._railCarves = carves;
@@ -2502,30 +2509,52 @@ export class Scene3D {
     }
     let buriedLen = 0, boreVolume = 0;
     for (let i = 1; i < dense.length; i++) if (tunnelMask[i]) { const segLen = arc[i] - arc[i - 1]; buriedLen += segLen; boreVolume += Math.max(0, above[i]) * segLen * width; }
-    return { dense, grade, buried, tunnelMask, hasTunnel: tunnelMask.some(Boolean), buriedLen, boreVolume, maxAbove, len };
+    return { dense, grade, buried, above, tunnelMask, hasTunnel: tunnelMask.some(Boolean), buriedLen, boreVolume, maxAbove, len };
   }
-  // Render a tunnelled railway from its profile: open track on the approaches (at
-  // terrain grade, now sitting in the carved cutting), nothing where it runs inside
-  // the hill, and a concrete portal nestled into each carved mouth.
+  // For each open↔tunnel boundary, march INTO the hill until the ground rises enough
+  // to seat the portal (terrain ≥ grade + PORTAL_COVER) — so portals are built into
+  // the HILL BODY, not poking out of the low mouth. Returns the open + portal indices.
+  _tunnelMouths(prof) {
+    const { dense, above, tunnelMask } = prof;
+    if (!dense || dense.length < 2) return [];
+    const PORTAL_COVER = 3.0, MAX_APPROACH = 28;
+    const seg = (a, b) => { let d = 0, lo = Math.min(a, b), hi = Math.max(a, b); for (let k = lo + 1; k <= hi; k++) d += Math.hypot(dense[k].x - dense[k - 1].x, dense[k].z - dense[k - 1].z); return d; };
+    const mouths = [];
+    for (let i = 1; i < dense.length; i++) {
+      if (tunnelMask[i] === tunnelMask[i - 1]) continue;
+      const entering = tunnelMask[i], openIdx = entering ? i - 1 : i, dir = entering ? 1 : -1;
+      let pIdx = entering ? i : i - 1;
+      for (let k = pIdx; k >= 0 && k < dense.length; k += dir) { pIdx = k; if (above[k] >= PORTAL_COVER || seg(openIdx, k) > MAX_APPROACH) break; }
+      mouths.push({ openIdx, portalIdx: pIdx, dir });
+    }
+    return mouths;
+  }
+  // Render a tunnelled railway from its profile: surface track on the approaches, an
+  // open cutting down to the portal seated in the hill body, then nothing inside.
   _buildRailTunnel(g, prof) {
     const { dense, grade, tunnelMask } = prof;
     if (!dense || dense.length < 2) return;
+    const mouths = this._tunnelMouths(prof);
+    // the buried INTERIOR (between each entry & exit portal) is hidden inside the hill;
+    // the approach cuttings (open mouth → portal) stay visible at grade.
+    const hidden = new Array(dense.length).fill(false);
+    for (let m = 0; m + 1 < mouths.length; m += 2) {
+      const a = mouths[m].portalIdx, b = mouths[m + 1].portalIdx;
+      for (let k = Math.min(a, b) + 1; k < Math.max(a, b); k++) hidden[k] = true;
+    }
     const yAt = (i) => tunnelMask[i] ? grade[i] : this._roadY(dense[i].x, dense[i].z);
-    // draw each contiguous open (not-tunnelled) stretch as its own piece of track —
-    // shallow bumps ride over the ground; only tall hills are bored through
     let run = [];
     const flush = () => { if (run.length >= 2) this._railTrack(g, run); run = []; };
     for (let i = 0; i < dense.length; i++) {
-      if (tunnelMask[i]) flush();
-      else run.push(new THREE.Vector3(dense[i].x, yAt(i), dense[i].z));
+      if (hidden[i]) { flush(); continue; }
+      run.push(new THREE.Vector3(dense[i].x, yAt(i), dense[i].z));
     }
     flush();
-    // a portal wherever the line crosses between open ground and a tunnelled hill
-    for (let i = 1; i < dense.length; i++) {
-      if (tunnelMask[i] === tunnelMask[i - 1]) continue;
-      const openIdx = tunnelMask[i] ? i - 1 : i, hillIdx = tunnelMask[i] ? i : i - 1;
-      const op = dense[openIdx], hp = dense[hillIdx];
-      this._addTunnelPortal(g, op.x, grade[openIdx], op.z, Math.atan2(hp.x - op.x, hp.z - op.z));
+    // a portal at each seat, set into the hill body, facing back out along the track
+    for (const mo of mouths) {
+      const pp = dense[mo.portalIdx];
+      const into = dense[Math.max(0, Math.min(dense.length - 1, mo.portalIdx + mo.dir))];
+      this._addTunnelPortal(g, pp.x, grade[mo.portalIdx], pp.z, Math.atan2(into.x - pp.x, into.z - pp.z));
     }
   }
   // A concrete tunnel portal at (x,y,z) — y is the track level — facing along the

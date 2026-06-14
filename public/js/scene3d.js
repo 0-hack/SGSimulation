@@ -2173,15 +2173,39 @@ export class Scene3D {
   // onStroke([{x,z}...]) is called. `opts` sets the live-preview look.
   setDrawMode(on, onStroke, opts) { this.drawMode = !!on; this.onStroke = onStroke || null; this._drawType = (opts && opts.type) || 'road'; this._drawElevated = !!(opts && opts.elevated); this._drawRail = !!(opts && opts.rail); this._drawAir = !!(opts && opts.air); this._drawArea = !!(opts && opts.area); if (!on) { this._drawing = false; this._stroke = null; this.clearRoadPreview(); } }
   // Render finished player-drawn railways (world coords) like the historic ones.
+  // Even-spacing resample of a {x,z} polyline (clean, regular ties/edges).
+  _resamplePoly(pts, step) {
+    if (!pts || pts.length < 2) return (pts || []).slice();
+    const out = [{ x: pts[0].x, z: pts[0].z }];
+    for (let i = 1; i < pts.length; i++) {
+      let a = out[out.length - 1], b = pts[i], d = Math.hypot(b.x - a.x, b.z - a.z);
+      while (d >= step) { const t = step / d; a = { x: a.x + (b.x - a.x) * t, z: a.z + (b.z - a.z) * t }; out.push(a); d = Math.hypot(b.x - a.x, b.z - a.z); }
+    }
+    const last = pts[pts.length - 1]; if (Math.hypot(last.x - out[out.length - 1].x, last.z - out[out.length - 1].z) > 0.3) out.push({ x: last.x, z: last.z });
+    return out;
+  }
   _buildPlayerRailways(state) {
     if (this._pRailGroup) this.scene.remove(this._pRailGroup);
     const g = new THREE.Group(); this.scene.add(g); this._pRailGroup = g;
     for (const poly of ((state && state.railways) || [])) {
       if (!poly || poly.length < 2) continue;
-      const pts = poly.map(([x, z]) => new THREE.Vector3(x, this._roadY(x, z), z)); // sit on the terrain, not flat y=0
-      this._addRibbon(g, pts, 1.7, 0x5b5040, 0.13);
+      const dense = this._resamplePoly(poly.map(([x, z]) => ({ x, z })), 1.4);     // even spacing for clean ties & rails
+      const pts = dense.map((q) => new THREE.Vector3(q.x, this._roadY(q.x, q.z), q.z)); // sit on the terrain
       const nrm = pts.map((p, i) => { const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)]; let tx = b.x - a.x, tz = b.z - a.z; const l = Math.hypot(tx, tz) || 1; return [-tz / l, tx / l]; });
-      for (const sgn of [-1, 1]) this._addRibbon(g, pts.map((p, i) => new THREE.Vector3(p.x + nrm[i][0] * 0.7 * sgn, p.y, p.z + nrm[i][1] * 0.7 * sgn)), 0.13, 0xb8c0c8, 0.18);
+      this._addRibbon(g, pts, 1.55, 0x6e6457, 0.08);                                // grey gravel ballast bed
+      // wooden cross-ties (sleepers) at even intervals across the track
+      let acc = 999;
+      for (let i = 0; i < pts.length; i++) {
+        acc += (i ? Math.hypot(pts[i].x - pts[i - 1].x, pts[i].z - pts[i - 1].z) : 0);
+        if (acc < 2.2) continue; acc = 0;
+        const slp = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.18, 2.5), toon(0x4a3a2a));
+        slp.position.set(pts[i].x, pts[i].y + 0.16, pts[i].z); slp.rotation.y = Math.atan2(nrm[i][0], nrm[i][1]); slp.castShadow = true; g.add(slp);
+      }
+      // two steel rails on top of the ties
+      for (const sgn of [-1, 1]) {
+        const rail = pts.map((p, i) => new THREE.Vector3(p.x + nrm[i][0] * 0.62 * sgn, p.y + 0.26, p.z + nrm[i][1] * 0.62 * sgn));
+        this._addRibbon(g, rail, 0.09, 0xc7ccd1, 0.0);
+      }
     }
   }
   // Render finished player-drawn airport runways: a wide asphalt strip with pale

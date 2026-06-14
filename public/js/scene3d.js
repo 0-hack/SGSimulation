@@ -2173,6 +2173,18 @@ export class Scene3D {
   // onStroke([{x,z}...]) is called. `opts` sets the live-preview look.
   setDrawMode(on, onStroke, opts) { this.drawMode = !!on; this.onStroke = onStroke || null; this._drawType = (opts && opts.type) || 'road'; this._drawElevated = !!(opts && opts.elevated); this._drawRail = !!(opts && opts.rail); this._drawAir = !!(opts && opts.air); this._drawArea = !!(opts && opts.area); if (!on) { this._drawing = false; this._stroke = null; this.clearRoadPreview(); } }
   // Render finished player-drawn railways (world coords) like the historic ones.
+  // Hide scattered trees/greenery within `halfW` of a polyline (so a runway or
+  // railway corridor isn't speckled with trees poking through it).
+  _clearNatureAlong(pts, halfW) {
+    if (!this.natureCells || !pts || pts.length < 2) return;
+    for (const [id, grp] of this.natureCells) {
+      if (!grp.visible) continue;
+      const [x, y] = id.split(',').map(Number); const c = cellToWorld(x, y);
+      for (let i = 0; i < pts.length - 1; i++) {
+        if (segPointDist(c.x, c.z, pts[i].x, pts[i].z, pts[i + 1].x, pts[i + 1].z) < halfW + 2) { grp.visible = false; break; }
+      }
+    }
+  }
   // Even-spacing resample of a {x,z} polyline (clean, regular ties/edges).
   _resamplePoly(pts, step) {
     if (!pts || pts.length < 2) return (pts || []).slice();
@@ -2206,6 +2218,7 @@ export class Scene3D {
         const rail = pts.map((p, i) => new THREE.Vector3(p.x + nrm[i][0] * 0.62 * sgn, p.y + 0.26, p.z + nrm[i][1] * 0.62 * sgn));
         this._addRibbon(g, rail, 0.09, 0xc7ccd1, 0.0);
       }
+      this._clearNatureAlong(pts, 1.6);          // clear trees along the track
     }
   }
   // Render finished player-drawn airport runways: a wide asphalt strip with pale
@@ -2217,26 +2230,43 @@ export class Scene3D {
     const RW = 4.5; // runway half-width (matches the built-in airport)
     for (const poly of ((state && state.airstrips) || [])) {
       if (!poly || poly.length < 2) continue;
-      const pts = poly.map(([x, z]) => new THREE.Vector3(x, this._roadY(x, z), z)); // sit on the terrain
-      this._addRibbon(g, pts, RW, 0x35383d, 0.06);                 // runway tarmac
-      const nrm = pts.map((p, i) => { const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)]; let tx = b.x - a.x, tz = b.z - a.z; const l = Math.hypot(tx, tz) || 1; return [-tz / l, tx / l]; });
-      for (const sgn of [-1, 1]) this._addRibbon(g, pts.map((p, i) => new THREE.Vector3(p.x + nrm[i][0] * (RW - 0.3) * sgn, p.y, p.z + nrm[i][1] * (RW - 0.3) * sgn)), 0.18, 0xe9e2c8, 0.12); // edge lines
+      const dense = this._resamplePoly(poly.map(([x, z]) => ({ x, z })), 2.5);
+      const base = dense.map((q) => new THREE.Vector3(q.x, this._roadY(q.x, q.z), q.z));
+      const nrm = base.map((p, i) => { const a = base[Math.max(0, i - 1)], b = base[Math.min(base.length - 1, i + 1)]; let tx = b.x - a.x, tz = b.z - a.z; const l = Math.hypot(tx, tz) || 1; return [-tz / l, tx / l]; });
+      // A runway is FLAT across its width. Set each cross-section to the MAX terrain
+      // across the full width (+clearance) so a hill can never poke up through it,
+      // and drop an embankment skirt to the ground — i.e. a raised flat platform.
+      const topY = base.map((p, i) => {
+        const nx = nrm[i][0], nz = nrm[i][1];
+        return Math.max(this._roadY(p.x, p.z), this._roadY(p.x + nx * RW, p.z + nz * RW), this._roadY(p.x - nx * RW, p.z - nz * RW)) + 0.35;
+      });
+      const pts = base.map((p, i) => new THREE.Vector3(p.x, topY[i], p.z));
+      this._addRibbon(g, pts, RW, 0x35383d, 0.0);                  // runway tarmac (flat platform)
+      for (const sgn of [-1, 1]) {                                 // embankment skirt down to the terrain on each side
+        const v = [], idx = [];
+        for (let i = 0; i < base.length; i++) { const ex = base[i].x + nrm[i][0] * RW * sgn, ez = base[i].z + nrm[i][1] * RW * sgn; v.push(ex, topY[i], ez, ex, this._roadY(ex, ez) - 0.1, ez); }
+        for (let i = 0; i < base.length - 1; i++) { const a = i * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+        const sg = new THREE.BufferGeometry(); sg.setAttribute('position', new THREE.Float32BufferAttribute(v, 3)); sg.setIndex(idx); sg.computeVertexNormals();
+        const m = new THREE.Mesh(sg, toon(0x4c4f54, { side: THREE.DoubleSide })); m.receiveShadow = true; g.add(m);
+      }
+      for (const sgn of [-1, 1]) this._addRibbon(g, pts.map((p, i) => new THREE.Vector3(p.x + nrm[i][0] * (RW - 0.3) * sgn, topY[i], p.z + nrm[i][1] * (RW - 0.3) * sgn)), 0.18, 0xe9e2c8, 0.06); // edge lines
       // dashed centreline
-      const total = this._polyLen(pts); let acc = 0, dash = true;
+      let dash = true;
       for (let i = 0; i < pts.length - 1; i++) {
         const a = pts[i], b = pts[i + 1], seg = a.distanceTo(b); let s = 0;
         while (s < seg) { const e = Math.min(s + 3.5, seg);
-          if (dash) this._addRibbon(g, [new THREE.Vector3(a.x + (b.x - a.x) * s / seg, a.y, a.z + (b.z - a.z) * s / seg), new THREE.Vector3(a.x + (b.x - a.x) * e / seg, b.y, a.z + (b.z - a.z) * e / seg)], 0.22, 0xf3ecd0, 0.13);
+          if (dash) this._addRibbon(g, [new THREE.Vector3(a.x + (b.x - a.x) * s / seg, a.y + (b.y - a.y) * s / seg, a.z + (b.z - a.z) * s / seg), new THREE.Vector3(a.x + (b.x - a.x) * e / seg, a.y + (b.y - a.y) * e / seg, a.z + (b.z - a.z) * e / seg)], 0.22, 0xf3ecd0, 0.07);
           dash = !dash; s = e; }
       }
-      this._airPlanes.push({ pts, total, mesh: null, t: Math.random(), dir: 1 });
+      this._clearNatureAlong(base, RW);          // clear trees under the runway
+      this._airPlanes.push({ pts, total: this._polyLen(pts), mesh: null, t: Math.random(), dir: 1 });
     }
   }
   _polyLen(pts) { let L = 0; for (let i = 1; i < pts.length; i++) L += pts[i].distanceTo(pts[i - 1]); return L; }
   // Point at arc-fraction u in [0,1] along a {Vector3} polyline.
   _alongPoly(pts, u) {
     const total = this._polyLen(pts); let target = Math.max(0, Math.min(1, u)) * total, acc = 0;
-    for (let i = 1; i < pts.length; i++) { const d = pts[i].distanceTo(pts[i - 1]); if (acc + d >= target) { const t = d ? (target - acc) / d : 0; return new THREE.Vector3(pts[i - 1].x + (pts[i].x - pts[i - 1].x) * t, 0, pts[i - 1].z + (pts[i].z - pts[i - 1].z) * t); } acc += d; }
+    for (let i = 1; i < pts.length; i++) { const d = pts[i].distanceTo(pts[i - 1]); if (acc + d >= target) { const t = d ? (target - acc) / d : 0; return new THREE.Vector3(pts[i - 1].x + (pts[i].x - pts[i - 1].x) * t, pts[i - 1].y + (pts[i].y - pts[i - 1].y) * t, pts[i - 1].z + (pts[i].z - pts[i - 1].z) * t); } acc += d; }
     return pts[pts.length - 1].clone();
   }
   // Taxi an airliner down each runway, lift off near the end, then loop back.
@@ -2249,7 +2279,7 @@ export class Scene3D {
       const pos = this._alongPoly(p.pts, u);
       const ahead = this._alongPoly(p.pts, Math.min(1, u + 0.03));
       const climb = Math.max(0, p.t - 0.82) * 80;                 // rotate/lift off after ~80% of the run
-      p.mesh.position.set(pos.x, this._roadY(pos.x, pos.z) + 0.5 + climb, pos.z);
+      p.mesh.position.set(pos.x, pos.y + 0.5 + climb, pos.z); // ride on the raised runway platform
       p.mesh.rotation.y = Math.atan2(ahead.x - pos.x, ahead.z - pos.z);
       p.mesh.visible = p.t <= 1.2;
     }

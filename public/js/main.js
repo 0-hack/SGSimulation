@@ -67,7 +67,7 @@ const G = {
 // ===========================================================================
 // Boot
 // ===========================================================================
-const BUILD = '2026-06-14 · slower-traffic+boats v10';
+const BUILD = '2026-06-14 · rail+airport-on-terrain v11';
 function boot() {
   console.log('%cSG build: ' + BUILD, 'font-weight:bold;color:#11a39c');
   const vEl = document.querySelector('.version'); if (vEl) vEl.textContent = 'build ' + BUILD;

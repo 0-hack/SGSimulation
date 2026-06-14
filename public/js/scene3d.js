@@ -854,7 +854,7 @@ export class Scene3D {
       const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)];
       let tx = b.x - a.x, tz = b.z - a.z; const l = Math.hypot(tx, tz) || 1; tx /= l; tz /= l;
       const nx = -tz, nz = tx, p = pts[i];
-      v.push(p.x + nx * halfW, yy, p.z + nz * halfW, p.x - nx * halfW, yy, p.z - nz * halfW);
+      v.push(p.x + nx * halfW, (p.y || 0) + yy, p.z + nz * halfW, p.x - nx * halfW, (p.y || 0) + yy, p.z - nz * halfW);
     }
     for (let i = 0; i < pts.length - 1; i++) { const a = i * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
     const geo = new THREE.BufferGeometry();
@@ -2178,10 +2178,10 @@ export class Scene3D {
     const g = new THREE.Group(); this.scene.add(g); this._pRailGroup = g;
     for (const poly of ((state && state.railways) || [])) {
       if (!poly || poly.length < 2) continue;
-      const pts = poly.map(([x, z]) => new THREE.Vector3(x, 0, z));
+      const pts = poly.map(([x, z]) => new THREE.Vector3(x, this._roadY(x, z), z)); // sit on the terrain, not flat y=0
       this._addRibbon(g, pts, 1.7, 0x5b5040, 0.13);
       const nrm = pts.map((p, i) => { const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)]; let tx = b.x - a.x, tz = b.z - a.z; const l = Math.hypot(tx, tz) || 1; return [-tz / l, tx / l]; });
-      for (const sgn of [-1, 1]) this._addRibbon(g, pts.map((p, i) => new THREE.Vector3(p.x + nrm[i][0] * 0.7 * sgn, 0, p.z + nrm[i][1] * 0.7 * sgn)), 0.13, 0xb8c0c8, 0.18);
+      for (const sgn of [-1, 1]) this._addRibbon(g, pts.map((p, i) => new THREE.Vector3(p.x + nrm[i][0] * 0.7 * sgn, p.y, p.z + nrm[i][1] * 0.7 * sgn)), 0.13, 0xb8c0c8, 0.18);
     }
   }
   // Render finished player-drawn airport runways: a wide asphalt strip with pale
@@ -2193,16 +2193,16 @@ export class Scene3D {
     const RW = 4.5; // runway half-width (matches the built-in airport)
     for (const poly of ((state && state.airstrips) || [])) {
       if (!poly || poly.length < 2) continue;
-      const pts = poly.map(([x, z]) => new THREE.Vector3(x, 0, z));
+      const pts = poly.map(([x, z]) => new THREE.Vector3(x, this._roadY(x, z), z)); // sit on the terrain
       this._addRibbon(g, pts, RW, 0x35383d, 0.06);                 // runway tarmac
       const nrm = pts.map((p, i) => { const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)]; let tx = b.x - a.x, tz = b.z - a.z; const l = Math.hypot(tx, tz) || 1; return [-tz / l, tx / l]; });
-      for (const sgn of [-1, 1]) this._addRibbon(g, pts.map((p, i) => new THREE.Vector3(p.x + nrm[i][0] * (RW - 0.3) * sgn, 0, p.z + nrm[i][1] * (RW - 0.3) * sgn)), 0.18, 0xe9e2c8, 0.12); // edge lines
+      for (const sgn of [-1, 1]) this._addRibbon(g, pts.map((p, i) => new THREE.Vector3(p.x + nrm[i][0] * (RW - 0.3) * sgn, p.y, p.z + nrm[i][1] * (RW - 0.3) * sgn)), 0.18, 0xe9e2c8, 0.12); // edge lines
       // dashed centreline
       const total = this._polyLen(pts); let acc = 0, dash = true;
       for (let i = 0; i < pts.length - 1; i++) {
         const a = pts[i], b = pts[i + 1], seg = a.distanceTo(b); let s = 0;
         while (s < seg) { const e = Math.min(s + 3.5, seg);
-          if (dash) this._addRibbon(g, [new THREE.Vector3(a.x + (b.x - a.x) * s / seg, 0, a.z + (b.z - a.z) * s / seg), new THREE.Vector3(a.x + (b.x - a.x) * e / seg, 0, a.z + (b.z - a.z) * e / seg)], 0.22, 0xf3ecd0, 0.13);
+          if (dash) this._addRibbon(g, [new THREE.Vector3(a.x + (b.x - a.x) * s / seg, a.y, a.z + (b.z - a.z) * s / seg), new THREE.Vector3(a.x + (b.x - a.x) * e / seg, b.y, a.z + (b.z - a.z) * e / seg)], 0.22, 0xf3ecd0, 0.13);
           dash = !dash; s = e; }
       }
       this._airPlanes.push({ pts, total, mesh: null, t: Math.random(), dir: 1 });
@@ -2225,7 +2225,7 @@ export class Scene3D {
       const pos = this._alongPoly(p.pts, u);
       const ahead = this._alongPoly(p.pts, Math.min(1, u + 0.03));
       const climb = Math.max(0, p.t - 0.82) * 80;                 // rotate/lift off after ~80% of the run
-      p.mesh.position.set(pos.x, 0.5 + climb, pos.z);
+      p.mesh.position.set(pos.x, this._roadY(pos.x, pos.z) + 0.5 + climb, pos.z);
       p.mesh.rotation.y = Math.atan2(ahead.x - pos.x, ahead.z - pos.z);
       p.mesh.visible = p.t <= 1.2;
     }
@@ -2247,7 +2247,7 @@ export class Scene3D {
         if (acc + d <= builtLen) { built.push({ x: wp[i].x, z: wp[i].z }); acc += d; }
         else { const t = d ? (builtLen - acc) / d : 0; built.push({ x: wp[i - 1].x + (wp[i].x - wp[i - 1].x) * t, z: wp[i - 1].z + (wp[i].z - wp[i - 1].z) * t }); break; }
       }
-      const toV = (p) => new THREE.Vector3(p.x, 0, p.z);
+      const toV = (p) => new THREE.Vector3(p.x, this._roadY(p.x, p.z), p.z); // construction ribbon follows the terrain too
       // match the finished road's footprint so the look doesn't jump on completion
       const T = ROAD_TYPES[w.type] || ROAD_TYPES.road;
       const hw = w.kind === 'rail' ? 1.7 : w.kind === 'air' ? T.width / 2 : (T.renderHW || T.width / 2 + 0.35);

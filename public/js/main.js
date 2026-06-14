@@ -44,9 +44,8 @@ const SUN_CAP = 0.5;                // max in-game days/sec the day-night cycle 
 // more than FLAT_TOL, the player pays EARTHWORK_RATE per m³ of earth moved to level it.
 const FLAT_TOL = 1.5;               // metres of height variation tolerated before clearing/flattening is required
 const EARTHWORK_RATE = 0.012;       // $M per m³ of cut/fill (× live price index)
-// A railway crossing ground more than RAIL_HILL_TOL above its grade can be bored
-// as a tunnel instead of climbing over; the bore costs TUNNEL_RATE per m³ of rock.
-const RAIL_HILL_TOL = 2.5;          // metres above grade before a tunnel is offered
+// A railway crossing a hill TALLER than the tunnel (see _railProfile.hasTunnel) can
+// be bored through instead of climbing over; the bore costs TUNNEL_RATE per m³ of rock.
 const TUNNEL_RATE = 0.02;           // $M per m³ of rock bored (× live price index)
 const currentRate = () => G.dayRate * SPEED_MULT[G.speed];
 
@@ -75,7 +74,7 @@ const G = {
 // ===========================================================================
 // Boot
 // ===========================================================================
-const BUILD = '2026-06-14 · runway-cut-breakdown v25';
+const BUILD = '2026-06-14 · tunnel-needs-tall-hill v26';
 function boot() {
   console.log('%cSG build: ' + BUILD, 'font-weight:bold;color:#11a39c');
   const vEl = document.querySelector('.version'); if (vEl) vEl.textContent = 'build ' + BUILD;
@@ -528,10 +527,12 @@ function onRouteDrawn(pts, opts = {}) {
   // extra for the excavation). Only offered when the route actually crosses a hill.
   if (T.rail) {
     const prof = G.view._railProfile(route.map((p) => ({ x: p.x, z: p.z })), 2.0);
-    if (prof.maxAbove > RAIL_HILL_TOL) {
+    // only offer a tunnel through a hill TALLER than the tunnel (else the portals
+    // would poke out of low ground and look wrong) — prof.hasTunnel checks this.
+    if (prof.hasTunnel) {
       const bore = priced(TUNNEL_RATE * prof.boreVolume, G.state);
       const tTotal = cost + bore, tDays = days + Math.min(90, Math.round(prof.boreVolume / 300));
-      detail = `${Math.round(len)} m railway — ⛰ crosses high ground (up to ${prof.maxAbove.toFixed(1)} m above grade).<br>` +
+      detail = `${Math.round(len)} m railway — ⛰ crosses a hill (up to ${prof.maxAbove.toFixed(1)} m above grade).<br>` +
         `⛰ <b>Over</b> the hill ${money(cost)}<br>` +
         `🚇 <b>Tunnel</b> through — bore ${Math.round(prof.boreVolume).toLocaleString()} m³ (~${Math.round(prof.buriedLen)} m): track ${money(cost)} + ${money(bore)} = <b>${money(tTotal)}</b>`;
       promptCommit({

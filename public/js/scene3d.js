@@ -2430,10 +2430,10 @@ export class Scene3D {
     }
     const carves = [];
     for (const prof of tunnels) {
-      const { dense, grade, buried } = prof;
+      const { dense, grade, tunnelMask } = prof;
       for (let i = 1; i < dense.length; i++) {
-        if (buried[i] === buried[i - 1]) continue;                       // a mouth: open ↔ buried
-        const openIdx = buried[i] ? i - 1 : i, hillIdx = buried[i] ? i : i - 1;
+        if (tunnelMask[i] === tunnelMask[i - 1]) continue;               // a mouth: open ↔ tunnelled hill
+        const openIdx = tunnelMask[i] ? i - 1 : i, hillIdx = tunnelMask[i] ? i : i - 1;
         const m = dense[openIdx], hp = dense[hillIdx];
         let tx = hp.x - m.x, tz = hp.z - m.z; const l = Math.hypot(tx, tz) || 1; tx /= l; tz /= l;
         // a generous approach cutting (several terrain-mesh cells wide/long) so the
@@ -2472,48 +2472,58 @@ export class Scene3D {
     this._clearNatureAlong(pts, 1.6);          // clear trees along the track
   }
   // Profile a railway against a straight grade between its endpoints: where the
-  // ground rises above that grade the line is "buried" (would need a tunnel).
-  // Returns the dense centreline, per-sample grade, a buried flag, the bored
-  // rock volume and the buried length. Used for both costing and rendering.
+  // ground rises above that grade the line is "buried". A tunnel is only worth it
+  // (and only looks right) where the hill is TALLER than the tunnel itself, so we
+  // additionally mark `tunnelMask` = buried samples that belong to a hill whose peak
+  // rises above TUNNEL_MIN_HILL — shallow bumps stay surface track (ridden over).
   _railProfile(pts2d, halfW) {
+    const TUNNEL_MIN_HILL = 4.5;             // hill must clear the ~3 m portal + cover
     const dense = this._resamplePoly(pts2d, 1.5);
-    if (dense.length < 2) return { dense, grade: [], buried: [], buriedLen: 0, boreVolume: 0, maxAbove: 0, len: 0 };
+    if (dense.length < 2) return { dense, grade: [], buried: [], tunnelMask: [], hasTunnel: false, buriedLen: 0, boreVolume: 0, maxAbove: 0, len: 0 };
     const arc = [0]; let len = 0;
     for (let i = 1; i < dense.length; i++) { len += Math.hypot(dense[i].x - dense[i - 1].x, dense[i].z - dense[i - 1].z); arc.push(len); }
     const y0 = this._roadY(dense[0].x, dense[0].z), y1 = this._roadY(dense[dense.length - 1].x, dense[dense.length - 1].z);
     const width = (halfW || 2) * 2;
-    const grade = [], buried = []; let buriedLen = 0, boreVolume = 0, maxAbove = 0;
+    const grade = [], buried = [], above = []; let maxAbove = 0;
     for (let i = 0; i < dense.length; i++) {
       const gY = len ? y0 + (y1 - y0) * (arc[i] / len) : y0;
       grade.push(gY);
-      const above = this._roadY(dense[i].x, dense[i].z) - gY;
-      if (above > maxAbove) maxAbove = above;
-      const segLen = i ? (arc[i] - arc[i - 1]) : 0;
-      const isBuried = above > 1.0;             // ground a metre or more above grade → inside the hill
-      buried.push(isBuried);
-      if (isBuried) { buriedLen += segLen; boreVolume += above * segLen * width; }
+      const a = this._roadY(dense[i].x, dense[i].z) - gY; above.push(a);
+      if (a > maxAbove) maxAbove = a;
+      buried.push(a > 1.0);                   // a metre or more above grade → inside the hill
     }
-    return { dense, grade, buried, buriedLen, boreVolume, maxAbove, len };
+    // promote only the buried runs whose hill peak clears the tunnel height
+    const tunnelMask = new Array(dense.length).fill(false);
+    for (let i = 0; i < dense.length;) {
+      if (!buried[i]) { i++; continue; }
+      let j = i, peak = 0; while (j < dense.length && buried[j]) { if (above[j] > peak) peak = above[j]; j++; }
+      if (peak > TUNNEL_MIN_HILL) for (let k = i; k < j; k++) tunnelMask[k] = true;
+      i = j;
+    }
+    let buriedLen = 0, boreVolume = 0;
+    for (let i = 1; i < dense.length; i++) if (tunnelMask[i]) { const segLen = arc[i] - arc[i - 1]; buriedLen += segLen; boreVolume += Math.max(0, above[i]) * segLen * width; }
+    return { dense, grade, buried, tunnelMask, hasTunnel: tunnelMask.some(Boolean), buriedLen, boreVolume, maxAbove, len };
   }
   // Render a tunnelled railway from its profile: open track on the approaches (at
   // terrain grade, now sitting in the carved cutting), nothing where it runs inside
   // the hill, and a concrete portal nestled into each carved mouth.
   _buildRailTunnel(g, prof) {
-    const { dense, grade, buried } = prof;
+    const { dense, grade, tunnelMask } = prof;
     if (!dense || dense.length < 2) return;
-    const yAt = (i) => buried[i] ? grade[i] : this._roadY(dense[i].x, dense[i].z);
-    // draw each contiguous open (non-buried) stretch as its own piece of track
+    const yAt = (i) => tunnelMask[i] ? grade[i] : this._roadY(dense[i].x, dense[i].z);
+    // draw each contiguous open (not-tunnelled) stretch as its own piece of track —
+    // shallow bumps ride over the ground; only tall hills are bored through
     let run = [];
     const flush = () => { if (run.length >= 2) this._railTrack(g, run); run = []; };
     for (let i = 0; i < dense.length; i++) {
-      if (buried[i]) flush();
+      if (tunnelMask[i]) flush();
       else run.push(new THREE.Vector3(dense[i].x, yAt(i), dense[i].z));
     }
     flush();
-    // a portal wherever the line crosses between open ground and the hill
+    // a portal wherever the line crosses between open ground and a tunnelled hill
     for (let i = 1; i < dense.length; i++) {
-      if (buried[i] === buried[i - 1]) continue;
-      const openIdx = buried[i] ? i - 1 : i, hillIdx = buried[i] ? i : i - 1;
+      if (tunnelMask[i] === tunnelMask[i - 1]) continue;
+      const openIdx = tunnelMask[i] ? i - 1 : i, hillIdx = tunnelMask[i] ? i : i - 1;
       const op = dense[openIdx], hp = dense[hillIdx];
       this._addTunnelPortal(g, op.x, grade[openIdx], op.z, Math.atan2(hp.x - op.x, hp.z - op.z));
     }

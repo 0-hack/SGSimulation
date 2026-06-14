@@ -521,7 +521,31 @@ export class Scene3D {
     const valley = smoothstep(0.5, 5.0, wd);               // 0 at water, 1 a few cells away
     const cd = this.coastDist ? this.coastDist[cy][cx] : 99;
     const coast = smoothstep(0.5, 4.0, cd);                // 0 at the shoreline, 1 inland
-    return Math.max(0, h * valley * coast);
+    let H = Math.max(0, h * valley * coast);
+    if (this._carves) { const wx = (nx - 0.5) * WORLD, wz = (0.5 - ny) * WORLD; H = this._applyCarves(wx, wz, H); }
+    return H;
+  }
+  // Lower the heightfield inside the recorded tunnel-mouth recesses so a portal
+  // sits in a real cutting instead of poking out of an un-cut hillside. Each carve
+  // is a capsule along the track: cut down to the track floor at the mouth, ramping
+  // back up to the natural ground by its inner end (so the hill closes over the bore).
+  _applyCarves(x, z, H) {
+    const cs = this._carves; if (!cs || !cs.length) return H;
+    let h = H;
+    for (let k = 0; k < cs.length; k++) {
+      const c = cs[k];
+      const dx = x - c.x, dz = z - c.z;
+      const u = dx * c.tx + dz * c.tz;               // distance along the inward tangent from the mouth
+      if (u < -c.outset || u > c.length) continue;
+      const lat = Math.abs(dx * c.nx + dz * c.nz);   // lateral distance from the track axis
+      if (lat > c.halfW + c.blend) continue;
+      const along = u < 0 ? 0 : u;
+      const floor = c.floor + (along / c.length) * Math.max(0, H - c.floor);  // ramps to natural by the inner end
+      const kk = lat <= c.halfW ? 0 : (lat - c.halfW) / c.blend;              // 0 at centre → 1 at the outer edge
+      const target = floor + kk * (H - floor);
+      if (target < h) h = target;
+    }
+    return h;
   }
   // Elevation at the centre of grid cell (cx,cy) — for placing trees & buildings.
   terrainHeight(cx, cy) { return this._terrainHN((cx + 0.5) / N, (cy + 0.5) / N); }
@@ -2225,16 +2249,39 @@ export class Scene3D {
   _buildPlayerRailways(state) {
     if (this._pRailGroup) this.scene.remove(this._pRailGroup);
     const g = new THREE.Group(); this.scene.add(g); this._pRailGroup = g;
+    // Profile tunnels against the RAW hill (ignore existing carves) so the mouths
+    // are stable, then carve a recess at each mouth before re-cutting the terrain.
+    this._carves = null;
+    const surfaces = [], tunnels = [];
     for (const entry of ((state && state.railways) || [])) {
       // entries are legacy [[x,z],…] arrays or new { pts:[[x,z],…], tunnel } objects
       const poly = Array.isArray(entry) ? entry : (entry && entry.pts);
       if (!poly || poly.length < 2) continue;
-      const tunnel = !Array.isArray(entry) && !!entry.tunnel;
-      if (tunnel) { this._buildRailTunnel(g, poly); continue; }
-      const dense = this._resamplePoly(poly.map(([x, z]) => ({ x, z })), 1.4);     // even spacing for clean ties & rails
-      const pts = dense.map((q) => new THREE.Vector3(q.x, this._roadY(q.x, q.z), q.z)); // sit on the terrain
-      this._railTrack(g, pts);
+      if (!Array.isArray(entry) && entry.tunnel) tunnels.push(this._railProfile(poly.map(([x, z]) => ({ x, z })), 2.0));
+      else surfaces.push(poly);
     }
+    const carves = [];
+    for (const prof of tunnels) {
+      const { dense, grade, buried } = prof;
+      for (let i = 1; i < dense.length; i++) {
+        if (buried[i] === buried[i - 1]) continue;                       // a mouth: open ↔ buried
+        const openIdx = buried[i] ? i - 1 : i, hillIdx = buried[i] ? i : i - 1;
+        const m = dense[openIdx], hp = dense[hillIdx];
+        let tx = hp.x - m.x, tz = hp.z - m.z; const l = Math.hypot(tx, tz) || 1; tx /= l; tz /= l;
+        // a generous approach cutting (several terrain-mesh cells wide/long) so the
+        // recess actually renders on the coarse heightfield, not just in _roadY
+        carves.push({ x: m.x, z: m.z, tx, tz, nx: -tz, nz: tx, length: 26, halfW: 5.5, blend: 11, floor: grade[openIdx] - 0.6, outset: 9 });
+      }
+    }
+    this._carves = carves.length ? carves : null;
+    const sig = carves.map((c) => `${c.x.toFixed(1)},${c.z.toFixed(1)},${c.tx.toFixed(2)}`).join('|');
+    if (sig !== (this._carveSig ?? '')) { this._carveSig = sig; this._buildTerrain(); }   // re-cut the hill mesh to match
+    // Render: surface track follows the (now carved) terrain; tunnels use their profile.
+    for (const poly of surfaces) {
+      const dense = this._resamplePoly(poly.map(([x, z]) => ({ x, z })), 1.4);     // even spacing for clean ties & rails
+      this._railTrack(g, dense.map((q) => new THREE.Vector3(q.x, this._roadY(q.x, q.z), q.z)));
+    }
+    for (const prof of tunnels) this._buildRailTunnel(g, prof);
   }
   // Lay ballast, sleepers and rails along a polyline of Vector3 points (already at
   // the desired height). Shared by surface track and the open mouths of tunnels.
@@ -2281,12 +2328,12 @@ export class Scene3D {
     }
     return { dense, grade, buried, buriedLen, boreVolume, maxAbove, len };
   }
-  // Render a tunnelled railway: open track on the approaches (at terrain grade),
-  // nothing where it runs inside the hill, and a concrete portal at each mouth.
-  _buildRailTunnel(g, poly) {
-    const prof = this._railProfile(poly.map(([x, z]) => ({ x, z })), 2.0);
+  // Render a tunnelled railway from its profile: open track on the approaches (at
+  // terrain grade, now sitting in the carved cutting), nothing where it runs inside
+  // the hill, and a concrete portal nestled into each carved mouth.
+  _buildRailTunnel(g, prof) {
     const { dense, grade, buried } = prof;
-    if (dense.length < 2) return;
+    if (!dense || dense.length < 2) return;
     const yAt = (i) => buried[i] ? grade[i] : this._roadY(dense[i].x, dense[i].z);
     // draw each contiguous open (non-buried) stretch as its own piece of track
     let run = [];
@@ -2301,21 +2348,27 @@ export class Scene3D {
       if (buried[i] === buried[i - 1]) continue;
       const openIdx = buried[i] ? i - 1 : i, hillIdx = buried[i] ? i : i - 1;
       const op = dense[openIdx], hp = dense[hillIdx];
-      this._addTunnelPortal(g, op.x, yAt(openIdx), op.z, Math.atan2(hp.x - op.x, hp.z - op.z));
+      this._addTunnelPortal(g, op.x, grade[openIdx], op.z, Math.atan2(hp.x - op.x, hp.z - op.z));
     }
   }
-  // A concrete tunnel portal at (x,y,z), facing along the track (rotY): a facade
-  // wall set into the hillside with a dark bored mouth poking out of it.
+  // A concrete tunnel portal at (x,y,z) — y is the track level — facing along the
+  // track (local +Z runs into the hill). Built to nestle into the carved recess:
+  // the headwall is rooted below grade and kept low, with splayed wing walls that
+  // retain the cutting on the open approach so it ties into the slope.
   _addTunnelPortal(g, x, y, z, rotY) {
     const grp = new THREE.Group();
     const concrete = toon(0x8d897f);
-    const wall = new THREE.Mesh(new THREE.BoxGeometry(5.4, 3.9, 0.7), concrete);
-    wall.position.set(0, 1.75, 0.25); wall.castShadow = true; wall.receiveShadow = true; grp.add(wall);
-    const cap = new THREE.Mesh(new THREE.BoxGeometry(6.0, 0.5, 0.95), concrete);   // cornice along the top
-    cap.position.set(0, 3.6, 0.3); grp.add(cap);
-    const bore = new THREE.Mesh(new THREE.CylinderGeometry(1.7, 1.7, 3.4, 20), toon(0x070809));
-    bore.rotation.x = Math.PI / 2;                 // lay the cylinder so its axis runs into the hill (+Z)
-    bore.position.set(0, 1.6, 1.4); grp.add(bore);
+    const wall = new THREE.Mesh(new THREE.BoxGeometry(5.0, 3.6, 0.7), concrete);   // headwall, base sunk below grade
+    wall.position.set(0, 1.0, 0.55); wall.castShadow = true; wall.receiveShadow = true; grp.add(wall);
+    const cap = new THREE.Mesh(new THREE.BoxGeometry(5.4, 0.45, 0.95), concrete);  // cornice along the top
+    cap.position.set(0, 2.65, 0.6); grp.add(cap);
+    const bore = new THREE.Mesh(new THREE.CylinderGeometry(1.55, 1.55, 3.8, 20), toon(0x070809));
+    bore.rotation.x = Math.PI / 2;                 // axis runs into the hill (+Z)
+    bore.position.set(0, 1.15, 1.7); grp.add(bore);
+    for (const sgn of [-1, 1]) {                   // wing walls splaying out into the cutting on the open side
+      const wing = new THREE.Mesh(new THREE.BoxGeometry(0.45, 2.4, 3.6), concrete);
+      wing.position.set(sgn * 2.3, 0.55, -1.0); wing.rotation.y = sgn * 0.34; wing.receiveShadow = true; grp.add(wing);
+    }
     grp.position.set(x, y, z); grp.rotation.y = rotY; g.add(grp);
   }
   // Render finished player-drawn airport runways: a wide asphalt strip with pale

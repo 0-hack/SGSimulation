@@ -78,6 +78,23 @@ try {
   ok(render.children > 0, 'tunnelled + legacy railways rendered into the scene');
   ok(render.bores >= 2, `tunnel portals rendered (${render.bores} bore mouths for entry/exit)`);
 
+  // The mouth must sit in a carved recess (not poke out of an un-cut hill): the
+  // terrain just inside a mouth is cut down well below the raw hill height.
+  const carve = await p.evaluate((b)=>{
+    const v=window.__sgview;
+    const pts2d=[]; for (let i=-7;i<=7;i++) pts2d.push({x:b.X+b.dir[0]*i*4, z:b.Z+b.dir[1]*i*4});
+    const saved=v._carves; v._carves=null;
+    const prof=v._railProfile(pts2d, 2.0);             // raw profile (carves bypassed)
+    let mi=-1; for (let i=1;i<prof.dense.length;i++){ if(prof.buried[i]!==prof.buried[i-1]){ mi=i; break; } }
+    const m=prof.dense[mi];
+    const ix=m.x+b.dir[0]*4, iz=m.z+b.dir[1]*4;        // a point ~4 m inside the mouth
+    const raw=v._heightAt(ix, iz);
+    v._carves=saved;                                   // restore the carves the build set
+    const cut=v._heightAt(ix, iz);
+    return { raw, cut, drop: raw-cut };
+  }, probe.best);
+  ok(carve.drop > 2, `terrain carved down at the mouth so the portal nestles in (raw ${carve.raw.toFixed(1)} m → cut ${carve.cut.toFixed(1)} m, −${carve.drop.toFixed(1)} m)`);
+
   // A railway on flat ground must NOT offer a tunnel (single Build button).
   const flat = await p.evaluate(()=>{
     const v=window.__sgview;

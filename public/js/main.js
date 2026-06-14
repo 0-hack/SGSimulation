@@ -66,7 +66,7 @@ const G = {
 // ===========================================================================
 // Boot
 // ===========================================================================
-const BUILD = '2026-06-14 · terrain-accurate-cursor v6';
+const BUILD = '2026-06-14 · straight-stays-straight v7';
 function boot() {
   console.log('%cSG build: ' + BUILD, 'font-weight:bold;color:#11a39c');
   const vEl = document.querySelector('.version'); if (vEl) vEl.textContent = 'build ' + BUILD;
@@ -516,7 +516,7 @@ function onRouteDrawn(pts) {
       const total = Math.max(8, Math.min(80, Math.round(len / 8)));
       G.state.treasury -= cost;
       const kind = T.air ? 'air' : T.rail ? 'rail' : 'road';
-      const route = smoothRoute(pts, 4);   // flowing curve, not straight segments
+      const route = smoothRoute(pts, Math.max(4, (G.view?.cam?.radius || 70) * 0.05));   // straight stays straight, real bends flow (tolerance scales with zoom)
       addRoadwork(G.state, { pts: route, kind, type: G.road.type, lanes: T.lanes, elevated: G.road.elevated, total });
       G.view.syncRoadworks(G.state);
       G.view.clearRoadPreview();

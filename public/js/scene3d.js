@@ -1401,8 +1401,8 @@ export class Scene3D {
     if (this._drawPreviewGroup) this.scene.remove(this._drawPreviewGroup);
     const g = new THREE.Group(); this.scene.add(g); this._drawPreviewGroup = g;
     if (!pts || !pts.length) return;
-    // smooth the live stroke so the preview flows like the finished road
-    const sm = smoothRoute(pts, 3);
+    // smooth the live stroke so the preview matches the finished road (same zoom-scaled tolerance)
+    const sm = smoothRoute(pts, Math.max(4, this.cam.radius * 0.05));
     const V = sm.map((q) => new THREE.Vector3(q.x, this._roadY(q.x, q.z), q.z));
     // a terrain-FOLLOWING ribbon (per-point height) — a flat ribbon would sink
     // under the hills and vanish, which is why the preview wasn't visible before.

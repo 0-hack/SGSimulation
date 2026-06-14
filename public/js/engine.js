@@ -308,27 +308,34 @@ export function routeLength(pts) {
 // polyline becomes a genuinely smooth, flowing curve — independent of how jittery the
 // input was (Catmull-Rom passes *through* the points, so it kept hand-drawn kinks).
 // Endpoints are preserved. `iterations` controls how round it gets.
-export function smoothRoute(pts, iterations = 3) {
+// Perpendicular distance from point p to the segment a-b.
+function _segDist(p, a, b) {
+  const dx = b.x - a.x, dz = b.z - a.z, l2 = dx * dx + dz * dz;
+  if (l2 === 0) return Math.hypot(p.x - a.x, p.z - a.z);
+  let t = ((p.x - a.x) * dx + (p.z - a.z) * dz) / l2; t = Math.max(0, Math.min(1, t));
+  return Math.hypot(p.x - (a.x + t * dx), p.z - (a.z + t * dz));
+}
+// Ramer–Douglas–Peucker: drop points that lie within `eps` of the line through the
+// kept points. Straight runs collapse to a straight line; only genuine bends survive.
+function _rdp(pts, eps) {
+  if (pts.length < 3) return pts.slice();
+  let maxD = 0, idx = 0; const a = pts[0], b = pts[pts.length - 1];
+  for (let i = 1; i < pts.length - 1; i++) { const d = _segDist(pts[i], a, b); if (d > maxD) { maxD = d; idx = i; } }
+  if (maxD > eps) {
+    const left = _rdp(pts.slice(0, idx + 1), eps), right = _rdp(pts.slice(idx), eps);
+    return left.slice(0, -1).concat(right);
+  }
+  return [a, b];
+}
+// Turn a hand-drawn stroke into a clean route: SIMPLIFY first (so a line you meant
+// to be straight stays straight and hand jitter is removed), then gently round the
+// remaining genuine bends so deliberate curves flow. `eps` is the simplify tolerance.
+export function smoothRoute(pts, eps = 4) {
   let P = (pts || []).map((p) => ({ x: p.x, z: p.z }));
   if (P.length < 3) return P;
-  // 1) RESAMPLE to even ~2.5-unit spacing — caps point density and gives the next
-  //    passes a uniform polyline to work on, regardless of how fast it was drawn.
-  const STEP = 2.5, rs = [P[0]];
-  for (let i = 1; i < P.length; i++) {
-    let a = rs[rs.length - 1], b = P[i], d = Math.hypot(b.x - a.x, b.z - a.z);
-    while (d >= STEP) { const t = STEP / d; a = { x: a.x + (b.x - a.x) * t, z: a.z + (b.z - a.z) * t }; rs.push(a); d = Math.hypot(b.x - a.x, b.z - a.z); }
-  }
-  const lastP = P[P.length - 1]; if (Math.hypot(lastP.x - rs[rs.length - 1].x, lastP.z - rs[rs.length - 1].z) > 0.5) rs.push(lastP);
-  P = rs;
-  if (P.length < 3) return P;
-  // 2) LOW-PASS (weighted moving average, endpoints fixed) — removes hand jitter
-  for (let pass = 0; pass < 2; pass++) {
-    const sm = [P[0]];
-    for (let i = 1; i < P.length - 1; i++) sm.push({ x: (P[i - 1].x + 2 * P[i].x + P[i + 1].x) / 4, z: (P[i - 1].z + 2 * P[i].z + P[i + 1].z) / 4 });
-    sm.push(P[P.length - 1]); P = sm;
-  }
-  // 3) CHAIKIN corner-cutting — rounds every remaining corner into a flowing curve
-  for (let it = 0; it < iterations; it++) {
+  P = _rdp(P, eps);                 // straight sections -> just their endpoints; jitter gone
+  if (P.length < 3) return P;       // a straight line stays perfectly straight
+  for (let it = 0; it < 2; it++) {  // Chaikin: round only the bends that survived simplification
     const out = [P[0]];
     for (let i = 0; i < P.length - 1; i++) {
       const a = P[i], b = P[i + 1];

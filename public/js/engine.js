@@ -378,7 +378,7 @@ export function addRoadwork(state, route) {
   if (!state.roadworks) state.roadworks = [];
   state.roadworks.push({
     pts: route.pts, kind: route.kind || 'road', type: route.type || 'road',
-    lanes: route.lanes || 2, elevated: !!route.elevated,
+    lanes: route.lanes || 2, elevated: !!route.elevated, tunnel: !!route.tunnel,
     total: route.total, left: route.total,
   });
   return { ok: true };
@@ -391,7 +391,8 @@ function advanceRoadworks(state) {
     w.left -= 1;
     if (w.left > 0) { still.push(w); continue; }
     if (w.kind === 'rail') {
-      (state.railways || (state.railways = [])).push(w.pts.map((p) => [p.x, p.z]));
+      // store geometry + the tunnel flag so the renderer knows to bore through hills
+      (state.railways || (state.railways = [])).push({ pts: w.pts.map((p) => [p.x, p.z]), tunnel: !!w.tunnel });
     } else if (w.kind === 'air') {
       (state.airstrips || (state.airstrips = [])).push(w.pts.map((p) => [p.x, p.z]));
     } else {

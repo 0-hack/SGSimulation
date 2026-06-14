@@ -102,6 +102,9 @@ svg { display: block; width: 100%; height: 100%; }
 .draw-confirm .dc-cancel:hover { background: rgba(255,255,255,0.28); }
 .draw-confirm .dc-build { background: var(--teal, #11a39c); color: #fff; }
 .draw-confirm .dc-build:hover { filter: brightness(1.08); }
+.draw-confirm .dc-actions { display: flex; flex-direction: column; gap: 6px; }
+.draw-confirm .dc-alt { background: rgba(255,255,255,0.16); color: #fff; }
+.draw-confirm .dc-alt:hover { background: rgba(255,255,255,0.28); }
 
 /* ---- edit mode: time & the world are paused so you can build calmly -------- */
 /* a soft pulsing frame around the viewport makes it obvious editing is on */

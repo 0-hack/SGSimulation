@@ -2225,27 +2225,98 @@ export class Scene3D {
   _buildPlayerRailways(state) {
     if (this._pRailGroup) this.scene.remove(this._pRailGroup);
     const g = new THREE.Group(); this.scene.add(g); this._pRailGroup = g;
-    for (const poly of ((state && state.railways) || [])) {
+    for (const entry of ((state && state.railways) || [])) {
+      // entries are legacy [[x,z],…] arrays or new { pts:[[x,z],…], tunnel } objects
+      const poly = Array.isArray(entry) ? entry : (entry && entry.pts);
       if (!poly || poly.length < 2) continue;
+      const tunnel = !Array.isArray(entry) && !!entry.tunnel;
+      if (tunnel) { this._buildRailTunnel(g, poly); continue; }
       const dense = this._resamplePoly(poly.map(([x, z]) => ({ x, z })), 1.4);     // even spacing for clean ties & rails
       const pts = dense.map((q) => new THREE.Vector3(q.x, this._roadY(q.x, q.z), q.z)); // sit on the terrain
-      const nrm = pts.map((p, i) => { const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)]; let tx = b.x - a.x, tz = b.z - a.z; const l = Math.hypot(tx, tz) || 1; return [-tz / l, tx / l]; });
-      this._addRibbon(g, pts, 1.55, 0x6e6457, 0.08);                                // grey gravel ballast bed
-      // wooden cross-ties (sleepers) at even intervals across the track
-      let acc = 999;
-      for (let i = 0; i < pts.length; i++) {
-        acc += (i ? Math.hypot(pts[i].x - pts[i - 1].x, pts[i].z - pts[i - 1].z) : 0);
-        if (acc < 2.2) continue; acc = 0;
-        const slp = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.18, 2.5), toon(0x4a3a2a));
-        slp.position.set(pts[i].x, pts[i].y + 0.16, pts[i].z); slp.rotation.y = Math.atan2(nrm[i][0], nrm[i][1]); slp.castShadow = true; g.add(slp);
-      }
-      // two steel rails on top of the ties
-      for (const sgn of [-1, 1]) {
-        const rail = pts.map((p, i) => new THREE.Vector3(p.x + nrm[i][0] * 0.62 * sgn, p.y + 0.26, p.z + nrm[i][1] * 0.62 * sgn));
-        this._addRibbon(g, rail, 0.09, 0xc7ccd1, 0.0);
-      }
-      this._clearNatureAlong(pts, 1.6);          // clear trees along the track
+      this._railTrack(g, pts);
     }
+  }
+  // Lay ballast, sleepers and rails along a polyline of Vector3 points (already at
+  // the desired height). Shared by surface track and the open mouths of tunnels.
+  _railTrack(g, pts) {
+    if (!pts || pts.length < 2) return;
+    const nrm = pts.map((p, i) => { const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)]; let tx = b.x - a.x, tz = b.z - a.z; const l = Math.hypot(tx, tz) || 1; return [-tz / l, tx / l]; });
+    this._addRibbon(g, pts, 1.55, 0x6e6457, 0.08);                                // grey gravel ballast bed
+    // wooden cross-ties (sleepers) at even intervals across the track
+    let acc = 999;
+    for (let i = 0; i < pts.length; i++) {
+      acc += (i ? Math.hypot(pts[i].x - pts[i - 1].x, pts[i].z - pts[i - 1].z) : 0);
+      if (acc < 2.2) continue; acc = 0;
+      const slp = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.18, 2.5), toon(0x4a3a2a));
+      slp.position.set(pts[i].x, pts[i].y + 0.16, pts[i].z); slp.rotation.y = Math.atan2(nrm[i][0], nrm[i][1]); slp.castShadow = true; g.add(slp);
+    }
+    // two steel rails on top of the ties
+    for (const sgn of [-1, 1]) {
+      const rail = pts.map((p, i) => new THREE.Vector3(p.x + nrm[i][0] * 0.62 * sgn, p.y + 0.26, p.z + nrm[i][1] * 0.62 * sgn));
+      this._addRibbon(g, rail, 0.09, 0xc7ccd1, 0.0);
+    }
+    this._clearNatureAlong(pts, 1.6);          // clear trees along the track
+  }
+  // Profile a railway against a straight grade between its endpoints: where the
+  // ground rises above that grade the line is "buried" (would need a tunnel).
+  // Returns the dense centreline, per-sample grade, a buried flag, the bored
+  // rock volume and the buried length. Used for both costing and rendering.
+  _railProfile(pts2d, halfW) {
+    const dense = this._resamplePoly(pts2d, 1.5);
+    if (dense.length < 2) return { dense, grade: [], buried: [], buriedLen: 0, boreVolume: 0, maxAbove: 0, len: 0 };
+    const arc = [0]; let len = 0;
+    for (let i = 1; i < dense.length; i++) { len += Math.hypot(dense[i].x - dense[i - 1].x, dense[i].z - dense[i - 1].z); arc.push(len); }
+    const y0 = this._roadY(dense[0].x, dense[0].z), y1 = this._roadY(dense[dense.length - 1].x, dense[dense.length - 1].z);
+    const width = (halfW || 2) * 2;
+    const grade = [], buried = []; let buriedLen = 0, boreVolume = 0, maxAbove = 0;
+    for (let i = 0; i < dense.length; i++) {
+      const gY = len ? y0 + (y1 - y0) * (arc[i] / len) : y0;
+      grade.push(gY);
+      const above = this._roadY(dense[i].x, dense[i].z) - gY;
+      if (above > maxAbove) maxAbove = above;
+      const segLen = i ? (arc[i] - arc[i - 1]) : 0;
+      const isBuried = above > 1.0;             // ground a metre or more above grade → inside the hill
+      buried.push(isBuried);
+      if (isBuried) { buriedLen += segLen; boreVolume += above * segLen * width; }
+    }
+    return { dense, grade, buried, buriedLen, boreVolume, maxAbove, len };
+  }
+  // Render a tunnelled railway: open track on the approaches (at terrain grade),
+  // nothing where it runs inside the hill, and a concrete portal at each mouth.
+  _buildRailTunnel(g, poly) {
+    const prof = this._railProfile(poly.map(([x, z]) => ({ x, z })), 2.0);
+    const { dense, grade, buried } = prof;
+    if (dense.length < 2) return;
+    const yAt = (i) => buried[i] ? grade[i] : this._roadY(dense[i].x, dense[i].z);
+    // draw each contiguous open (non-buried) stretch as its own piece of track
+    let run = [];
+    const flush = () => { if (run.length >= 2) this._railTrack(g, run); run = []; };
+    for (let i = 0; i < dense.length; i++) {
+      if (buried[i]) flush();
+      else run.push(new THREE.Vector3(dense[i].x, yAt(i), dense[i].z));
+    }
+    flush();
+    // a portal wherever the line crosses between open ground and the hill
+    for (let i = 1; i < dense.length; i++) {
+      if (buried[i] === buried[i - 1]) continue;
+      const openIdx = buried[i] ? i - 1 : i, hillIdx = buried[i] ? i : i - 1;
+      const op = dense[openIdx], hp = dense[hillIdx];
+      this._addTunnelPortal(g, op.x, yAt(openIdx), op.z, Math.atan2(hp.x - op.x, hp.z - op.z));
+    }
+  }
+  // A concrete tunnel portal at (x,y,z), facing along the track (rotY): a facade
+  // wall set into the hillside with a dark bored mouth poking out of it.
+  _addTunnelPortal(g, x, y, z, rotY) {
+    const grp = new THREE.Group();
+    const concrete = toon(0x8d897f);
+    const wall = new THREE.Mesh(new THREE.BoxGeometry(5.4, 3.9, 0.7), concrete);
+    wall.position.set(0, 1.75, 0.25); wall.castShadow = true; wall.receiveShadow = true; grp.add(wall);
+    const cap = new THREE.Mesh(new THREE.BoxGeometry(6.0, 0.5, 0.95), concrete);   // cornice along the top
+    cap.position.set(0, 3.6, 0.3); grp.add(cap);
+    const bore = new THREE.Mesh(new THREE.CylinderGeometry(1.7, 1.7, 3.4, 20), toon(0x070809));
+    bore.rotation.x = Math.PI / 2;                 // lay the cylinder so its axis runs into the hill (+Z)
+    bore.position.set(0, 1.6, 1.4); grp.add(bore);
+    grp.position.set(x, y, z); grp.rotation.y = rotY; g.add(grp);
   }
   // Render finished player-drawn airport runways: a wide asphalt strip with pale
   // edge lines and a dashed centreline, and an airliner that taxis & takes off.

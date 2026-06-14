@@ -44,6 +44,10 @@ const SUN_CAP = 0.5;                // max in-game days/sec the day-night cycle 
 // more than FLAT_TOL, the player pays EARTHWORK_RATE per m³ of earth moved to level it.
 const FLAT_TOL = 2;                 // metres of height variation tolerated before levelling is required
 const EARTHWORK_RATE = 0.012;       // $M per m³ of cut/fill (× live price index)
+// A railway crossing ground more than RAIL_HILL_TOL above its grade can be bored
+// as a tunnel instead of climbing over; the bore costs TUNNEL_RATE per m³ of rock.
+const RAIL_HILL_TOL = 3;            // metres above grade before a tunnel is offered
+const TUNNEL_RATE = 0.02;           // $M per m³ of rock bored (× live price index)
 const currentRate = () => G.dayRate * SPEED_MULT[G.speed];
 
 const $ = (id) => document.getElementById(id);
@@ -71,7 +75,7 @@ const G = {
 // ===========================================================================
 // Boot
 // ===========================================================================
-const BUILD = '2026-06-14 · runway-flat-rule v14';
+const BUILD = '2026-06-14 · rail-tunnel-choice v15';
 function boot() {
   console.log('%cSG build: ' + BUILD, 'font-weight:bold;color:#11a39c');
   const vEl = document.querySelector('.version'); if (vEl) vEl.textContent = 'build ' + BUILD;
@@ -520,43 +524,80 @@ function onRouteDrawn(pts) {
   const cost = priced(T.cost * Math.max(1, len / 20), G.state);
   let total = cost, days = Math.max(8, Math.min(80, Math.round(len / 8)));
   let detail = `${Math.round(len)} m · ${money(cost)}`;
+  // Charge `amount`, queue construction, and (for railways) carry the tunnel flag.
+  const doBuild = (amount, buildDays, tunnel, note) => {
+    if (G.state.treasury < amount) { toast(`Need ${money(amount)} to build this ${T.name.toLowerCase()}.`); return; }
+    G.state.treasury -= amount;
+    const kind = T.air ? 'air' : T.rail ? 'rail' : 'road';
+    addRoadwork(G.state, { pts: route, kind, type: G.road.type, lanes: T.lanes, elevated: G.road.elevated, tunnel: !!tunnel, total: buildDays });
+    G.view.syncRoadworks(G.state);
+    G.view.clearRoadPreview();
+    afterEdit();
+    toast(`${T.name} — ${note || 'construction started'} (${money(amount)}).`);
+  };
+  const title = `${T.icon || ''} ${T.name}`;
   // HARD RULE: an airport runway must sit on flat ground. If the chosen strip is
   // uneven, the player pays for earthworks to level it (cost breakdown by volume).
-  let flatten = null;
   if (T.air) {
     const st = G.view._corridorTerrainStats(route, 4.5);
     if (st.range > FLAT_TOL) {
-      flatten = st;
       const fcost = priced(EARTHWORK_RATE * st.volume, G.state);
       total += fcost; days += Math.min(60, Math.round(st.volume / 350));
       detail = `${Math.round(len)} m runway — ⚠ ground is uneven (Δ${st.range.toFixed(1)} m).<br>` +
         `🛬 Runway ${money(cost)}<br>🏗 Level ${Math.round(st.volume).toLocaleString()} m³ ${money(fcost)}<br><b>Total ${money(total)}</b>`;
+      promptCommit({ title, detail, confirm: 'Build', onConfirm: () => doBuild(total, days, false, 'levelling ground & building') });
+      return;
     }
   }
-  promptCommit({
-    title: `${T.icon || ''} ${T.name}`,
-    detail,
-    confirm: 'Build',
-    onConfirm: () => {
-      if (G.state.treasury < total) { toast(`Need ${money(total)} to build this ${T.name.toLowerCase()}${flatten ? ' (incl. levelling)' : ''}.`); return; }
-      G.state.treasury -= total;
-      const kind = T.air ? 'air' : T.rail ? 'rail' : 'road';
-      addRoadwork(G.state, { pts: route, kind, type: G.road.type, lanes: T.lanes, elevated: G.road.elevated, total: days });
-      G.view.syncRoadworks(G.state);
-      G.view.clearRoadPreview();
-      afterEdit();
-      toast(flatten ? `${T.name} — levelling ground & building (${money(total)}).` : `${T.name} — construction started (${money(total)}).`);
-    },
-  });
+  // RAILWAY through high ground: offer a choice — run the line OVER the hill
+  // (cheaper, follows the slope) or bore a TUNNEL straight through it (costs
+  // extra for the excavation). Only offered when the route actually crosses a hill.
+  if (T.rail) {
+    const prof = G.view._railProfile(route.map((p) => ({ x: p.x, z: p.z })), 2.0);
+    if (prof.maxAbove > RAIL_HILL_TOL) {
+      const bore = priced(TUNNEL_RATE * prof.boreVolume, G.state);
+      const tTotal = cost + bore, tDays = days + Math.min(90, Math.round(prof.boreVolume / 300));
+      detail = `${Math.round(len)} m railway — ⛰ crosses high ground (up to ${prof.maxAbove.toFixed(1)} m above grade).<br>` +
+        `⛰ <b>Over</b> the hill ${money(cost)}<br>` +
+        `🚇 <b>Tunnel</b> through — bore ${Math.round(prof.boreVolume).toLocaleString()} m³ (~${Math.round(prof.buriedLen)} m): track ${money(cost)} + ${money(bore)} = <b>${money(tTotal)}</b>`;
+      promptCommit({
+        title, detail,
+        actions: [
+          { label: `⛰ Over ${money(cost)}`, onPick: () => doBuild(cost, days, false, 'laying track over the hill') },
+          { label: `🚇 Tunnel ${money(tTotal)}`, primary: true, onPick: () => doBuild(tTotal, tDays, true, 'boring the tunnel & laying track') },
+        ],
+      });
+      return;
+    }
+  }
+  promptCommit({ title, detail, confirm: 'Build', onConfirm: () => doBuild(total, days, false) });
 }
 // Bottom commit bar for a drawn route/area: shows the cost and Build / Cancel.
 // Cancel (or Esc) discards the drawing; confirm runs onConfirm.
-function promptCommit({ title, detail, confirm = 'Build', onConfirm }) {
-  G._pendingCommit = onConfirm;
+// `actions` (optional) renders several build choices (e.g. railway Over vs
+// Tunnel); otherwise a single Build button runs `onConfirm`.
+function promptCommit({ title, detail, confirm = 'Build', onConfirm, actions }) {
   const bar = $('draw-confirm');
   $('dc-title').textContent = title;
   $('dc-detail').innerHTML = detail;   // detail is built from our own strings (allows a breakdown with <br>)
-  $('dc-build').textContent = confirm;
+  const acts = $('dc-actions');
+  [...acts.querySelectorAll('.dc-dyn')].forEach((b) => b.remove());  // drop any buttons from a previous prompt
+  const build = $('dc-build');
+  if (actions && actions.length) {
+    build.classList.add('hidden');     // the single fixed Build button is unused for a multi-choice prompt
+    G._pendingCommit = null;
+    for (const a of actions) {
+      const b = document.createElement('button');
+      b.className = 'dc-dyn ' + (a.primary ? 'dc-build' : 'dc-alt');
+      b.textContent = a.label;
+      b.onclick = () => { closeCommit(false); a.onPick && a.onPick(); };
+      acts.appendChild(b);
+    }
+  } else {
+    build.classList.remove('hidden');
+    build.textContent = confirm;
+    G._pendingCommit = onConfirm;
+  }
   bar.classList.remove('hidden');
 }
 function closeCommit(discard) {

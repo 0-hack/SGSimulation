@@ -24,8 +24,8 @@ try {
   await p.evaluate(()=>[...document.querySelectorAll('.road-tool')].find(b=>/Straight/.test(b.textContent)).click());
   await new Promise(r=>setTimeout(r,200));
 
-  // tap two land cells (away from the protected reservoir) to lay a road
-  const before = await p.evaluate(()=>window.__sgview.state.roads.edges.length);
+  // tap two land cells to STAGE straight pieces (Lego flow), then Build to start work
+  const before = await p.evaluate(()=>({ edges:window.__sgview.state.roads.edges.length, rw:(window.__sgview.state.roadworks||[]).length }));
   const spots = await p.evaluate(()=>{
     const v=window.__sgview, N=v.land.length, c=Math.floor(N/2), out=[];
     // scan a column a little west of centre (avoids the seeded town) and pick
@@ -41,10 +41,15 @@ try {
   await new Promise(r=>setTimeout(r,150));
   await p.mouse.click(spots[1].x, spots[1].y);
   await new Promise(r=>setTimeout(r,300));
-  const after = await p.evaluate(()=>{ const e=window.__sgview.state.roads.edges; return { edges:e.length, type:e[e.length-1]?.type, edgePts:window.__sgview.edgePts.length }; });
-  ok(after.edges > before, `tapping the map added a road edge (${before} → ${after.edges})`);
-  ok(after.type === 'road', 'the drawn road uses the Road mode');
-  ok(after.edgePts >= 1, 'road network rebuilt for rendering/traffic');
+  const stagedOpen = await p.evaluate(()=>({ bar:!document.getElementById('draw-confirm').classList.contains('hidden'), edges:window.__sgview.state.roads.edges.length }));
+  ok(stagedOpen.bar, 'staging road pieces shows the cost/commit bar');
+  ok(stagedOpen.edges === before.edges, 'staged pieces are NOT built yet (chain first, then confirm)');
+  await p.click('#dc-build');
+  await new Promise(r=>setTimeout(r,250));
+  const after = await p.evaluate(()=>{ const rw=(window.__sgview.state.roadworks||[]); return { rw:rw.length, kind:rw[rw.length-1]?.kind, edgePts:window.__sgview.edgePts.length }; });
+  ok(after.rw > before.rw, `Build queued a road construction project (${before.rw} → ${after.rw})`);
+  ok(after.kind === 'road', 'the staged pieces build a Road');
+  ok(after.edgePts >= 1, 'road network present for rendering/traffic');
 
   // a roundabout
   await p.click('.tool[data-panel="build"]');

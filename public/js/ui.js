@@ -120,7 +120,7 @@ export function renderBuild(state, ctx) {
 function renderRoads(ctx) {
   const r = ctx.road;
   const wrap = el('div', 'roads-ui');
-  wrap.append(el('p', 'policy-desc', 'Pick a mode — 🚗 Road, 🚆 Railway, or ✈️ Airport — then either ✏️ Draw a freeform route, or pick a fixed PIECE (Straight / Curve) and tap to drop it. Pieces snap onto route ends so you can click them together like track, and they auto-connect for traffic.'));
+  wrap.append(el('p', 'policy-desc', 'Pick a mode — 🚗 Road, 🚆 Railway, or ✈️ Airport — then either ✏️ Draw a freeform route, or pick a fixed PIECE (Straight / Curve) and tap to click pieces together like track. Build the chain up, then ✔ Build once to start construction (auto-connects for traffic).'));
 
   // mode: road (cars) / railway (trains) / airport (planes)
   const typeRow = el('div', 'road-types');
@@ -155,7 +155,7 @@ function renderRoads(ctx) {
     b.onclick = () => ctx.selectRoadTool(id);
     tools.append(b);
   }
-  wrap.append(el('p', 'tool-hint', 'Tip: pieces snap onto an existing end (yellow ring) to chain. ↻ Rotate or press R to aim a free piece.'));
+  wrap.append(el('p', 'tool-hint', 'Tip: tap to chain pieces end-to-end (yellow ring marks the join); the cost adds up. ✔ Build starts construction, ✕ Cancel discards. ↻ Rotate / R aims the first piece.'));
   wrap.append(tools);
   return wrap;
 }

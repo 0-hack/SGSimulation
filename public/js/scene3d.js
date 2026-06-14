@@ -1082,9 +1082,13 @@ export class Scene3D {
       }
       const quick = performance.now() - this._downTime < 400;
       if (!this._moved && quick && this._pointers.size <= 1) {
-        if (this.pieceMode && this.onPiecePlace) {           // drop the ghosted Lego piece
+        if (this.pieceMode && this.onPieceChain) {           // stage a Lego piece into the pending chain
           this._piecePreview(p);                              // make sure the ghost matches the tap point
-          if (this._piecePts && this._piecePts.length >= 2) this.onPiecePlace(this._piecePts);
+          if (this._piecePts && this._piecePts.length >= 2) {
+            this._pieceChain.push(this._piecePts.map((q) => ({ x: q.x, z: q.z })));
+            this._piecePreview(p);                            // re-ghost the next piece from the new chain end
+            this.onPieceChain(this._mergedChain());           // update the running cost / commit bar
+          }
         } else if (this.roadMode && this.onGroundTap) {
           const g = this._raycastGround(p);
           if (g) this.onGroundTap(g.x, g.z);
@@ -1551,12 +1555,28 @@ export class Scene3D {
   _hideDrawCursor() { if (this._drawCursor) this._drawCursor.visible = false; }
   // ---- Lego-style fixed road/rail/runway pieces ----------------------------
   // Turn placement on/off. opts: { piece:'straight'|'curveL'|'curveR', kind, type,
-  // elevated, onPlace(pts) }. A ghost follows the cursor and snaps to route ends.
+  // elevated, onChain(mergedPts) }. A ghost follows the cursor and snaps to route
+  // ends; tapping STAGES pieces into a pending chain (built first, committed once).
   setPieceMode(on, opts) {
     this.pieceMode = on ? (opts || {}) : null;
-    this.onPiecePlace = on && opts ? opts.onPlace : null;
+    this.onPieceChain = on && opts ? opts.onChain : null;
+    this._pieceChain = [];
     if (this._pieceRot == null) this._pieceRot = 0;
     if (!on) { this._piecePts = null; this.clearRoadPreview(); this._clearSnapMarker(); }
+  }
+  // Drop the pending (un-committed) piece chain.
+  clearPieceChain() { this._pieceChain = []; this._piecePts = null; this.clearRoadPreview(); this._clearSnapMarker(); }
+  // The end point + heading of the pending chain (so the next piece continues it).
+  _pieceChainEnd() {
+    const ch = this._pieceChain; if (!ch || !ch.length) return null;
+    const last = ch[ch.length - 1], a = last[last.length - 2], b = last[last.length - 1];
+    return { x: b.x, z: b.z, heading: Math.atan2(b.z - a.z, b.x - a.x) };
+  }
+  // The pending chain merged into one polyline (shared joints de-duplicated).
+  _mergedChain() {
+    const out = [];
+    for (const piece of (this._pieceChain || [])) for (let i = 0; i < piece.length; i++) { if (out.length && i === 0) continue; out.push({ x: piece[i].x, z: piece[i].z }); }
+    return out;
   }
   rotatePiece(d) { this._pieceRot = (this._pieceRot || 0) + d; if (this.pieceMode && this._lastHover) this._piecePreview(this._lastHover); }
   // Build a fixed piece polyline anchored at `anchor` (an end or the cursor),
@@ -1602,13 +1622,23 @@ export class Scene3D {
     return this._pieceRot || 0;
   }
   _piecePreview(p) {
-    const g = this._raycastGround(p); if (!g) { this._piecePts = null; this.clearRoadPreview(); this._clearSnapMarker(); return; }
-    const snap = this._pieceSnap(g.x, g.z);
-    const anchor = snap ? { x: snap.x, z: snap.z } : { x: g.x, z: g.z };
-    const heading = snap ? snap.heading : (this._pieceRot || 0);
+    const g = this._raycastGround(p);
+    const end = this._pieceChainEnd();
+    let anchor, heading, snap = null, ringAt = null;
+    if (end) { anchor = { x: end.x, z: end.z }; heading = end.heading; ringAt = end; }   // continue the pending chain
+    else {
+      if (!g) { this._piecePts = null; this.clearRoadPreview(); this._clearSnapMarker(); return; }
+      snap = this._pieceSnap(g.x, g.z);
+      anchor = snap ? { x: snap.x, z: snap.z } : { x: g.x, z: g.z };
+      heading = snap ? snap.heading : (this._pieceRot || 0);
+      ringAt = snap;
+    }
     this._piecePts = this._buildPiece(this.pieceMode.piece, anchor, heading);
-    this._renderDrawPreview(this._piecePts.map((q) => ({ x: q.x, z: q.z })));
-    if (snap) this._showSnapMarker(snap.x, snap.z); else this._clearSnapMarker();
+    // show the whole pending chain plus the current ghost piece at its end
+    const preview = this._mergedChain();
+    for (let i = preview.length ? 1 : 0; i < this._piecePts.length; i++) preview.push({ x: this._piecePts[i].x, z: this._piecePts[i].z });
+    this._renderDrawPreview(preview.length >= 2 ? preview : this._piecePts.map((q) => ({ x: q.x, z: q.z })));
+    if (ringAt) this._showSnapMarker(ringAt.x, ringAt.z); else this._clearSnapMarker();
   }
   _showSnapMarker(x, z) {
     if (!this._snapMarker) {

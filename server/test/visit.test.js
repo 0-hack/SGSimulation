@@ -43,9 +43,9 @@ try {
 
   // Visitor can press play and watch it run.
   await b.click('#visit-banner').catch(()=>{});
-  await b.click('.spd[data-spd="2"]');
+  await b.click('.spd[data-spd="3"]'); // hyper, so a full day ticks within the wait
   const d0 = await b.$eval('#hud-date', e=>e.textContent);
-  await new Promise(r=>setTimeout(r,1200));
+  await new Promise(r=>setTimeout(r,1600));
   const d1 = await b.$eval('#hud-date', e=>e.textContent);
   ok(d0!==d1, `visitor can watch time advance (${d0} → ${d1})`);
   ok(berr.length===0, 'no errors during visit'+(berr.length?': '+berr[0]:''));

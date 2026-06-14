@@ -105,7 +105,7 @@ try {
   // Day/night clock is driven by the in-game date (advanceClock).
   const dn = await page.evaluate(() => {
     const v = window.__sgview;
-    const a = v.timeOfDay; v.advanceClock(4); v.render(); return { a, b: v.timeOfDay };
+    const a = v.timeOfDay; v.advanceClock(0.4); v.render(); return { a, b: v.timeOfDay };
   });
   ok(dn.a !== dn.b, 'day/night cycle advances with the game clock');
 

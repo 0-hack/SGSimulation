@@ -182,6 +182,11 @@ body.edit-mode::after {
 }
 .spd span { width: 15px; height: 15px; }
 .spd.active { background: var(--coral); color: #fff; }
+.rate-chip {
+  background: none; border: none; border-left: 1px solid var(--line); color: var(--ink);
+  height: 38px; padding: 0 9px; font-size: 11px; font-weight: 800; white-space: nowrap; cursor: pointer;
+}
+.rate-chip:hover { background: var(--surface-2); }
 
 .visit-banner {
   margin: 0 11px; background: #fff5e9; color: #8a5a14; border: 1px solid #f0d9b0;

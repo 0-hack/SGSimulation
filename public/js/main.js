@@ -32,7 +32,14 @@ const LS_SAVE = 'sg_save_v1';
 const LS_NAME = 'sg_owner';
 
 // Game days per real second for each speed step.
-const SPEED_RATE = [0, 2, 8, 26];
+// Time speed. The player picks a base rate in IN-GAME DAYS PER REAL SECOND
+// (G.dayRate); Play / Fast / Hyper multiply it. Day/night is locked to the
+// calendar (1 in-game day = one sun cycle), so the sun's *visible* advance is
+// capped (SUN_CAP) to avoid strobing when fast-forwarding — the date still races
+// ahead at the full chosen rate.
+const SPEED_MULT = [0, 1, 5, 20];   // pause / play / fast / hyper multipliers
+const SUN_CAP = 0.5;                // max in-game days/sec the day-night cycle visibly advances
+const currentRate = () => G.dayRate * SPEED_MULT[G.speed];
 
 const $ = (id) => document.getElementById(id);
 
@@ -41,6 +48,7 @@ const G = {
   view: null,
   speed: 1,
   prevSpeed: 1,
+  dayRate: 0.1,          // in-game days per real second at Play speed (~10s per day; player-adjustable)
   readOnly: false,
   cloud: null,           // { id, token } for the player's own world
   acc: 0,
@@ -87,10 +95,12 @@ function boot() {
     if (e.key === 'Escape' && activeTool()) { cancelTools(); toast('Stopped placing.'); e.preventDefault(); }
   });
 
-  // speed buttons
+  // speed buttons + adjustable rate chip
   document.querySelectorAll('.spd').forEach((b) => {
     b.onclick = () => setSpeed(parseInt(b.dataset.spd, 10));
   });
+  $('rate-chip').onclick = promptDayRate;
+  updateRateChip();
   // toolbar
   document.querySelectorAll('.tool').forEach((b) => {
     b.onclick = () => openPanel(b.dataset.panel);
@@ -209,8 +219,9 @@ function loop(ts) {
 
   if (G.state && G.speed > 0 && !G.state.pendingEvent && !G.editPause) {
     // drive the day/night sun & weather clock in lockstep with the date
-    if (G.view) G.view.advanceClock(dt * SPEED_RATE[G.speed]);
-    G.acc += dt * SPEED_RATE[G.speed];
+    const rate = currentRate();
+    if (G.view) G.view.advanceClock(dt * Math.min(rate, SUN_CAP)); // cap the sun so fast-forward doesn't strobe
+    G.acc += dt * rate;
     let ticks = 0;
     const rwBefore = (G.state.roadworks || []).length;
     while (G.acc >= 1 && ticks < 60) {
@@ -275,6 +286,26 @@ function setSpeed(s) {
   document.querySelectorAll('.spd').forEach((b) => {
     b.classList.toggle('active', parseInt(b.dataset.spd, 10) === s);
   });
+  updateRateChip();
+}
+// A readable label for the current effective speed (days/s when fast, else s/day).
+function updateRateChip() {
+  const chip = $('rate-chip'); if (!chip) return;
+  const r = currentRate();
+  chip.textContent = r <= 0 ? '⏸ paused' : (r >= 1 ? `⏱ ${(+r.toFixed(2))} days/s` : `⏱ ${Math.round(1 / r)}s/day`);
+}
+// Let the player choose the base Play rate in in-game days per real second.
+function promptDayRate() {
+  const cur = G.dayRate;
+  const suggest = cur >= 1 ? String(+cur.toFixed(2)) : `0.1  (≈ ${Math.round(1 / cur)}s per day)`;
+  const v = prompt('Game speed at Play — in-game DAYS per real second (decimal).\nLower = slower / more time to watch day & night.\ne.g. 0.1 = 10s per day, 1 = a day every second, 5 = fast-forward.', String(+cur.toFixed(3)));
+  if (v == null) return;
+  const n = parseFloat(v);
+  if (!isFinite(n) || n <= 0) { toast('Enter a positive number of days per second.'); return; }
+  G.dayRate = Math.min(50, Math.max(0.01, n));
+  if (G.speed === 0) setSpeed(1); // un-pause so the new rate takes effect
+  else updateRateChip();
+  toast(`Speed: ${G.dayRate >= 1 ? `${+G.dayRate.toFixed(2)} days/s` : `${Math.round(1 / G.dayRate)}s per day`} at Play.`);
 }
 
 // ===========================================================================

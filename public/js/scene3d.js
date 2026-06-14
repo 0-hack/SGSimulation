@@ -46,7 +46,7 @@ const WORLD = N * 10;         // world units across the bounding box (TILE stays
 const TILE = WORLD / N;
 const SEA_Y = -1.2;
 const SEA_COLOR = 0x3aa0d8;   // shared by the sea, river, reservoirs & coastal inlets
-const DAY_CYCLE = 16;         // in-game days per full day/night cycle
+const DAY_CYCLE = 1;          // one full day/night cycle per in-game day (locked to the calendar)
 const LIGHT_YEAR = 1970;      // traffic lights appear as the city modernises
 
 // grid cell (gx,gy) -> world centre
@@ -1852,8 +1852,12 @@ export class Scene3D {
     const horizon = THREE.MathUtils.clamp(1 - Math.abs(elev) / 0.28, 0, 1);
     this.nightFactor = 1 - dayness;
 
-    const a = 2 * Math.PI * (this.timeOfDay - 0.25);
-    this.sun.position.set(Math.cos(a) * 200, Math.max(12, elev * 260), 90 + Math.sin(a) * 60);
+    // Realistic arc: the sun rises in the EAST (+X), climbs over the south to its
+    // noon peak, and sets in the WEST (-X); low at dawn/dusk for long shadows,
+    // below the horizon at night (clamped low so the moon still lights the scene).
+    const dayAngle = 2 * Math.PI * (this.timeOfDay - 0.25); // 0 at sunrise, π/2 at noon
+    const cs = Math.cos(dayAngle), sn = Math.sin(dayAngle); // sn = elev (height)
+    this.sun.position.set(cs * 240, Math.max(8, sn * 230 + 16), 60 - sn * 26);
     this.sun.intensity = 0.05 + dayness * 1.25;   // near-dark at night so unlit objects fall into shadow
     const sunCol = new THREE.Color(0xfff4e0).lerp(new THREE.Color(0xff8a3c), horizon * (1 - dayness * 0.5));
     this.sun.color.copy(sunCol).lerp(new THREE.Color(0x9fb6ff), this.nightFactor * 0.6);

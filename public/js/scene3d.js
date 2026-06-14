@@ -525,24 +525,42 @@ export class Scene3D {
     if (this._carves) { const wx = (nx - 0.5) * WORLD, wz = (0.5 - ny) * WORLD; H = this._applyCarves(wx, wz, H); }
     return H;
   }
-  // Lower the heightfield inside the recorded tunnel-mouth recesses so a portal
-  // sits in a real cutting instead of poking out of an un-cut hillside. Each carve
-  // is a capsule along the track: cut down to the track floor at the mouth, ramping
-  // back up to the natural ground by its inner end (so the hill closes over the bore).
+  // Combine railway-tunnel + airport-pad carves and re-cut the terrain mesh when
+  // they change. (Tunnel recesses are managed by the railway builder, flat runway
+  // pads by the airstrip builder; both feed this so they coexist.)
+  _syncCarves() {
+    const all = [...(this._railCarves || []), ...(this._airCarves || [])];
+    this._carves = all.length ? all : null;
+    const sig = all.map((c) => c.poly ? `f${c.floor.toFixed(1)}:${c.poly.length}:${c.poly[0].x.toFixed(0)},${c.poly[0].z.toFixed(0)}` : `${c.x.toFixed(1)},${c.z.toFixed(1)},${c.tx.toFixed(2)}`).join('|');
+    if (sig !== (this._carveSig ?? '')) { this._carveSig = sig; this._buildTerrain(); }
+  }
+  // Lower the heightfield inside carves so linear features sit IN the ground rather
+  // than poking out of it. Two kinds: a tunnel-mouth ramp capsule (cut to the track
+  // floor at the mouth, ramping back to natural by its inner end), and a flat runway
+  // PAD that follows the centreline (cut the hill down to one level, the mountain
+  // sliced away so the runway lies on the ground).
   _applyCarves(x, z, H) {
     const cs = this._carves; if (!cs || !cs.length) return H;
     let h = H;
     for (let k = 0; k < cs.length; k++) {
       const c = cs[k];
-      const dx = x - c.x, dz = z - c.z;
-      const u = dx * c.tx + dz * c.tz;               // distance along the inward tangent from the mouth
-      if (u < -c.outset || u > c.length) continue;
-      const lat = Math.abs(dx * c.nx + dz * c.nz);   // lateral distance from the track axis
-      if (lat > c.halfW + c.blend) continue;
-      const along = u < 0 ? 0 : u;
-      const floor = c.floor + (along / c.length) * Math.max(0, H - c.floor);  // ramps to natural by the inner end
-      const kk = lat <= c.halfW ? 0 : (lat - c.halfW) / c.blend;              // 0 at centre → 1 at the outer edge
-      const target = floor + kk * (H - floor);
+      let floor, kk;
+      if (c.poly) {                                   // flat pad following a runway centreline
+        let d = Infinity;
+        for (let i = 0; i < c.poly.length - 1; i++) { const pr = this._projOnSeg(x, z, c.poly[i], c.poly[i + 1]); if (pr.d < d) d = pr.d; }
+        if (d > c.halfW + c.blend) continue;
+        floor = c.floor;
+        kk = d <= c.halfW ? 0 : (d - c.halfW) / c.blend;
+      } else {                                        // tunnel-mouth ramp capsule
+        const dx = x - c.x, dz = z - c.z, u = dx * c.tx + dz * c.tz;
+        if (u < -c.outset || u > c.length) continue;
+        const lat = Math.abs(dx * c.nx + dz * c.nz);
+        if (lat > c.halfW + c.blend) continue;
+        const along = u < 0 ? 0 : u;
+        floor = c.floor + (along / c.length) * Math.max(0, H - c.floor);
+        kk = lat <= c.halfW ? 0 : (lat - c.halfW) / c.blend;
+      }
+      const target = floor + kk * (H - floor);        // cut down to `floor`, blend back to natural
       if (target < h) h = target;
     }
     return h;
@@ -1191,7 +1209,9 @@ export class Scene3D {
     let min = Infinity, max = -Infinity, sum = 0;
     for (const h of heights) { if (h < min) min = h; if (h > max) max = h; sum += h; }
     const level = sum / heights.length, area = routeLen * 2 * halfW, perSample = area / heights.length;
-    let volume = 0; for (const h of heights) volume += Math.abs(h - level) * perSample;   // cut + fill volume
+    // the runway is cut down to the LOWEST ground under it, so price the excavation
+    // (rock removed) as the volume of everything above that minimum level.
+    let volume = 0; for (const h of heights) volume += (h - min) * perSample;
     return { level, min, max, range: max - min, volume, area };
   }
   // The surface point under screen p. Marches the camera ray against the terrain
@@ -1456,6 +1476,7 @@ export class Scene3D {
   }
 
   _hover(p) {
+    if (this._roundaboutPreview) { this._roundaboutHover(p); this._hideHoverTile(); return; }  // show where the roundabout lands
     if (this.pieceMode) { this._lastHover = p; this._piecePreview(p); this._hideHoverTile(); return; } // placing a fixed Lego piece
     if (this.drawMode) {                                  // road/area drawing — fully free-style
       this._drawHover(p);                                 // free cursor at the exact point; snap ring only AT a road end
@@ -1566,6 +1587,22 @@ export class Scene3D {
   }
   // Drop the pending (un-committed) piece chain.
   clearPieceChain() { this._pieceChain = []; this._piecePts = null; this.clearRoadPreview(); this._clearSnapMarker(); }
+  // Show a translucent roundabout ring under the cursor so the player can see
+  // exactly where it will land before tapping.
+  setRoundaboutPreview(on) { this._roundaboutPreview = !!on; if (!on && this._raGhost) this._raGhost.visible = false; }
+  _roundaboutHover(p) {
+    const g = this._raycastGround(p); if (!g) { if (this._raGhost) this._raGhost.visible = false; return; }
+    if (!this._raGhost) {
+      const grp = new THREE.Group();
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(6, 0.7, 8, 32), new THREE.MeshBasicMaterial({ color: 0x2bd4c0, transparent: true, opacity: 0.65, depthWrite: false, depthTest: false }));
+      ring.rotation.x = -Math.PI / 2; grp.add(ring);
+      const disc = new THREE.Mesh(new THREE.CircleGeometry(6, 32), new THREE.MeshBasicMaterial({ color: 0x2bd4c0, transparent: true, opacity: 0.18, depthWrite: false, depthTest: false, side: THREE.DoubleSide }));
+      disc.rotation.x = -Math.PI / 2; grp.add(disc);
+      grp.renderOrder = 6; this.scene.add(grp); this._raGhost = grp;
+    }
+    this._raGhost.position.set(g.x, this._roadY(g.x, g.z) + 0.15, g.z);
+    this._raGhost.visible = true;
+  }
   // The end point + heading of the pending chain (so the next piece continues it).
   _pieceChainEnd() {
     const ch = this._pieceChain; if (!ch || !ch.length) return null;
@@ -1578,7 +1615,21 @@ export class Scene3D {
     for (const piece of (this._pieceChain || [])) for (let i = 0; i < piece.length; i++) { if (out.length && i === 0) continue; out.push({ x: piece[i].x, z: piece[i].z }); }
     return out;
   }
-  rotatePiece(d) { this._pieceRot = (this._pieceRot || 0) + d; if (this.pieceMode && this._lastHover) this._piecePreview(this._lastHover); }
+  // Rotate the road you're building: spin the whole staged chain about its start
+  // (so you can aim it before committing); with no chain yet, spin the first ghost.
+  rotatePiece(d) {
+    this._pieceRot = (this._pieceRot || 0) + d;
+    if (this._pieceChain && this._pieceChain.length) {
+      const o = this._pieceChain[0][0], c = Math.cos(d), s = Math.sin(d);
+      for (const piece of this._pieceChain) for (const pt of piece) {
+        const dx = pt.x - o.x, dz = pt.z - o.z; pt.x = o.x + dx * c - dz * s; pt.z = o.z + dx * s + dz * c;
+      }
+      if (this._lastHover) this._piecePreview(this._lastHover); else this._renderDrawPreview(this._mergedChain());
+      if (this.onPieceChain) this.onPieceChain(this._mergedChain());   // keep the commit geometry in sync
+    } else if (this._lastHover) {
+      this._piecePreview(this._lastHover);                              // spin the first ghost about the cursor
+    }
+  }
   // Build a fixed piece polyline anchored at `anchor` (an end or the cursor),
   // heading `h` (radians, dir = cos h, sin h in x/z). Fixed length / radius.
   _buildPiece(piece, anchor, h) {
@@ -2390,9 +2441,8 @@ export class Scene3D {
         carves.push({ x: m.x, z: m.z, tx, tz, nx: -tz, nz: tx, length: 26, halfW: 5.5, blend: 11, floor: grade[openIdx] - 0.6, outset: 9 });
       }
     }
-    this._carves = carves.length ? carves : null;
-    const sig = carves.map((c) => `${c.x.toFixed(1)},${c.z.toFixed(1)},${c.tx.toFixed(2)}`).join('|');
-    if (sig !== (this._carveSig ?? '')) { this._carveSig = sig; this._buildTerrain(); }   // re-cut the hill mesh to match
+    this._railCarves = carves;
+    this._syncCarves();   // combine with airport pads + re-cut the hill mesh
     // Render: surface track follows the (now carved) terrain; tunnels use their profile.
     for (const poly of surfaces) {
       const dense = this._resamplePoly(poly.map(([x, z]) => ({ x, z })), 1.4);     // even spacing for clean ties & rails
@@ -2495,33 +2545,42 @@ export class Scene3D {
     const g = new THREE.Group(); this.scene.add(g); this._airGroup = g;
     this._airPlanes = [];
     const RW = 4.5; // runway half-width (matches the built-in airport)
-    for (const poly of ((state && state.airstrips) || [])) {
-      if (!poly || poly.length < 2) continue;
+    const strips = ((state && state.airstrips) || []).filter((p) => p && p.length >= 2);
+    // Pass 1 (against RAW terrain): pick each runway's flat level (the MEAN ground
+    // under it) and carve a pad so the mountain blocking it is CUT AWAY to that level
+    // — the runway lies on the ground, not on a raised platform.
+    const saved = this._carves; this._carves = null;
+    const meta = [];
+    const airCarves = [];
+    for (const poly of strips) {
       const dense = this._resamplePoly(poly.map(([x, z]) => ({ x, z })), 2.5);
-      const base = dense.map((q) => new THREE.Vector3(q.x, this._roadY(q.x, q.z), q.z));
-      const nrm = base.map((p, i) => { const a = base[Math.max(0, i - 1)], b = base[Math.min(base.length - 1, i + 1)]; let tx = b.x - a.x, tz = b.z - a.z; const l = Math.hypot(tx, tz) || 1; return [-tz / l, tx / l]; });
-      // A runway is FLAT in BOTH directions — a levelled platform, not draped over
-      // the slope. Use ONE level for the whole strip: the MAX terrain anywhere under
-      // it (across the full width along its whole length) + clearance, so a hill can
-      // never poke through and the deck is dead level end to end. An embankment skirt
-      // fills down to the ground (taller at the low end, like real earthworks).
-      let level = -Infinity;
-      for (let i = 0; i < base.length; i++) {
-        const nx = nrm[i][0], nz = nrm[i][1];
-        level = Math.max(level, this._roadY(base[i].x, base[i].z), this._roadY(base[i].x + nx * RW, base[i].z + nz * RW), this._roadY(base[i].x - nx * RW, base[i].z - nz * RW));
-      }
-      level += 0.35;
-      const topY = base.map(() => level);
-      const pts = base.map((p) => new THREE.Vector3(p.x, level, p.z));
-      this._addRibbon(g, pts, RW, 0x35383d, 0.0);                  // runway tarmac (flat platform)
-      for (const sgn of [-1, 1]) {                                 // embankment skirt down to the terrain on each side
+      const nrm = dense.map((p, i) => { const a = dense[Math.max(0, i - 1)], b = dense[Math.min(dense.length - 1, i + 1)]; let tx = b.x - a.x, tz = b.z - a.z; const l = Math.hypot(tx, tz) || 1; return [-tz / l, tx / l]; });
+      // Sit the runway on the GROUND (the lowest ground under it) and cut the hill
+      // down to that level — the mountain blocking the strip is sliced away rather
+      // than the runway riding up on a tall embankment.
+      let level = Infinity;
+      for (let i = 0; i < dense.length; i++) { const nx = nrm[i][0], nz = nrm[i][1]; for (const w of [-RW, -RW / 2, 0, RW / 2, RW]) level = Math.min(level, this._roadY(dense[i].x + nx * w, dense[i].z + nz * w)); }
+      if (!isFinite(level)) level = 0;
+      meta.push({ poly, dense, nrm, level });
+      airCarves.push({ poly: dense, halfW: RW + 2, blend: 16, floor: level });   // cut the hill flat to ground level
+    }
+    this._airCarves = airCarves;
+    this._syncCarves();   // re-cut the terrain mesh (combined with any railway tunnels)
+    // Pass 2: lay each runway flat at its level on the now-cut ground.
+    for (const m of meta) {
+      const { dense, nrm, level } = m;
+      const deck = level + 0.3;
+      const base = dense.map((q) => new THREE.Vector3(q.x, level, q.z));
+      const pts = base.map((p) => new THREE.Vector3(p.x, deck, p.z));
+      this._addRibbon(g, pts, RW, 0x35383d, 0.0);                  // runway tarmac (flat, on the ground)
+      for (const sgn of [-1, 1]) {                                 // short skirt to the cut ground / any fill over a dip
         const v = [], idx = [];
-        for (let i = 0; i < base.length; i++) { const ex = base[i].x + nrm[i][0] * RW * sgn, ez = base[i].z + nrm[i][1] * RW * sgn; v.push(ex, topY[i], ez, ex, this._roadY(ex, ez) - 0.1, ez); }
+        for (let i = 0; i < base.length; i++) { const ex = base[i].x + nrm[i][0] * RW * sgn, ez = base[i].z + nrm[i][1] * RW * sgn; v.push(ex, deck, ez, ex, Math.min(deck - 0.05, this._roadY(ex, ez) - 0.1), ez); }
         for (let i = 0; i < base.length - 1; i++) { const a = i * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
         const sg = new THREE.BufferGeometry(); sg.setAttribute('position', new THREE.Float32BufferAttribute(v, 3)); sg.setIndex(idx); sg.computeVertexNormals();
-        const m = new THREE.Mesh(sg, toon(0x4c4f54, { side: THREE.DoubleSide })); m.receiveShadow = true; g.add(m);
+        const mesh = new THREE.Mesh(sg, toon(0x4c4f54, { side: THREE.DoubleSide })); mesh.receiveShadow = true; g.add(mesh);
       }
-      for (const sgn of [-1, 1]) this._addRibbon(g, pts.map((p, i) => new THREE.Vector3(p.x + nrm[i][0] * (RW - 0.3) * sgn, topY[i], p.z + nrm[i][1] * (RW - 0.3) * sgn)), 0.18, 0xeae4d2, 0.06); // edge lines (match built-in airport cream)
+      for (const sgn of [-1, 1]) this._addRibbon(g, pts.map((p, i) => new THREE.Vector3(p.x + nrm[i][0] * (RW - 0.3) * sgn, deck, p.z + nrm[i][1] * (RW - 0.3) * sgn)), 0.18, 0xeae4d2, 0.06); // edge lines
       // dashed centreline
       let dash = true;
       for (let i = 0; i < pts.length - 1; i++) {
@@ -2530,7 +2589,7 @@ export class Scene3D {
           if (dash) this._addRibbon(g, [new THREE.Vector3(a.x + (b.x - a.x) * s / seg, a.y + (b.y - a.y) * s / seg, a.z + (b.z - a.z) * s / seg), new THREE.Vector3(a.x + (b.x - a.x) * e / seg, a.y + (b.y - a.y) * e / seg, a.z + (b.z - a.z) * e / seg)], 0.22, 0xeae4d2, 0.07);
           dash = !dash; s = e; }
       }
-      this._clearNatureAlong(base, RW);          // clear trees under the runway
+      this._clearNatureAlong(base, RW + 2);      // clear trees under the runway + cut margins
       this._airPlanes.push({ pts, total: this._polyLen(pts), mesh: null, t: Math.random(), dir: 1 });
     }
   }

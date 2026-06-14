@@ -75,7 +75,7 @@ const G = {
 // ===========================================================================
 // Boot
 // ===========================================================================
-const BUILD = '2026-06-14 · lego-chain-then-build v22';
+const BUILD = '2026-06-14 · build-polish-aircut v23';
 function boot() {
   console.log('%cSG build: ' + BUILD, 'font-weight:bold;color:#11a39c');
   const vEl = document.querySelector('.version'); if (vEl) vEl.textContent = 'build ' + BUILD;
@@ -424,7 +424,7 @@ function cancelTools() {
   G.build.selected = null; G.build.bulldoze = false; G.reclaim.active = false;
   G.road.tool = null; G.road.pending = [];
   closeCommit(true);
-  if (G.view) { G.view.setPreview(null); G.view.setBulldoze(false); G.view.setRoadMode(false); G.view.setPaintMode(false); G.view.setDrawMode(false); G.view.showRoadPreview([]); }
+  if (G.view) { G.view.setPreview(null); G.view.setBulldoze(false); G.view.setRoadMode(false); G.view.setPaintMode(false); G.view.setDrawMode(false); G.view.setPieceMode(false); G.view.setRoundaboutPreview(false); G.view.showRoadPreview([]); }
   updateToolBanner();
   if (G.currentPanel === 'build') refreshPanel();
 }
@@ -505,6 +505,7 @@ function onRouteDrawn(pts, opts = {}) {
     if (G.view.clearPieceChain) G.view.clearPieceChain();   // staged chain is now under construction
     afterEdit();
     toast(`${T.name} — ${note || 'construction started'} (${money(amount)}).`);
+    cancelTools();   // confirming a build exits edit mode (clears the hovering ghost, resumes time)
   };
   const title = `${T.icon || ''} ${T.name}`;
   // HARD RULE: an airport runway must sit on flat ground. If the chosen strip is
@@ -583,6 +584,7 @@ function applyRoadToolMode() {
   if (tool === 'draw') G.view.setDrawMode(true, onRouteDrawn, { type: G.road.type, elevated: G.road.elevated, rail: !!T.rail, air: !!T.air });
   else G.view.setDrawMode(false);
   G.view.setPieceMode(piece, piece ? { piece: tool, kind: T.air ? 'air' : T.rail ? 'rail' : 'road', type: G.road.type, elevated: G.road.elevated, onChain: onPieceChain } : null);
+  G.view.setRoundaboutPreview(tool === 'roundabout');        // translucent ring shows where it lands
   G.view.setRoadMode(!!tool && !piece && tool !== 'draw');   // roundabout / erase use plain taps
 }
 // Each tap stages another fixed piece onto the pending chain — show the running

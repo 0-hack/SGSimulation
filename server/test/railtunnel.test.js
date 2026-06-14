@@ -96,6 +96,11 @@ try {
   ok(carve.drop > 2, `terrain carved down at the mouth so the portal nestles in (raw ${carve.raw.toFixed(1)} m → cut ${carve.cut.toFixed(1)} m, −${carve.drop.toFixed(1)} m)`);
 
   // A railway on flat ground must NOT offer a tunnel (single Build button).
+  // committing a build now exits the tool — re-select Railway + Draw for a fresh test
+  await p.click('.tool[data-panel="build"]');
+  await p.evaluate(()=>[...document.querySelectorAll('.road-types .opt')].find(b=>/Railway/.test(b.textContent))?.click());
+  await p.evaluate(()=>[...document.querySelectorAll('.road-tool')].find(b=>/Draw/.test(b.textContent))?.click());
+  await new Promise(r=>setTimeout(r,120));
   const flat = await p.evaluate(()=>{
     const v=window.__sgview;
     let f=null;

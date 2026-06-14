@@ -304,24 +304,41 @@ export function routeLength(pts) {
   let L = 0; for (let i = 1; i < pts.length; i++) L += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].z - pts[i - 1].z);
   return L;
 }
-// Catmull-Rom smoothing: turn a sparse hand-drawn polyline into a flowing curve
-// that passes through the sampled points, so drawn roads bend smoothly instead of
-// reading as a chain of short straight segments.
-export function smoothRoute(pts, perSeg = 6) {
-  if (!pts || pts.length < 3) return (pts || []).map((p) => ({ x: p.x, z: p.z }));
-  const P = pts, out = [];
-  for (let i = 0; i < P.length - 1; i++) {
-    const p0 = P[i - 1] || P[i], p1 = P[i], p2 = P[i + 1], p3 = P[i + 2] || P[i + 1];
-    for (let j = 0; j < perSeg; j++) {
-      const t = j / perSeg, t2 = t * t, t3 = t2 * t;
-      out.push({
-        x: 0.5 * (2 * p1.x + (-p0.x + p2.x) * t + (2 * p0.x - 5 * p1.x + 4 * p2.x - p3.x) * t2 + (-p0.x + 3 * p1.x - 3 * p2.x + p3.x) * t3),
-        z: 0.5 * (2 * p1.z + (-p0.z + p2.z) * t + (2 * p0.z - 5 * p1.z + 4 * p2.z - p3.z) * t2 + (-p0.z + 3 * p1.z - 3 * p2.z + p3.z) * t3),
-      });
-    }
+// Chaikin corner-cutting: repeatedly round off every corner so a jagged, hand-drawn
+// polyline becomes a genuinely smooth, flowing curve — independent of how jittery the
+// input was (Catmull-Rom passes *through* the points, so it kept hand-drawn kinks).
+// Endpoints are preserved. `iterations` controls how round it gets.
+export function smoothRoute(pts, iterations = 3) {
+  let P = (pts || []).map((p) => ({ x: p.x, z: p.z }));
+  if (P.length < 3) return P;
+  // 1) RESAMPLE to even ~2.5-unit spacing — caps point density and gives the next
+  //    passes a uniform polyline to work on, regardless of how fast it was drawn.
+  const STEP = 2.5, rs = [P[0]];
+  for (let i = 1; i < P.length; i++) {
+    let a = rs[rs.length - 1], b = P[i], d = Math.hypot(b.x - a.x, b.z - a.z);
+    while (d >= STEP) { const t = STEP / d; a = { x: a.x + (b.x - a.x) * t, z: a.z + (b.z - a.z) * t }; rs.push(a); d = Math.hypot(b.x - a.x, b.z - a.z); }
   }
-  out.push({ x: P[P.length - 1].x, z: P[P.length - 1].z });
-  return out;
+  const lastP = P[P.length - 1]; if (Math.hypot(lastP.x - rs[rs.length - 1].x, lastP.z - rs[rs.length - 1].z) > 0.5) rs.push(lastP);
+  P = rs;
+  if (P.length < 3) return P;
+  // 2) LOW-PASS (weighted moving average, endpoints fixed) — removes hand jitter
+  for (let pass = 0; pass < 2; pass++) {
+    const sm = [P[0]];
+    for (let i = 1; i < P.length - 1; i++) sm.push({ x: (P[i - 1].x + 2 * P[i].x + P[i + 1].x) / 4, z: (P[i - 1].z + 2 * P[i].z + P[i + 1].z) / 4 });
+    sm.push(P[P.length - 1]); P = sm;
+  }
+  // 3) CHAIKIN corner-cutting — rounds every remaining corner into a flowing curve
+  for (let it = 0; it < iterations; it++) {
+    const out = [P[0]];
+    for (let i = 0; i < P.length - 1; i++) {
+      const a = P[i], b = P[i + 1];
+      out.push({ x: a.x * 0.75 + b.x * 0.25, z: a.z * 0.75 + b.z * 0.25 });
+      out.push({ x: a.x * 0.25 + b.x * 0.75, z: a.z * 0.25 + b.z * 0.75 });
+    }
+    out.push(P[P.length - 1]);
+    P = out;
+  }
+  return P;
 }
 // Queue a drawn route for construction. Returns { ok, cost }.
 export function addRoadwork(state, route) {

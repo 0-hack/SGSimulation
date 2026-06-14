@@ -66,7 +66,7 @@ const G = {
 // ===========================================================================
 // Boot
 // ===========================================================================
-const BUILD = '2026-06-14 · smooth-roads+barriers v4';
+const BUILD = '2026-06-14 · chaikin-smooth+full-barrier v5';
 function boot() {
   console.log('%cSG build: ' + BUILD, 'font-weight:bold;color:#11a39c');
   const vEl = document.querySelector('.version'); if (vEl) vEl.textContent = 'build ' + BUILD;
@@ -516,7 +516,7 @@ function onRouteDrawn(pts) {
       const total = Math.max(8, Math.min(80, Math.round(len / 8)));
       G.state.treasury -= cost;
       const kind = T.air ? 'air' : T.rail ? 'rail' : 'road';
-      const route = smoothRoute(pts, 8);   // flowing curve, not straight segments
+      const route = smoothRoute(pts, 4);   // flowing curve, not straight segments
       addRoadwork(G.state, { pts: route, kind, type: G.road.type, lanes: T.lanes, elevated: G.road.elevated, total });
       G.view.syncRoadworks(G.state);
       G.view.clearRoadPreview();

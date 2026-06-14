@@ -968,6 +968,7 @@ export class Scene3D {
         // start from a snapped existing road end if we're hovering one (continue a road)
         const start = (this._snap && !this._drawArea) ? { x: this._snap.x, z: this._snap.z } : (g ? { x: g.x, z: g.z } : null);
         this._drawing = true; this._stroke = start ? [start] : [];
+        this._lastSamplePx = pos(e);   // sample by screen distance (zoom-independent, like trace.html)
         this._clearSnapMarker();   // hide the "start here" ring once the stroke begins
         this._renderDrawPreview(this._stroke);
       }
@@ -995,11 +996,14 @@ export class Scene3D {
       const dx = p.x - this._last.x, dy = p.y - this._last.y;
       this._last = p;
       if (Math.abs(p.x - this._down.x) > 5 || Math.abs(p.y - this._down.y) > 5) this._moved = true;
-      if (this._drawing) { // drag traces a route in real time; sample finely (zoom-adaptive, like trace.html) for a smooth curve
-        const g = this._raycastGround(p);
-        if (g) { const last = this._stroke[this._stroke.length - 1];
-          const thr = THREE.MathUtils.clamp(this.cam.radius * 0.015, 0.4, 3); // finer when zoomed in, coarser when far
-          if (!last || Math.hypot(g.x - last.x, g.z - last.z) > thr) { this._stroke.push({ x: g.x, z: g.z }); this._renderDrawPreview(this._stroke); } }
+      if (this._drawing) { // trace a route in real time. Sample every few SCREEN pixels
+        // (zoom-independent, like trace.html) so the stroke is always dense & smooth.
+        const lp = this._lastSamplePx;
+        if (!lp || Math.hypot(p.x - lp.x, p.y - lp.y) > 5) {
+          const g = this._raycastGround(p);
+          if (g) { const last = this._stroke[this._stroke.length - 1];
+            if (!last || Math.hypot(g.x - last.x, g.z - last.z) > 0.3) { this._stroke.push({ x: g.x, z: g.z }); this._renderDrawPreview(this._stroke); this._lastSamplePx = p; } }
+        }
         return;
       }
       if (this._painting) { this._paintAt(p); return; }     // drag paints cells (reclamation)
@@ -1376,7 +1380,7 @@ export class Scene3D {
     const g = new THREE.Group(); this.scene.add(g); this._drawPreviewGroup = g;
     if (!pts || !pts.length) return;
     // smooth the live stroke so the preview flows like the finished road
-    const sm = smoothRoute(pts, 5);
+    const sm = smoothRoute(pts, 3);
     const V = sm.map((q) => new THREE.Vector3(q.x, this._roadY(q.x, q.z), q.z));
     // a terrain-FOLLOWING ribbon (per-point height) — a flat ribbon would sink
     // under the hills and vanish, which is why the preview wasn't visible before.
@@ -2157,18 +2161,34 @@ export class Scene3D {
       band.position.set(x, y + 1.2, z); group.add(band);
       const light = new THREE.Mesh(new THREE.SphereGeometry(0.34, 8, 6), new THREE.MeshBasicMaterial({ color: 0xffd23a, transparent: true }));
       light.position.set(x, y + 1.85, z); light.userData.blink = true; group.add(light);
-      sides[side].push(new THREE.Vector3(x, y + 1.0, z));
+      sides[side].push(new THREE.Vector3(x, y + 1.05, z));
     };
+    // place posts every ~6 units of ARC LENGTH along the whole route (even spacing,
+    // independent of how many points the smoothed polyline has)
+    const SPACE = 6; let dist = 0, nextAt = 0;
     for (let i = 1; i < wp.length; i++) {
       const a = wp[i - 1], b = wp[i];
-      const dx = b.x - a.x, dz = b.z - a.z, l = Math.hypot(dx, dz) || 1, ux = dx / l, uz = dz / l, nx = -uz, nz = ux;
-      for (let s = 0; s < l; s += 6) {
-        const px = a.x + ux * s, pz = a.z + uz * s;
+      const segL = Math.hypot(b.x - a.x, b.z - a.z); if (segL < 1e-4) continue;
+      const ux = (b.x - a.x) / segL, uz = (b.z - a.z) / segL, nx = -uz, nz = ux;
+      while (nextAt <= dist + segL) {
+        const s = nextAt - dist, px = a.x + ux * s, pz = a.z + uz * s;
         post(px + nx * off, pz + nz * off, 0);
         post(px - nx * off, pz - nz * off, 1);
+        nextAt += SPACE;
       }
+      dist += segL;
     }
-    for (const rail of sides) if (rail.length >= 2) this._addRibbon(group, rail, 0.12, 0xffb24d, 1.0); // orange hoarding rail strung between posts
+    // a continuous orange hoarding rail strung between the posts on each side (follows terrain)
+    const railRibbon = (vp) => {
+      if (vp.length < 2) return; const v = [], idx = [];
+      for (let i = 0; i < vp.length; i++) { const a = vp[Math.max(0, i - 1)], b = vp[Math.min(vp.length - 1, i + 1)];
+        let tx = b.x - a.x, tz = b.z - a.z; const l = Math.hypot(tx, tz) || 1; tx /= l; tz /= l; const nx = -tz, nz = tx, q = vp[i];
+        v.push(q.x + nx * 0.1, q.y + 0.18, q.z + nz * 0.1, q.x - nx * 0.1, q.y - 0.18, q.z - nz * 0.1); }
+      for (let i = 0; i < vp.length - 1; i++) { const k = i * 2; idx.push(k, k + 1, k + 2, k + 1, k + 3, k + 2); }
+      const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(v, 3)); geo.setIndex(idx); geo.computeVertexNormals();
+      group.add(new THREE.Mesh(geo, toon(0xffb24d, { side: THREE.DoubleSide })));
+    };
+    railRibbon(sides[0]); railRibbon(sides[1]);
   }
   _roadworkMarker() {
     const grp = new THREE.Group();

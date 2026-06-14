@@ -3,7 +3,7 @@ import {
   newGame, tickDay, build, demolish, canPlace, derive,
   resolveEvent, snapshot, refreshSummary, ensureGrid, issueBond, repayDebt,
   reclaimLand, reclaimCost, buildingCost, priced,
-  routeLength, addRoadwork,
+  routeLength, addRoadwork, smoothRoute,
 } from './engine.js';
 import { Scene3D } from './scene3d.js';
 import { api } from './api.js';
@@ -509,10 +509,12 @@ function onRouteDrawn(pts) {
     confirm: 'Build',
     onConfirm: () => {
       if (G.state.treasury < cost) { toast(`Need ${money(cost)} for this ${T.name.toLowerCase()}.`); return; }
-      const total = Math.max(3, Math.min(40, Math.round(len / 15)));
+      // longer, more realistic construction time so you watch it build slowly
+      const total = Math.max(8, Math.min(80, Math.round(len / 8)));
       G.state.treasury -= cost;
       const kind = T.air ? 'air' : T.rail ? 'rail' : 'road';
-      addRoadwork(G.state, { pts, kind, type: G.road.type, lanes: T.lanes, elevated: G.road.elevated, total });
+      const route = smoothRoute(pts, 6);   // flowing curve, not straight segments
+      addRoadwork(G.state, { pts: route, kind, type: G.road.type, lanes: T.lanes, elevated: G.road.elevated, total });
       G.view.syncRoadworks(G.state);
       G.view.clearRoadPreview();
       afterEdit();

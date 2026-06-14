@@ -5,6 +5,7 @@
 // main.js expects from the old 2D view.
 import * as THREE from './vendor/three.module.js';
 import { BUILDINGS, GRID_SIZE, ROAD_TYPES } from './data.js';
+import { smoothRoute } from './engine.js';
 import { SG_OUTLINE, SG_ISLANDS, SG_FOREIGN, SG_SANDS, SG_RESERVOIRS, pointInPolygon, landMask, inReservoir, reservoirArea, inRiver, reservoirBranches, riverBranches } from './shape.js';
 import { CUSTOM_HOUSES, CUSTOM_RAILWAYS, CUSTOM_SANDS, CUSTOM_LANDMARKS } from './custom1966.js';
 
@@ -967,6 +968,7 @@ export class Scene3D {
         // start from a snapped existing road end if we're hovering one (continue a road)
         const start = (this._snap && !this._drawArea) ? { x: this._snap.x, z: this._snap.z } : (g ? { x: g.x, z: g.z } : null);
         this._drawing = true; this._stroke = start ? [start] : [];
+        this._clearSnapMarker();   // hide the "start here" ring once the stroke begins
         this._renderDrawPreview(this._stroke);
       }
       // paint mode: a drag fills cells (no camera orbit). Paint the first cell now.
@@ -996,7 +998,7 @@ export class Scene3D {
       if (this._drawing) { // drag traces a route in real time; sample finely for a smooth curve
         const g = this._raycastGround(p);
         if (g) { const last = this._stroke[this._stroke.length - 1];
-          if (!last || Math.hypot(g.x - last.x, g.z - last.z) > 2.5) { this._stroke.push({ x: g.x, z: g.z }); this._renderDrawPreview(this._stroke); } }
+          if (!last || Math.hypot(g.x - last.x, g.z - last.z) > 1.8) { this._stroke.push({ x: g.x, z: g.z }); this._renderDrawPreview(this._stroke); } }
         return;
       }
       if (this._painting) { this._paintAt(p); return; }     // drag paints cells (reclamation)
@@ -1323,15 +1325,19 @@ export class Scene3D {
     if (!this._tileHi) {
       const g = new THREE.Group();
       const geo = new THREE.PlaneGeometry(TILE * 0.94, TILE * 0.94);
-      const fill = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.26, depthWrite: false }));
+      // a soft dark drop-shadow on the land grounds the highlight (Sims-style)
+      const shadow = new THREE.Mesh(new THREE.PlaneGeometry(TILE * 1.04, TILE * 1.04),
+        new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.28, depthWrite: false }));
+      shadow.rotation.x = -Math.PI / 2; shadow.position.y = -0.04; g.add(shadow);
+      const fill = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.32, depthWrite: false }));
       fill.rotation.x = -Math.PI / 2; g.add(fill);
-      const ring = new THREE.LineSegments(new THREE.EdgesGeometry(geo), new THREE.LineBasicMaterial({ transparent: true, opacity: 0.95 }));
-      ring.rotation.x = -Math.PI / 2; g.add(ring);
+      const ring = new THREE.LineSegments(new THREE.EdgesGeometry(geo), new THREE.LineBasicMaterial({ transparent: true, opacity: 1 }));
+      ring.rotation.x = -Math.PI / 2; ring.position.y = 0.02; g.add(ring);
       g.renderOrder = 4; this.scene.add(g);
       this._tileHi = g; this._tileHiFill = fill.material; this._tileHiRing = ring.material;
     }
     const c = cellToWorld(x, y);
-    this._tileHi.position.set(c.x, this.terrainHeight(x, y) + 0.14, c.z);
+    this._tileHi.position.set(c.x, this.terrainHeight(x, y) + 0.16, c.z);
     this._tileHiFill.color.setHex(ok ? 0x5fe05f : 0xff5a5a);
     this._tileHiRing.color.setHex(ok ? 0xbafd7a : 0xff8a7a);
     this._tileHi.visible = true;
@@ -1368,16 +1374,34 @@ export class Scene3D {
     if (this._drawPreviewGroup) this.scene.remove(this._drawPreviewGroup);
     const g = new THREE.Group(); this.scene.add(g); this._drawPreviewGroup = g;
     if (!pts || !pts.length) return;
-    const V = pts.map((q) => new THREE.Vector3(q.x, this._roadY(q.x, q.z) + 0.06, q.z));
+    // smooth the live stroke so the preview flows like the finished road
+    const sm = smoothRoute(pts, 5);
+    const V = sm.map((q) => new THREE.Vector3(q.x, this._roadY(q.x, q.z), q.z));
+    // a terrain-FOLLOWING ribbon (per-point height) — a flat ribbon would sink
+    // under the hills and vanish, which is why the preview wasn't visible before.
+    const ribbon = (vp, hw, color, lift) => {
+      if (vp.length < 2) return;
+      const v = [], idx = [];
+      for (let i = 0; i < vp.length; i++) {
+        const a = vp[Math.max(0, i - 1)], b = vp[Math.min(vp.length - 1, i + 1)];
+        let tx = b.x - a.x, tz = b.z - a.z; const l = Math.hypot(tx, tz) || 1; tx /= l; tz /= l;
+        const nx = -tz, nz = tx, p = vp[i];
+        v.push(p.x + nx * hw, p.y + lift, p.z + nz * hw, p.x - nx * hw, p.y + lift, p.z - nz * hw);
+      }
+      for (let i = 0; i < vp.length - 1; i++) { const k = i * 2; idx.push(k, k + 1, k + 2, k + 1, k + 3, k + 2); }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(v, 3)); geo.setIndex(idx); geo.computeVertexNormals();
+      g.add(new THREE.Mesh(geo, toon(color, { side: THREE.DoubleSide })));
+    };
     if (this._drawArea) {
-      if (V.length >= 2) { const loop = V.concat([V[0]]); this._addRibbon(g, loop, 0.8, 0xffd24a, 0.08); }
+      if (V.length >= 2) { const loop = V.concat([V[0]]); ribbon(loop, 1.7, 0xffd23a, 0.16); ribbon(loop, 0.5, 0x2bd4c0, 0.2); }
     } else if (V.length >= 2) {
-      const hw = this._drawRail ? 1.7 : this._drawAir ? 4.5 : (ROAD_TYPES[this._drawType]?.renderHW || ROAD_TYPES[this._drawType]?.width / 2 || 0.34);
-      this._addRibbon(g, V, hw + 0.6, 0xffe08a, 0.05);                                   // bright glow so it reads while drawing
-      this._addRibbon(g, V, hw, this._drawRail ? 0x5b5040 : this._drawAir ? 0x35383d : 0x33363d, 0.07); // the real carriageway
+      const hw = this._drawRail ? 1.7 : this._drawAir ? 4.5 : (ROAD_TYPES[this._drawType]?.renderHW || 0.34);
+      ribbon(V, Math.max(hw + 1.8, 2.2), 0xffd23a, 0.14);   // wide bright glow, hugs the ground — clearly visible at any zoom
+      ribbon(V, hw, this._drawRail ? 0x5b5040 : this._drawAir ? 0x35383d : 0x2b2f35, 0.22); // the real (thin) carriageway on top
     }
-    const tip = new THREE.Mesh(new THREE.SphereGeometry(0.9, 10, 8), toon(0xffd24a));
-    tip.position.copy(V[V.length - 1]); tip.position.y += 0.4; g.add(tip);
+    const tip = new THREE.Mesh(new THREE.SphereGeometry(1.1, 12, 10), new THREE.MeshBasicMaterial({ color: 0xffd24a }));
+    tip.position.copy(V[V.length - 1]); tip.position.y += 0.6; g.add(tip);
   }
   // Grid cells inside a drawn world-space loop that can be reclaimed (for area reclaim).
   _cellsInArea(pts) {
@@ -2123,24 +2147,27 @@ export class Scene3D {
   // A construction barrier along a route: striped posts on both sides with amber
   // lights that blink (pulsed in render). Signals "works in progress — keep out".
   _addWorksFence(group, wp, off) {
-    const post = (x, z) => {
+    const sides = [[], []];                                  // collect post tops per side to string a rail
+    const post = (x, z, side) => {
       const y = this._roadY(x, z);
-      const p = new THREE.Mesh(new THREE.BoxGeometry(0.32, 1.3, 0.32), toon(0xff7a3c));
-      p.position.set(x, y + 0.65, z); group.add(p);
-      const top = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.18, 0.42), toon(0xf2f2f2));
-      top.position.set(x, y + 1.3, z); group.add(top);
-      const light = new THREE.Mesh(new THREE.SphereGeometry(0.3, 8, 6), new THREE.MeshBasicMaterial({ color: 0xffd23a, transparent: true }));
-      light.position.set(x, y + 1.55, z); light.userData.blink = true; group.add(light);
+      const p = new THREE.Mesh(new THREE.BoxGeometry(0.4, 1.7, 0.4), toon(0xff7a3c));      // tall orange post
+      p.position.set(x, y + 0.85, z); group.add(p);
+      const band = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.3, 0.46), toon(0xf4f4f4));  // white reflective band
+      band.position.set(x, y + 1.2, z); group.add(band);
+      const light = new THREE.Mesh(new THREE.SphereGeometry(0.34, 8, 6), new THREE.MeshBasicMaterial({ color: 0xffd23a, transparent: true }));
+      light.position.set(x, y + 1.85, z); light.userData.blink = true; group.add(light);
+      sides[side].push(new THREE.Vector3(x, y + 1.0, z));
     };
     for (let i = 1; i < wp.length; i++) {
       const a = wp[i - 1], b = wp[i];
       const dx = b.x - a.x, dz = b.z - a.z, l = Math.hypot(dx, dz) || 1, ux = dx / l, uz = dz / l, nx = -uz, nz = ux;
-      for (let s = 0; s < l; s += 8) {
+      for (let s = 0; s < l; s += 6) {
         const px = a.x + ux * s, pz = a.z + uz * s;
-        post(px + nx * off, pz + nz * off);
-        post(px - nx * off, pz - nz * off);
+        post(px + nx * off, pz + nz * off, 0);
+        post(px - nx * off, pz - nz * off, 1);
       }
     }
+    for (const rail of sides) if (rail.length >= 2) this._addRibbon(group, rail, 0.12, 0xffb24d, 1.0); // orange hoarding rail strung between posts
   }
   _roadworkMarker() {
     const grp = new THREE.Group();

@@ -304,6 +304,25 @@ export function routeLength(pts) {
   let L = 0; for (let i = 1; i < pts.length; i++) L += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].z - pts[i - 1].z);
   return L;
 }
+// Catmull-Rom smoothing: turn a sparse hand-drawn polyline into a flowing curve
+// that passes through the sampled points, so drawn roads bend smoothly instead of
+// reading as a chain of short straight segments.
+export function smoothRoute(pts, perSeg = 6) {
+  if (!pts || pts.length < 3) return (pts || []).map((p) => ({ x: p.x, z: p.z }));
+  const P = pts, out = [];
+  for (let i = 0; i < P.length - 1; i++) {
+    const p0 = P[i - 1] || P[i], p1 = P[i], p2 = P[i + 1], p3 = P[i + 2] || P[i + 1];
+    for (let j = 0; j < perSeg; j++) {
+      const t = j / perSeg, t2 = t * t, t3 = t2 * t;
+      out.push({
+        x: 0.5 * (2 * p1.x + (-p0.x + p2.x) * t + (2 * p0.x - 5 * p1.x + 4 * p2.x - p3.x) * t2 + (-p0.x + 3 * p1.x - 3 * p2.x + p3.x) * t3),
+        z: 0.5 * (2 * p1.z + (-p0.z + p2.z) * t + (2 * p0.z - 5 * p1.z + 4 * p2.z - p3.z) * t2 + (-p0.z + 3 * p1.z - 3 * p2.z + p3.z) * t3),
+      });
+    }
+  }
+  out.push({ x: P[P.length - 1].x, z: P[P.length - 1].z });
+  return out;
+}
 // Queue a drawn route for construction. Returns { ok, cost }.
 export function addRoadwork(state, route) {
   if (!state.roadworks) state.roadworks = [];

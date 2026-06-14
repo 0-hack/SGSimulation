@@ -910,23 +910,45 @@ export class Scene3D {
   // A few boats drifting on the sea around the island.
   _initBoats() {
     this.boats = [];
+    this._buildCoastRadius();   // so boats can hug the coast and never sail onto land
     const types = ['bumboat', 'bumboat', 'cargo', 'sampan', 'bumboat', 'cargo', 'sampan', 'bumboat'];
     for (let i = 0; i < types.length; i++) {
       const b = makeBoat(types[i]);
       const ang = Math.random() * Math.PI * 2;
-      const rad = WORLD * (0.42 + Math.random() * 0.12);
+      const rad = WORLD * (0.44 + Math.random() * 0.12);
       this.scene.add(b);
-      this.boats.push({ mesh: b, ang, rad, speed: (0.02 + Math.random() * 0.03) * (Math.random() < 0.5 ? 1 : -1) });
+      // angular speed tuned so the LINEAR speed is way slower than anything on land
+      const lin = 0.5 + Math.random() * 0.4;   // ~0.5–0.9 world units/sec
+      this.boats.push({ mesh: b, ang, rad, angSpeed: (lin / Math.max(1, rad)) * (Math.random() < 0.5 ? 1 : -1) });
     }
+  }
+  // Max radius (from the map centre) reached by land at each compass bearing, so a
+  // boat can stay just offshore. Covers Singapore, its islands and foreign land.
+  _buildCoastRadius() {
+    const BINS = 240; this._coastR = new Float32Array(BINS);
+    const upd = (wx, wz) => { const a = Math.atan2(wz, wx), r = Math.hypot(wx, wz); const bin = ((Math.floor(((a + Math.PI) / (2 * Math.PI)) * BINS) % BINS) + BINS) % BINS; if (r > this._coastR[bin]) this._coastR[bin] = r; };
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) if (this.land[y][x]) { const w = cellToWorld(x, y); upd(w.x, w.z); }
+    for (const poly of (SG_FOREIGN || [])) for (const [nx, ny] of poly) upd((nx - 0.5) * WORLD, (0.5 - ny) * WORLD);
+  }
+  _coastRadiusAt(ang) {
+    if (!this._coastR) return 0;
+    const BINS = this._coastR.length;
+    const base = ((Math.floor(((ang + Math.PI) / (2 * Math.PI)) * BINS) % BINS) + BINS) % BINS;
+    let m = 0; for (let k = -3; k <= 3; k++) m = Math.max(m, this._coastR[(base + k + BINS) % BINS]); // small look-ahead margin
+    return m;
   }
   _updateBoats(dt) {
     if (!this.boats) return;
     for (const bo of this.boats) {
-      bo.ang += bo.speed * dt;
-      const x = Math.cos(bo.ang) * bo.rad, z = Math.sin(bo.ang) * bo.rad;
-      bo.mesh.position.set(x, SEA_Y + 0.6, z);
-      bo.mesh.rotation.y = -bo.ang + (bo.speed > 0 ? Math.PI / 2 : -Math.PI / 2);
-      bo.mesh.position.y = SEA_Y + 0.6 + Math.sin(this.clock.elapsedTime * 1.2 + bo.ang * 4) * 0.25; // bob
+      bo.ang += bo.angSpeed * dt;
+      const rad = Math.min(WORLD * 0.78, Math.max(bo.rad, this._coastRadiusAt(bo.ang) + 24)); // stay offshore, inside the fog
+      const x = Math.cos(bo.ang) * rad, z = Math.sin(bo.ang) * rad;
+      if (bo._px !== undefined) {                       // face the actual direction of travel (bow = +Z)
+        const vx = x - bo._px, vz = z - bo._pz;
+        if (vx * vx + vz * vz > 1e-5) bo.mesh.rotation.y = Math.atan2(vx, vz);
+      }
+      bo._px = x; bo._pz = z;
+      bo.mesh.position.set(x, SEA_Y + 0.6 + Math.sin(this.clock.elapsedTime * 1.0 + bo.ang * 4) * 0.2, z); // gentle bob
     }
   }
 
@@ -1836,7 +1858,7 @@ export class Scene3D {
     const { mesh, len } = makeVehicle(kind, vintage);
     const VS = 0.6; mesh.scale.setScalar(VS);   // smaller vehicles relative to roads/buildings
     this.scene.add(mesh);
-    const speed = { car: 11, taxi: 11, bike: 14, trishaw: 5, lorry: 8, bus: 7.5 }[kind];
+    const speed = { car: 6, taxi: 6, bike: 7, trishaw: 3, lorry: 4.5, bus: 4 }[kind];
     const ag = {
       mesh, len: len * VS, group: 'veh', kind, edge: Math.floor(Math.random() * this.edgePts.length),
       dir: Math.random() < 0.5 ? 1 : -1, t: Math.random(), phase: 0,
@@ -1889,7 +1911,7 @@ export class Scene3D {
       const { mesh, len } = makePerson(kind);
       mesh.scale.multiplyScalar(0.62);   // smaller pedestrians relative to the scene
       this.scene.add(mesh);
-      const speed = { man: 2.7, woman: 2.5, child: 2.4, elderly: 1.6 }[kind];
+      const speed = { man: 1.4, woman: 1.3, child: 1.3, elderly: 0.85 }[kind]; // pedestrians clearly slower than any vehicle
       const ag = { mesh, len, group: 'ped', kind, edge: list[Math.floor(Math.random() * list.length)],
         dir: Math.random() < 0.5 ? 1 : -1, t: Math.random(), phase: Math.random() * 6, speed,
         animK: 5.5, side: Math.random() < 0.5 ? 1 : -1 };

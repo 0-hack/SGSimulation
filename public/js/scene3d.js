@@ -242,8 +242,8 @@ export class Scene3D {
     // auto-dropped at a fixed spot — so they cost money and take up land like any
     // other building. _buildLandmarks() is kept for any auto-placed world fixtures.
     this._buildSands(CUSTOM_SANDS);       // sandy coast sections (hand-traced)
-    this._buildRailways(CUSTOM_RAILWAYS); // railway lines (hand-traced)
     this._buildNature();     // scatter rural greenery across the undeveloped island
+    this._buildRailways(CUSTOM_RAILWAYS); // railway lines (hand-traced) — after nature so the track clears its own trees
     this._buildNavGraph();   // traffic graph (freeform roads only; added on setState)
     this._initBoats();
     this._initWeather();
@@ -898,21 +898,14 @@ export class Scene3D {
   _buildRailways(list) {
     if (this.railGroup) this.scene.remove(this.railGroup);
     const g = new THREE.Group(); this.scene.add(g); this.railGroup = g;
-    const W2 = (p) => new THREE.Vector3((p[0] - 0.5) * WORLD, 0, (0.5 - p[1]) * WORLD);
     for (const poly of (list || [])) {
-      if (poly.length < 2) continue;
-      const pts = poly.map(W2);
-      this._addRibbon(g, pts, 1.7, 0x5b5040, 0.13);          // ballast bed
-      const nrm = pts.map((p, i) => { const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)]; let tx = b.x - a.x, tz = b.z - a.z; const l = Math.hypot(tx, tz) || 1; return [-tz / l, tx / l]; });
-      for (const sgn of [-1, 1]) this._addRibbon(g, pts.map((p, i) => new THREE.Vector3(p.x + nrm[i][0] * 0.7 * sgn, 0, p.z + nrm[i][1] * 0.7 * sgn)), 0.13, 0xb8c0c8, 0.18);
-      let acc = 99;
-      for (let i = 0; i < pts.length - 1; i++) {
-        const p = pts[i], q = pts[i + 1]; acc += Math.hypot(q.x - p.x, q.z - p.z);
-        if (acc >= 3.5) { acc = 0;
-          const slp = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.18, 2.6), toon(0x3a3128));
-          slp.position.set((p.x + q.x) / 2, 0.15, (p.z + q.z) / 2); slp.rotation.y = Math.atan2(nrm[i][0], nrm[i][1]); g.add(slp);
-        }
-      }
+      if (!poly || poly.length < 2) continue;
+      // historic lines are normalised [nx,ny]; map to world, then render with the
+      // SAME terrain-following ballast/sleepers/rails as player-built railways so
+      // traced and in-game track look identical.
+      const world = poly.map(([nx, ny]) => ({ x: (nx - 0.5) * WORLD, z: (0.5 - ny) * WORLD }));
+      const dense = this._resamplePoly(world, 1.4);
+      this._railTrack(g, dense.map((q) => new THREE.Vector3(q.x, this._roadY(q.x, q.z), q.z)));
     }
   }
 
@@ -2399,13 +2392,13 @@ export class Scene3D {
         const sg = new THREE.BufferGeometry(); sg.setAttribute('position', new THREE.Float32BufferAttribute(v, 3)); sg.setIndex(idx); sg.computeVertexNormals();
         const m = new THREE.Mesh(sg, toon(0x4c4f54, { side: THREE.DoubleSide })); m.receiveShadow = true; g.add(m);
       }
-      for (const sgn of [-1, 1]) this._addRibbon(g, pts.map((p, i) => new THREE.Vector3(p.x + nrm[i][0] * (RW - 0.3) * sgn, topY[i], p.z + nrm[i][1] * (RW - 0.3) * sgn)), 0.18, 0xe9e2c8, 0.06); // edge lines
+      for (const sgn of [-1, 1]) this._addRibbon(g, pts.map((p, i) => new THREE.Vector3(p.x + nrm[i][0] * (RW - 0.3) * sgn, topY[i], p.z + nrm[i][1] * (RW - 0.3) * sgn)), 0.18, 0xeae4d2, 0.06); // edge lines (match built-in airport cream)
       // dashed centreline
       let dash = true;
       for (let i = 0; i < pts.length - 1; i++) {
         const a = pts[i], b = pts[i + 1], seg = a.distanceTo(b); let s = 0;
         while (s < seg) { const e = Math.min(s + 3.5, seg);
-          if (dash) this._addRibbon(g, [new THREE.Vector3(a.x + (b.x - a.x) * s / seg, a.y + (b.y - a.y) * s / seg, a.z + (b.z - a.z) * s / seg), new THREE.Vector3(a.x + (b.x - a.x) * e / seg, a.y + (b.y - a.y) * e / seg, a.z + (b.z - a.z) * e / seg)], 0.22, 0xf3ecd0, 0.07);
+          if (dash) this._addRibbon(g, [new THREE.Vector3(a.x + (b.x - a.x) * s / seg, a.y + (b.y - a.y) * s / seg, a.z + (b.z - a.z) * s / seg), new THREE.Vector3(a.x + (b.x - a.x) * e / seg, a.y + (b.y - a.y) * e / seg, a.z + (b.z - a.z) * e / seg)], 0.22, 0xeae4d2, 0.07);
           dash = !dash; s = e; }
       }
       this._clearNatureAlong(base, RW);          // clear trees under the runway

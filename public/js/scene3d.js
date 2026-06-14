@@ -995,10 +995,11 @@ export class Scene3D {
       const dx = p.x - this._last.x, dy = p.y - this._last.y;
       this._last = p;
       if (Math.abs(p.x - this._down.x) > 5 || Math.abs(p.y - this._down.y) > 5) this._moved = true;
-      if (this._drawing) { // drag traces a route in real time; sample finely for a smooth curve
+      if (this._drawing) { // drag traces a route in real time; sample finely (zoom-adaptive, like trace.html) for a smooth curve
         const g = this._raycastGround(p);
         if (g) { const last = this._stroke[this._stroke.length - 1];
-          if (!last || Math.hypot(g.x - last.x, g.z - last.z) > 1.8) { this._stroke.push({ x: g.x, z: g.z }); this._renderDrawPreview(this._stroke); } }
+          const thr = THREE.MathUtils.clamp(this.cam.radius * 0.015, 0.4, 3); // finer when zoomed in, coarser when far
+          if (!last || Math.hypot(g.x - last.x, g.z - last.z) > thr) { this._stroke.push({ x: g.x, z: g.z }); this._renderDrawPreview(this._stroke); } }
         return;
       }
       if (this._painting) { this._paintAt(p); return; }     // drag paints cells (reclamation)

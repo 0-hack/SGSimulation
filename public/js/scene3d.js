@@ -1116,18 +1116,40 @@ export class Scene3D {
     const r = this.canvas.getBoundingClientRect();
     return new THREE.Vector2((p.x / r.width) * 2 - 1, -(p.y / r.height) * 2 + 1);
   }
-  _raycastGround(p) {
+  // Terrain surface height at world (x,z) — same function the terrain mesh is built
+  // from, so a ray-march against it lands exactly on the visible hill surface.
+  _heightAt(x, z) {
+    const nx = THREE.MathUtils.clamp(x / WORLD + 0.5, 0, 1);
+    const ny = THREE.MathUtils.clamp(0.5 - z / WORLD, 0, 1);
+    return this._terrainHN(nx, ny);
+  }
+  // The surface point under screen p. Marches the camera ray against the terrain
+  // heightfield so hills are accurate (a flat y=0 plane mis-reads elevated ground,
+  // making the cursor "drift" downhill). Falls back to the flat plane if needed.
+  _groundPoint(p) {
     this.raycaster.setFromCamera(this._ndc(p), this.camera);
+    const o = this.raycaster.ray.origin, d = this.raycaster.ray.direction;
+    if (d.y < -1e-4) {
+      const HMAX = 90;                                   // above the tallest hill
+      const t0 = Math.max(0, (HMAX - o.y) / d.y);        // skip the empty sky portion
+      const span = Math.min(((-4) - o.y) / d.y - t0, WORLD * 3), STEP = Math.max(1.2, span / 240);
+      for (let t = t0; t <= t0 + span; t += STEP) {
+        const x = o.x + d.x * t, y = o.y + d.y * t, z = o.z + d.z * t;
+        if (y <= this._heightAt(x, z)) {                 // crossed below the surface — refine
+          let lo = Math.max(t0, t - STEP), hi = t;
+          for (let k = 0; k < 16; k++) { const m = (lo + hi) / 2; if (o.y + d.y * m <= this._heightAt(o.x + d.x * m, o.z + d.z * m)) hi = m; else lo = m; }
+          return { x: o.x + d.x * hi, z: o.z + d.z * hi };
+        }
+      }
+    }
     const hit = this.raycaster.intersectObject(this.pickPlane, false)[0];
     return hit ? { x: hit.point.x, z: hit.point.z } : null;
   }
+  _raycastGround(p) { return this._groundPoint(p); }
   _raycastCell(p) {
-    this.raycaster.setFromCamera(this._ndc(p), this.camera);
-    const hit = this.raycaster.intersectObject(this.pickPlane, false)[0];
-    if (!hit) return null;
-    const nx = hit.point.x / WORLD + 0.5;
-    const ny = 0.5 - hit.point.z / WORLD;
-    const gx = Math.floor(nx * N), gy = Math.floor(ny * N);
+    const g = this._groundPoint(p);
+    if (!g) return null;
+    const gx = Math.floor((g.x / WORLD + 0.5) * N), gy = Math.floor((0.5 - g.z / WORLD) * N);
     if (gx < 0 || gy < 0 || gx >= N || gy >= N) return null;
     return { x: gx, y: gy };
   }

@@ -2529,9 +2529,15 @@ export class Scene3D {
     wall.position.set(0, 1.0, 0.55); wall.castShadow = true; wall.receiveShadow = true; grp.add(wall);
     const cap = new THREE.Mesh(new THREE.BoxGeometry(5.4, 0.45, 0.95), concrete);  // cornice along the top
     cap.position.set(0, 2.65, 0.6); grp.add(cap);
-    const bore = new THREE.Mesh(new THREE.CylinderGeometry(1.55, 1.55, 3.8, 20), toon(0x070809));
-    bore.rotation.x = Math.PI / 2;                 // axis runs into the hill (+Z)
-    bore.position.set(0, 1.15, 1.7); grp.add(bore);
+    // The opening is a shallow recess in CLEAN CONCRETE GREY (a soft shadow) set
+    // flush into the headwall — never an exposed black hole sticking out, even
+    // where the hill is low or the ground was cut flat.
+    const ring = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.5, 1.5, 22, 1, true), toon(0x726d65, { side: THREE.DoubleSide }));
+    ring.rotation.x = Math.PI / 2; ring.position.set(0, 1.1, 1.0); grp.add(ring);     // tube recessed into +Z (the hill)
+    const back = new THREE.Mesh(new THREE.CircleGeometry(1.5, 22), toon(0x5d594f));    // back of the recess, a touch darker
+    back.rotation.y = Math.PI; back.position.set(0, 1.1, 1.72); grp.add(back);
+    const rim = new THREE.Mesh(new THREE.TorusGeometry(1.55, 0.16, 8, 24), concrete);  // concrete arch ring around the mouth
+    rim.position.set(0, 1.1, 0.28); grp.add(rim);
     for (const sgn of [-1, 1]) {                   // wing walls splaying out into the cutting on the open side
       const wing = new THREE.Mesh(new THREE.BoxGeometry(0.45, 2.4, 3.6), concrete);
       wing.position.set(sgn * 2.3, 0.55, -1.0); wing.rotation.y = sgn * 0.34; wing.receiveShadow = true; grp.add(wing);

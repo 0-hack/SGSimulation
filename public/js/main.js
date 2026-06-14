@@ -40,6 +40,10 @@ const LS_NAME = 'sg_owner';
 // ahead at the full chosen rate.
 const SPEED_MULT = [0, 1, 5, 20];   // pause / play / fast / hyper multipliers
 const SUN_CAP = 0.5;                // max in-game days/sec the day-night cycle visibly advances
+// Airport runways must be on flat ground. If the chosen strip varies in height by
+// more than FLAT_TOL, the player pays EARTHWORK_RATE per m³ of earth moved to level it.
+const FLAT_TOL = 2;                 // metres of height variation tolerated before levelling is required
+const EARTHWORK_RATE = 0.012;       // $M per m³ of cut/fill (× live price index)
 const currentRate = () => G.dayRate * SPEED_MULT[G.speed];
 
 const $ = (id) => document.getElementById(id);
@@ -67,7 +71,7 @@ const G = {
 // ===========================================================================
 // Boot
 // ===========================================================================
-const BUILD = '2026-06-14 · runway-platform v13';
+const BUILD = '2026-06-14 · runway-flat-rule v14';
 function boot() {
   console.log('%cSG build: ' + BUILD, 'font-weight:bold;color:#11a39c');
   const vEl = document.querySelector('.version'); if (vEl) vEl.textContent = 'build ' + BUILD;
@@ -512,23 +516,36 @@ function onRouteDrawn(pts) {
   const T = ROAD_TYPES[G.road.type] || ROAD_TYPES.road;
   const len = routeLength(pts);
   if (len < 8) { G.view.clearRoadPreview(); toast('That route is too short — drag a longer line.'); return; }
+  const route = smoothRoute(pts, Math.min(12, Math.max(4, (G.view?.cam?.radius || 70) * 0.05))); // straight stays straight, real bends flow
   const cost = priced(T.cost * Math.max(1, len / 20), G.state);
+  let total = cost, days = Math.max(8, Math.min(80, Math.round(len / 8)));
+  let detail = `${Math.round(len)} m · ${money(cost)}`;
+  // HARD RULE: an airport runway must sit on flat ground. If the chosen strip is
+  // uneven, the player pays for earthworks to level it (cost breakdown by volume).
+  let flatten = null;
+  if (T.air) {
+    const st = G.view._corridorTerrainStats(route, 4.5);
+    if (st.range > FLAT_TOL) {
+      flatten = st;
+      const fcost = priced(EARTHWORK_RATE * st.volume, G.state);
+      total += fcost; days += Math.min(60, Math.round(st.volume / 350));
+      detail = `${Math.round(len)} m runway — ⚠ ground is uneven (Δ${st.range.toFixed(1)} m).<br>` +
+        `🛬 Runway ${money(cost)}<br>🏗 Level ${Math.round(st.volume).toLocaleString()} m³ ${money(fcost)}<br><b>Total ${money(total)}</b>`;
+    }
+  }
   promptCommit({
     title: `${T.icon || ''} ${T.name}`,
-    detail: `${Math.round(len)} m · ${money(cost)}`,
+    detail,
     confirm: 'Build',
     onConfirm: () => {
-      if (G.state.treasury < cost) { toast(`Need ${money(cost)} for this ${T.name.toLowerCase()}.`); return; }
-      // longer, more realistic construction time so you watch it build slowly
-      const total = Math.max(8, Math.min(80, Math.round(len / 8)));
-      G.state.treasury -= cost;
+      if (G.state.treasury < total) { toast(`Need ${money(total)} to build this ${T.name.toLowerCase()}${flatten ? ' (incl. levelling)' : ''}.`); return; }
+      G.state.treasury -= total;
       const kind = T.air ? 'air' : T.rail ? 'rail' : 'road';
-      const route = smoothRoute(pts, Math.min(12, Math.max(4, (G.view?.cam?.radius || 70) * 0.05)));   // straight stays straight, real bends flow (tolerance scales with zoom)
-      addRoadwork(G.state, { pts: route, kind, type: G.road.type, lanes: T.lanes, elevated: G.road.elevated, total });
+      addRoadwork(G.state, { pts: route, kind, type: G.road.type, lanes: T.lanes, elevated: G.road.elevated, total: days });
       G.view.syncRoadworks(G.state);
       G.view.clearRoadPreview();
       afterEdit();
-      toast(`${T.name} — construction started (${money(cost)}).`);
+      toast(flatten ? `${T.name} — levelling ground & building (${money(total)}).` : `${T.name} — construction started (${money(total)}).`);
     },
   });
 }
@@ -538,7 +555,7 @@ function promptCommit({ title, detail, confirm = 'Build', onConfirm }) {
   G._pendingCommit = onConfirm;
   const bar = $('draw-confirm');
   $('dc-title').textContent = title;
-  $('dc-detail').textContent = detail;
+  $('dc-detail').innerHTML = detail;   // detail is built from our own strings (allows a breakdown with <br>)
   $('dc-build').textContent = confirm;
   bar.classList.remove('hidden');
 }

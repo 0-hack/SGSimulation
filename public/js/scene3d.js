@@ -1145,6 +1145,26 @@ export class Scene3D {
     const ny = THREE.MathUtils.clamp(0.5 - z / WORLD, 0, 1);
     return this._terrainHN(nx, ny);
   }
+  // Terrain stats over the corridor swept by a route of half-width `halfW`:
+  // the height range and the earthwork VOLUME needed to level it flat. Used to
+  // price flattening an airport runway that lands on uneven ground.
+  _corridorTerrainStats(pts, halfW) {
+    const heights = []; let routeLen = 0;
+    for (let i = 0; i < pts.length - 1; i++) {
+      const a = pts[i], b = pts[i + 1];
+      const segL = Math.hypot(b.x - a.x, b.z - a.z); routeLen += segL;
+      const steps = Math.max(1, Math.round(segL / 2.5));
+      const ux = (b.x - a.x) / (segL || 1), uz = (b.z - a.z) / (segL || 1), nx = -uz, nz = ux;
+      for (let s = 0; s <= steps; s++) { const t = s / steps, cx = a.x + (b.x - a.x) * t, cz = a.z + (b.z - a.z) * t;
+        for (const w of [-halfW, -halfW / 2, 0, halfW / 2, halfW]) heights.push(this._heightAt(cx + nx * w, cz + nz * w)); }
+    }
+    if (!heights.length) return { level: 0, min: 0, max: 0, range: 0, volume: 0, area: 0 };
+    let min = Infinity, max = -Infinity, sum = 0;
+    for (const h of heights) { if (h < min) min = h; if (h > max) max = h; sum += h; }
+    const level = sum / heights.length, area = routeLen * 2 * halfW, perSample = area / heights.length;
+    let volume = 0; for (const h of heights) volume += Math.abs(h - level) * perSample;   // cut + fill volume
+    return { level, min, max, range: max - min, volume, area };
+  }
   // The surface point under screen p. Marches the camera ray against the terrain
   // heightfield so hills are accurate (a flat y=0 plane mis-reads elevated ground,
   // making the cursor "drift" downhill). Falls back to the flat plane if needed.
@@ -1396,6 +1416,12 @@ export class Scene3D {
   cellToScreen(gx, gy) {
     const c = cellToWorld(gx, gy);
     const v = new THREE.Vector3(c.x, 1, c.z).project(this.camera);
+    const r = this.canvas.getBoundingClientRect();
+    return { x: r.left + (v.x * 0.5 + 0.5) * r.width, y: r.top + (-v.y * 0.5 + 0.5) * r.height, visible: v.z < 1 };
+  }
+  // Project a world-space point (x,y,z) to screen pixels — used by tests/tools.
+  worldToScreen(x, y, z) {
+    const v = new THREE.Vector3(x, y, z).project(this.camera);
     const r = this.canvas.getBoundingClientRect();
     return { x: r.left + (v.x * 0.5 + 0.5) * r.width, y: r.top + (-v.y * 0.5 + 0.5) * r.height, visible: v.z < 1 };
   }

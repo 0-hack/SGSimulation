@@ -5,3 +5,6 @@ data/*.db-wal
 *.log
 .DS_Store
 .env
+
+# transient test screenshots
+server/test/_*.png

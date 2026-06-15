@@ -3680,7 +3680,21 @@ export function makeBuilding(key, theme) {
       for (const [dx, dz, s] of [[-2.6, -1.6, 1.2], [2.2, 1.8, 1.0], [-1, 2.4, 0.9], [-3, 1.5, 0.8], [2.8, -2.6, 1.1]]) treeAt(g, dx, dz, s);
     }
   } else if (cat === 'leisure') {
-    if (key === 'beach') {
+    if (key === 'cinema') {
+      lawn(g, 9, 9, 0x9a9078);
+      g.add(partBox(7.5, 5.5, 6, mat(col), 0, 2.75, 0));                   // movie-palace hall
+      g.add(partBox(8.2, 1.4, 1.2, mat(0xf4e3b0), 0, 5.0, 3.2));           // marquee canopy
+      g.add(partBox(7.6, 1.0, 0.2, mat(0xc0392b), 0, 6.0, 0));             // vertical name sign
+      for (const x of [-2.4, 0, 2.4]) g.add(cyl(0.22, 0.22, 2.4, 0xe9c34a, x, 1.2, 3.3)); // lit columns
+    } else if (key === 'stadium') {
+      lawn(g, 9.4, 9.4, 0x4f9e3f);                                         // pitch
+      for (const s of [-1, 1]) {                                           // two curved grandstands
+        const stand = new THREE.Mesh(new THREE.BoxGeometry(8.5, 2.6, 2.4), mat(col));
+        stand.position.set(0, 1.5, s * 3.2); stand.rotation.x = s * -0.18; g.add(stand);
+        g.add(partBox(9, 0.4, 2.8, mat(0xcfd3d6), 0, 3.2, s * 3.2));       // roof
+      }
+      for (const x of [-4, 4]) g.add(cyl(0.12, 0.12, 6, 0xcfd3d6, x, 3, 0)); // floodlight masts
+    } else if (key === 'beach') {
       // back half grass, front half sand sloping to a shallow-water strip
       const grass = new THREE.Mesh(new THREE.PlaneGeometry(9.4, 4.4), mat(0x66bd5a)); grass.rotation.x = -Math.PI / 2; grass.position.set(0, 0.05, -2.5); g.add(grass);
       g.add(partBox(9.4, 0.2, 5.4, mat(0xeacf93), 0, 0.1, 1.6));            // sand

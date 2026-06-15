@@ -46,13 +46,19 @@ export const THEMES = [
   { id: 'slate', name: 'Slate', color: '#8a98a6' },
 ];
 
+// Buildings the player can construct. `cost` is in $M and is pegged to documented
+// 1965 Singapore figures (game $M ≈ 1965 Singapore $ millions): a 1-room HDB
+// "Emergency" flat cost ~$6,000 to build and rented for about $20/month; the HDB had
+// already built ~54,000 flats by 1965; the government's annual development budget ran
+// to roughly $150–200M. Each entry is an AGGREGATE regional project (an "HDB Flat" =
+// a ~5,000-home estate), so its cost is the whole works, not one block.
 export const BUILDINGS = {
   // ---- Housing ----
   kampong: {
     name: 'Kampong', cat: 'residential', icon: '🛖', color: '#8d6e4f',
     cost: 5, upkeep: 0.2, year: 1965, homes: 1200, jobs: 0,
     power: -1, water: -2, pollution: 1, happiness: 2,
-    desc: 'A cluster of attap-roofed village huts on stilts. Cheap, but cramped and prone to fire & flooding.',
+    desc: 'A cluster of attap-roofed village huts on stilts. Cheap, but cramped and prone to fire & flooding. In 1965 over a third of Singaporeans still lived in kampongs and squatter colonies.',
   },
   shophouse: {
     name: 'Shophouse Row', cat: 'residential', icon: '🏚️', color: '#d98f5a', customizable: true,
@@ -64,7 +70,7 @@ export const BUILDINGS = {
     name: 'HDB Flat', cat: 'residential', icon: '🏢', color: '#cf9b5f', customizable: true,
     cost: 30, upkeep: 1.2, year: 1965, homes: 5000, jobs: 0,
     power: -6, water: -8, pollution: 1, happiness: 5,
-    desc: 'Public housing block from the Housing & Development Board. Affordable homes for the masses.',
+    desc: 'Public housing from the Housing & Development Board. A 1-room "Emergency" flat (23 m²) cost about $6,000 to build and rented for ~$20/month; the HDB had already put up 54,000 flats by 1965. Affordable homes for the masses.',
   },
   hdb_newtown: {
     name: 'HDB New Town', cat: 'residential', icon: '🏙️', color: '#e0a85e', customizable: true,
@@ -228,6 +234,74 @@ export const BUILDINGS = {
     cost: 200, upkeep: 4.0, year: 1972, homes: 0, jobs: 900,
     power: -18, water: -10, pollution: 1, happiness: 12, income: 14,
     desc: 'A luxury marina full of yachts and sailing boats. Big tourism and land-value boost.',
+  },
+
+  // ---- 1965 public works (real projects a young Singapore was investing in) ----
+  standpipe: {
+    name: 'Standpipe & Mains', cat: 'water', icon: '🚰', color: '#6fa8cc',
+    cost: 8, upkeep: 0.3, year: 1965, homes: 0, jobs: 40,
+    power: -1, water: 120, pollution: -1, happiness: 4, health: 4,
+    desc: 'Piped water mains and communal standpipes for the kampongs. In 1965 many villagers still queued at a shared tap — clean water cut disease sharply. Cheap and weather-proof.',
+  },
+  sewage: {
+    name: 'Sewerage Works', cat: 'water', icon: '🚽', color: '#7d8a6f',
+    cost: 45, upkeep: 2.0, year: 1965, homes: 0, jobs: 200,
+    power: -14, water: -2, pollution: -10, happiness: 4, health: 12,
+    desc: 'Modern sewers and treatment to replace the night-soil bucket system still used across 1960s Singapore. Banishes filth and disease — vital, unglamorous nation-building.',
+  },
+  community_centre: {
+    name: 'Community Centre', cat: 'civic', icon: '🤝', color: '#d8a24e',
+    cost: 10, upkeep: 0.5, year: 1965, homes: 0, jobs: 80,
+    power: -3, water: -3, pollution: 0, happiness: 6, safety: 6, education: 4,
+    desc: 'A People\'s Association centre — classes, clubs and grassroots events that knit a multiracial nation together. The PA had been opening these island-wide since 1960.',
+  },
+  clinic: {
+    name: 'Outpatient Clinic', cat: 'civic', icon: '🩺', color: '#d99a9a',
+    cost: 22, upkeep: 1.5, year: 1965, homes: 0, jobs: 300,
+    power: -6, water: -8, pollution: 0, happiness: 3, health: 11,
+    desc: 'A government dispensary and maternal-and-child clinic — cheap front-line care close to the kampongs, easing the load on the big hospitals.',
+  },
+  fire_station: {
+    name: 'Fire Station', cat: 'civic', icon: '🚒', color: '#cc5a4a',
+    cost: 26, upkeep: 1.6, year: 1965, homes: 0, jobs: 250,
+    power: -4, water: -6, pollution: 0, happiness: 2, safety: 13,
+    desc: 'Fire engines and crews. After the 1961 Bukit Ho Swee fire left 16,000 homeless, fire protection for the crowded attap settlements was a matter of survival.',
+  },
+  market: {
+    name: 'Market & Hawkers', cat: 'civic', icon: '🛒', color: '#cf9050', customizable: true,
+    cost: 16, upkeep: 0.8, year: 1965, homes: 0, jobs: 900,
+    power: -6, water: -8, pollution: 1, happiness: 7, income: 5,
+    desc: 'A wet market and hawker stalls, getting roadside vendors off the streets and into clean, licensed premises. Affordable food, jobs and a buzzing community hub.',
+  },
+  tech_school: {
+    name: 'Technical Institute', cat: 'civic', icon: '🔧', color: '#7fa07f',
+    cost: 55, upkeep: 3.0, year: 1965, homes: 0, jobs: 500,
+    power: -10, water: -10, pollution: 0, happiness: 2, education: 16,
+    desc: 'Vocational and technical training — fitters, electricians, draughtsmen — to staff the new Jurong factories. A skilled workforce was the bet behind industrialisation.',
+  },
+  godown: {
+    name: 'Godown & Wharf', cat: 'industry', icon: '📦', color: '#9c8463',
+    cost: 45, upkeep: 1.5, year: 1965, homes: 0, jobs: 1800,
+    power: -15, water: -6, pollution: 4, happiness: -1, income: 12,
+    desc: 'Riverside warehouses and quays for the entrepôt trade — bumboats lightering cargo up the Singapore River. The age-old business of buying, storing and re-exporting the region\'s goods.',
+  },
+  processing: {
+    name: 'Rubber & Tin Works', cat: 'industry', icon: '🛞', color: '#8a7a5a',
+    cost: 48, upkeep: 1.8, year: 1965, homes: 0, jobs: 2200,
+    power: -22, water: -12, pollution: 9, happiness: -3, income: 9,
+    desc: 'Mills that grade and pack the region\'s rubber and smelt its tin — the commodities Singapore lived off before industrialisation. Steady export earnings, but smoky.',
+  },
+  cinema: {
+    name: 'Cinema', cat: 'leisure', icon: '🎬', color: '#c9608f',
+    cost: 18, upkeep: 0.8, year: 1965, homes: 0, jobs: 300,
+    power: -8, water: -3, pollution: 0, happiness: 9, income: 5,
+    desc: 'A grand movie palace in the golden age of Cathay and Shaw — Malay, Hindi, Hokkien and Hollywood films were the cheap thrill of the masses. A big happiness lift.',
+  },
+  stadium: {
+    name: 'Sports Stadium', cat: 'leisure', icon: '🏟️', color: '#5fa86a',
+    cost: 55, upkeep: 2.0, year: 1965, homes: 0, jobs: 200,
+    power: -10, water: -8, pollution: 0, happiness: 11, income: 3,
+    desc: 'A grandstand and playing fields for football, athletics and national-day parades. Sport built fitness, pride and a shared identity for the new republic.',
   },
 };
 

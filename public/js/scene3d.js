@@ -869,10 +869,14 @@ export class Scene3D {
       if (!(this.isLand(gx, gy) && !this.heritageMask[gy][gx])) { const s = this._nearestFreeLand(gx, gy, 8); if (!s) return; gx = s.x; gy = s.y; }
       const c = cellToWorld(gx, gy);
       const m = makeBuilding(key, null);
-      // 1965 was a low-rise town: shrink the aggregate models so the heritage city
-      // reads as small & dense against the island (kampongs lowest, civic/港 a touch
-      // bigger) rather than looming oversized over the map.
-      const sc = key === 'kampong' ? 0.5 : (key === 'port' || key === 'power_station' || key === 'factory' || key === 'processing') ? 0.7 : 0.6;
+      // 1965 was a low-rise town of tiny shophouses: shrink the aggregate models
+      // hard so the heritage city reads as the small, dense, fine-grained place the
+      // 1966 survey map shows — shophouses smallest, big works (port/power/factory)
+      // a touch larger — rather than looming oversized over the island.
+      const sc = key === 'shophouse' ? 0.42
+        : key === 'kampong' ? 0.46
+        : (key === 'port' || key === 'power_station' || key === 'factory' || key === 'processing') ? 0.66
+        : 0.52;
       m.scale.setScalar(sc);
       m.position.set(c.x, this.terrainHeight(gx, gy), c.z); m.rotation.y = Math.floor(Math.random() * 4) * Math.PI / 2;
       g.add(m);

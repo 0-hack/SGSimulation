@@ -132,10 +132,13 @@ function renderRoads(ctx) {
   wrap.append(el('div', 'section-title', 'Mode'));
   wrap.append(typeRow);
 
-  // bridge / flyover toggle — only meaningful for roads & railways, not runways
-  if (!ROAD_TYPES[r.type]?.air) {
+  // elevated toggle — a flyover (road), viaduct (railway) or raised runway, lifted
+  // above everything below it. Available for ALL modes.
+  {
+    const air = ROAD_TYPES[r.type]?.air;
+    const label = air ? 'Elevated runway (raised on pillars)' : 'Elevated flyover / bridge';
     const bridge = el('div', 'checkbox');
-    bridge.innerHTML = `<span class="switch${r.elevated ? ' on' : ''}"></span> Elevated flyover / bridge`;
+    bridge.innerHTML = `<span class="switch${r.elevated ? ' on' : ''}"></span> ${label}`;
     bridge.querySelector('.switch').onclick = () => ctx.toggleBridge();
     wrap.append(bridge);
   }

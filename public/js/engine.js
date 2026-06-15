@@ -494,10 +494,10 @@ function advanceRoadworks(state) {
     w.left -= 1;
     if (w.left > 0) { still.push(w); continue; }
     if (w.kind === 'rail') {
-      // store geometry + the tunnel flag so the renderer knows to bore through hills
-      (state.railways || (state.railways = [])).push({ pts: w.pts.map((p) => [p.x, p.z]), tunnel: !!w.tunnel });
+      // store geometry + whether it's an elevated viaduct (renderer reads elevated)
+      (state.railways || (state.railways = [])).push({ pts: w.pts.map((p) => [p.x, p.z]), elevated: !!w.elevated });
     } else if (w.kind === 'air') {
-      (state.airstrips || (state.airstrips = [])).push(w.pts.map((p) => [p.x, p.z]));
+      (state.airstrips || (state.airstrips = [])).push({ pts: w.pts.map((p) => [p.x, p.z]), elevated: !!w.elevated });
     } else {
       // a drawn road is spliced into the graph: it carries its full smoothed
       // polyline (so it renders as one uniform ribbon) AND is broken at every place

@@ -74,7 +74,7 @@ const G = {
 // ===========================================================================
 // Boot
 // ===========================================================================
-const BUILD = '2026-06-14 · roads-on-mesh-rail-visible v31';
+const BUILD = '2026-06-15 · elevated-all-modes v32';
 function boot() {
   console.log('%cSG build: ' + BUILD, 'font-weight:bold;color:#11a39c');
   const vEl = document.querySelector('.version'); if (vEl) vEl.textContent = 'build ' + BUILD;
@@ -490,9 +490,12 @@ function onRouteDrawn(pts, opts = {}) {
   if (len < 8) { G.view.clearRoadPreview(); toast('That route is too short — drag a longer line.'); return; }
   // freeform strokes get smoothed; staged Lego pieces keep their exact geometry
   const route = opts.raw ? pts.map((p) => ({ x: p.x, z: p.z })) : smoothRoute(pts, Math.min(7, Math.max(3, (G.view?.cam?.radius || 70) * 0.035)));
-  const cost = priced(T.cost * Math.max(1, len / 20), G.state);
-  let total = cost, days = Math.max(8, Math.min(80, Math.round(len / 8)));
-  let detail = `${Math.round(len)} m · ${money(cost)}`;
+  // an elevated flyover / viaduct / raised runway costs more (deck + pillars) but
+  // needs NO earthworks — it bridges over everything below instead of cutting it.
+  const elevated = G.road.elevated;
+  const cost = priced(T.cost * Math.max(1, len / 20) * (elevated ? 1.8 : 1), G.state);
+  let total = cost, days = Math.max(8, Math.min(80, Math.round(len / 8))) + (elevated ? 6 : 0);
+  let detail = elevated ? `${Math.round(len)} m elevated ${T.name.toLowerCase()} · ${money(cost)}` : `${Math.round(len)} m · ${money(cost)}`;
   // Charge `amount`, queue construction, and (for railways) carry the tunnel flag.
   const doBuild = (amount, buildDays, tunnel, note) => {
     if (G.state.treasury < amount) { toast(`Need ${money(amount)} to build this ${T.name.toLowerCase()}.`); return; }
@@ -510,7 +513,7 @@ function onRouteDrawn(pts, opts = {}) {
   // HARD RULE: an airport runway must sit on FLAT GROUND. While drawing, detect the
   // terrain under the strip; if it crosses a slope/hill, break down the cost to clear
   // & flatten it (cut the hill down to the low ground) so the runway lies flat.
-  if (T.air) {
+  if (T.air && !elevated) {
     const st = G.view._corridorTerrainStats(route, 4.5);
     if (st.range > FLAT_TOL) {
       const fcost = priced(EARTHWORK_RATE * st.volume, G.state);
@@ -525,7 +528,7 @@ function onRouteDrawn(pts, opts = {}) {
   // RAILWAY across uneven ground: like a runway, the line is laid on a SMOOTH grade
   // and any hill in the way is CUT down (dips filled) so the track never climbs at
   // silly angles. Charge the earthworks and show the breakdown (same as the runway).
-  if (T.rail) {
+  if (T.rail && !elevated) {
     const prof = G.view._railProfile(route.map((p) => ({ x: p.x, z: p.z })), 1.4);
     if (prof.cutMax > FLAT_TOL) {
       const fcost = priced(EARTHWORK_RATE * prof.earthVolume, G.state);

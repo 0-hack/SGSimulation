@@ -2428,12 +2428,14 @@ export class Scene3D {
     // are filled, so the track never climbs at silly angles. Profile against the RAW
     // ground first (bypass existing carves), then carve the corridor to the grade.
     this._carves = null;
-    const rails = [];
+    const rails = [], viaducts = [];
     for (const entry of ((state && state.railways) || [])) {
       const poly = Array.isArray(entry) ? entry : (entry && entry.pts);   // legacy arrays or { pts, … }
       if (!poly || poly.length < 2) continue;
-      const prof = this._railProfile(poly.map(([x, z]) => ({ x, z })), 1.4);
-      if (prof.dense.length >= 2) rails.push(prof);
+      const dense = this._resamplePoly(poly.map(([x, z]) => ({ x, z })), 1.4);
+      if (dense.length < 2) continue;
+      if (!Array.isArray(entry) && entry.elevated) viaducts.push(dense);   // elevated viaduct
+      else rails.push(this._railProfile(poly.map(([x, z]) => ({ x, z })), 1.4)); // graded, cut hills
     }
     // full-cut half-width must exceed a terrain-mesh cell (~6.7 m) so the coarse mesh
     // is actually cut to grade right under the track (else a hill covers the rails)
@@ -2443,6 +2445,13 @@ export class Scene3D {
       const pts = r.dense.map((q, i) => new THREE.Vector3(q.x, r.grade[i], q.z));
       this._railEmbankment(g, r);            // fill embankment under the track over any dip
       this._railTrack(g, pts);               // ballast + sleepers + rails on the smooth grade
+    }
+    for (const dense of viaducts) {          // elevated viaduct: flat deck clearing all below, on pillars
+      const n = dense.length, deckY = this._elevatedDeckY(dense, 2);
+      const pts = dense.map((q, i) => { const gy = this._roadY(q.x, q.z), t = i / (n - 1), ramp = Math.min(1, Math.min(t, 1 - t) / 0.18); return new THREE.Vector3(q.x, gy + ramp * (deckY - gy), q.z); });
+      this._addRibbon(g, pts, 1.9, 0x6b6f74, -0.18);   // concrete deck under the track
+      this._railTrack(g, pts);
+      this._addPillars(g, pts, 0.55);
     }
   }
   // A fill embankment under the track wherever the graded line sits above the (now
@@ -2512,52 +2521,51 @@ export class Scene3D {
     const g = new THREE.Group(); this.scene.add(g); this._airGroup = g;
     this._airPlanes = [];
     const RW = 4.5; // runway half-width (matches the built-in airport)
-    const strips = ((state && state.airstrips) || []).filter((p) => p && p.length >= 2);
-    // Pass 1 (against RAW terrain): pick each runway's flat level (the MEAN ground
-    // under it) and carve a pad so the mountain blocking it is CUT AWAY to that level
-    // — the runway lies on the ground, not on a raised platform.
-    const saved = this._carves; this._carves = null;
-    const meta = [];
-    const airCarves = [];
-    for (const poly of strips) {
-      const dense = this._resamplePoly(poly.map(([x, z]) => ({ x, z })), 2.5);
+    const entries = ((state && state.airstrips) || []).map((e) => ({ poly: Array.isArray(e) ? e : (e && e.pts), elevated: !Array.isArray(e) && !!e.elevated })).filter((e) => e.poly && e.poly.length >= 2);
+    this._carves = null;
+    const ground = [], raised = [];
+    for (const e of entries) {
+      const dense = this._resamplePoly(e.poly.map(([x, z]) => ({ x, z })), 2.5);
+      if (dense.length < 2) continue;
       const nrm = dense.map((p, i) => { const a = dense[Math.max(0, i - 1)], b = dense[Math.min(dense.length - 1, i + 1)]; let tx = b.x - a.x, tz = b.z - a.z; const l = Math.hypot(tx, tz) || 1; return [-tz / l, tx / l]; });
-      // Sit the runway on the GROUND (the lowest ground under it) and cut the hill
-      // down to that level — the mountain blocking the strip is sliced away rather
-      // than the runway riding up on a tall embankment.
+      if (e.elevated) { raised.push({ dense, nrm }); continue; }
+      // GROUND runway: sit on the LOWEST ground under it and cut the hill flat to that
       let level = Infinity;
       for (let i = 0; i < dense.length; i++) { const nx = nrm[i][0], nz = nrm[i][1]; for (const w of [-RW, -RW / 2, 0, RW / 2, RW]) level = Math.min(level, this._roadY(dense[i].x + nx * w, dense[i].z + nz * w)); }
-      if (!isFinite(level)) level = 0;
-      meta.push({ poly, dense, nrm, level });
-      airCarves.push({ poly: dense, halfW: RW + 2, blend: 16, floor: level });   // cut the hill flat to ground level
+      ground.push({ dense, nrm, level: isFinite(level) ? level : 0 });
     }
-    this._airCarves = airCarves;
-    this._syncCarves();   // re-cut the terrain mesh (combined with any railway tunnels)
-    // Pass 2: lay each runway flat at its level on the now-cut ground.
-    for (const m of meta) {
-      const { dense, nrm, level } = m;
-      const deck = level + 0.3;
-      const base = dense.map((q) => new THREE.Vector3(q.x, level, q.z));
-      const pts = base.map((p) => new THREE.Vector3(p.x, deck, p.z));
-      this._addRibbon(g, pts, RW, 0x35383d, 0.0);                  // runway tarmac (flat, on the ground)
-      for (const sgn of [-1, 1]) {                                 // short skirt to the cut ground / any fill over a dip
+    this._airCarves = ground.map((m) => ({ poly: m.dense, halfW: RW + 2, blend: 16, floor: m.level }));
+    this._syncCarves();   // cut the hills flat under each ground runway (+ railway corridors)
+    // tarmac + edge lines + dashed centreline + taxiing plane at a flat deck height
+    const lay = (dense, nrm, deck) => {
+      const pts = dense.map((q) => new THREE.Vector3(q.x, deck, q.z));
+      this._addRibbon(g, pts, RW, 0x35383d, 0.0);                              // tarmac
+      for (const sgn of [-1, 1]) this._addRibbon(g, pts.map((p, i) => new THREE.Vector3(p.x + nrm[i][0] * (RW - 0.3) * sgn, deck, p.z + nrm[i][1] * (RW - 0.3) * sgn)), 0.18, 0xeae4d2, 0.06); // edge lines
+      let dash = true;
+      for (let i = 0; i < pts.length - 1; i++) { const a = pts[i], b = pts[i + 1], seg = a.distanceTo(b); let s = 0;
+        while (s < seg) { const e = Math.min(s + 3.5, seg);
+          if (dash) this._addRibbon(g, [new THREE.Vector3(a.x + (b.x - a.x) * s / seg, deck, a.z + (b.z - a.z) * s / seg), new THREE.Vector3(a.x + (b.x - a.x) * e / seg, deck, a.z + (b.z - a.z) * e / seg)], 0.22, 0xeae4d2, 0.07);
+          dash = !dash; s = e; } }
+      this._airPlanes.push({ pts, total: this._polyLen(pts), mesh: null, t: Math.random(), dir: 1 });
+      return pts;
+    };
+    for (const m of ground) {
+      const deck = m.level + 0.3;
+      lay(m.dense, m.nrm, deck);
+      for (const sgn of [-1, 1]) {                                             // short skirt to the cut ground
         const v = [], idx = [];
-        for (let i = 0; i < base.length; i++) { const ex = base[i].x + nrm[i][0] * RW * sgn, ez = base[i].z + nrm[i][1] * RW * sgn; v.push(ex, deck, ez, ex, Math.min(deck - 0.05, this._roadY(ex, ez) - 0.1), ez); }
-        for (let i = 0; i < base.length - 1; i++) { const a = i * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+        for (let i = 0; i < m.dense.length; i++) { const ex = m.dense[i].x + m.nrm[i][0] * RW * sgn, ez = m.dense[i].z + m.nrm[i][1] * RW * sgn; v.push(ex, deck, ez, ex, Math.min(deck - 0.05, this._roadY(ex, ez) - 0.1), ez); }
+        for (let i = 0; i < m.dense.length - 1; i++) { const a = i * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
         const sg = new THREE.BufferGeometry(); sg.setAttribute('position', new THREE.Float32BufferAttribute(v, 3)); sg.setIndex(idx); sg.computeVertexNormals();
         const mesh = new THREE.Mesh(sg, toon(0x4c4f54, { side: THREE.DoubleSide })); mesh.receiveShadow = true; g.add(mesh);
       }
-      for (const sgn of [-1, 1]) this._addRibbon(g, pts.map((p, i) => new THREE.Vector3(p.x + nrm[i][0] * (RW - 0.3) * sgn, deck, p.z + nrm[i][1] * (RW - 0.3) * sgn)), 0.18, 0xeae4d2, 0.06); // edge lines
-      // dashed centreline
-      let dash = true;
-      for (let i = 0; i < pts.length - 1; i++) {
-        const a = pts[i], b = pts[i + 1], seg = a.distanceTo(b); let s = 0;
-        while (s < seg) { const e = Math.min(s + 3.5, seg);
-          if (dash) this._addRibbon(g, [new THREE.Vector3(a.x + (b.x - a.x) * s / seg, a.y + (b.y - a.y) * s / seg, a.z + (b.z - a.z) * s / seg), new THREE.Vector3(a.x + (b.x - a.x) * e / seg, a.y + (b.y - a.y) * e / seg, a.z + (b.z - a.z) * e / seg)], 0.22, 0xeae4d2, 0.07);
-          dash = !dash; s = e; }
-      }
-      this._clearNatureAlong(base, RW + 2);      // clear trees under the runway + cut margins
-      this._airPlanes.push({ pts, total: this._polyLen(pts), mesh: null, t: Math.random(), dir: 1 });
+      this._clearNatureAlong(m.dense, RW + 2);
+    }
+    for (const m of raised) {                                                  // ELEVATED runway: ONE flat level clearing all below, on pillars (no slope)
+      const deck = this._elevatedDeckY(m.dense, RW + 2);
+      const pts = lay(m.dense, m.nrm, deck);
+      this._addRibbon(g, pts, RW + 0.5, 0x55585d, -0.3);                       // concrete deck underside
+      this._addPillars(g, pts, 0.8);
     }
   }
   _polyLen(pts) { let L = 0; for (let i = 1; i < pts.length; i++) L += pts[i].distanceTo(pts[i - 1]); return L; }
@@ -2677,33 +2685,63 @@ export class Scene3D {
     return h0 * (1 - tz) + h1 * tz;
   }
   _roadY(x, z) { return this._meshY(x, z) + 0.12; }   // sit just on the rendered mesh
+  // ---- elevated flyover / viaduct / raised runway shared helpers ----------
+  // The highest obstacle (terrain or building top) under a corridor, so an elevated
+  // deck can be set above EVERYTHING below it (no overlaps).
+  _corridorTopY(pts, halfW) {
+    let top = 0;
+    for (let i = 0; i < pts.length; i++) {
+      const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)];
+      let tx = b.x - a.x, tz = b.z - a.z; const l = Math.hypot(tx, tz) || 1; const nx = -tz / l, nz = tx / l;
+      for (const w of [-halfW, 0, halfW]) top = Math.max(top, this._roadY(pts[i].x + nx * w, pts[i].z + nz * w));
+    }
+    const reach = halfW + 6;
+    for (const entry of this.buildings.values()) {
+      const grp = entry && entry.group; if (!grp) continue;
+      let d = Infinity;
+      for (let i = 0; i < pts.length - 1; i++) { const pr = this._projOnSeg(grp.position.x, grp.position.z, pts[i], pts[i + 1]); if (pr.d < d) d = pr.d; }
+      if (d < reach) { const bb = new THREE.Box3().setFromObject(grp); if (bb.max.y > top) top = bb.max.y; }
+    }
+    return top;
+  }
+  // Flat deck height for an elevated route: clears the tallest obstacle + headroom.
+  _elevatedDeckY(pts, halfW) { return this._corridorTopY(pts, halfW) + 4.5; }
+  // Concrete pillars from the deck down to the ground at intervals along the route.
+  _addPillars(g, pts, r) {
+    let acc = 999;
+    for (let i = 0; i < pts.length; i++) {
+      acc += i ? Math.hypot(pts[i].x - pts[i - 1].x, pts[i].z - pts[i - 1].z) : 0;
+      if (acc < 9) continue; acc = 0;
+      const gy = this._roadY(pts[i].x, pts[i].z), h = pts[i].y - gy; if (h < 1.2) continue;
+      const pil = new THREE.Mesh(new THREE.CylinderGeometry(r, r + 0.15, h, 8), toon(0x9098a0));
+      pil.position.set(pts[i].x, gy + h / 2, pts[i].z); pil.castShadow = true; g.add(pil);
+    }
+  }
   _sampleEdge(roads, e) {
+    const T = ROAD_TYPES[e.type] || ROAD_TYPES.road, hw = (T.renderHW || T.width / 2 + 0.35);
     // a traced or freehand-drawn road carries its own smoothed polyline
     if (e.poly && e.poly.length >= 2) {
-      const n = e.poly.length;
+      const n = e.poly.length, deckY = e.elevated ? this._elevatedDeckY(e.poly, hw + 1) : 0;
       return e.poly.map((p, i) => {
-        let y = this._roadY(p.x, p.z);
-        if (e.elevated) { const t = i / (n - 1); y += Math.min(1, Math.min(t, 1 - t) / 0.22) * 4.2; } // flyover ramps up at the ends
+        const gy = this._roadY(p.x, p.z); let y = gy;
+        if (e.elevated) { const t = i / (n - 1), ramp = Math.min(1, Math.min(t, 1 - t) / 0.18); y = gy + ramp * (deckY - gy); }  // flat flyover, ramps at the ends
         return { x: p.x, y, z: p.z };
       });
     }
     const a = roads.nodes[e.a], b = roads.nodes[e.b];
     if (!a || !b) return [];
-    const pts = [];
-    const segs = e.ctrl ? 14 : 1;
+    const base = [], segs = e.ctrl ? 14 : 1;
     for (let i = 0; i <= segs; i++) {
       const t = i / segs;
-      let x, z;
-      if (e.ctrl) { // quadratic Bézier
-        const it = 1 - t;
-        x = it * it * a.x + 2 * it * t * e.ctrl.x + t * t * b.x;
-        z = it * it * a.z + 2 * it * t * e.ctrl.z + t * t * b.z;
-      } else { x = a.x + (b.x - a.x) * t; z = a.z + (b.z - a.z) * t; }
-      let y = this._roadY(x, z);
-      if (e.elevated) { const ramp = Math.min(1, Math.min(t, 1 - t) / 0.22); y += ramp * 4.2; }
-      pts.push({ x, y, z });
+      if (e.ctrl) { const it = 1 - t; base.push({ x: it * it * a.x + 2 * it * t * e.ctrl.x + t * t * b.x, z: it * it * a.z + 2 * it * t * e.ctrl.z + t * t * b.z }); }
+      else base.push({ x: a.x + (b.x - a.x) * t, z: a.z + (b.z - a.z) * t });
     }
-    return pts;
+    const deckY = e.elevated ? this._elevatedDeckY(base, hw + 1) : 0;
+    return base.map((p, i) => {
+      const gy = this._roadY(p.x, p.z); let y = gy;
+      if (e.elevated) { const t = i / segs, ramp = Math.min(1, Math.min(t, 1 - t) / 0.18); y = gy + ramp * (deckY - gy); }
+      return { x: p.x, y, z: p.z };
+    });
   }
 
   // Walk the traced-road graph into maximal polylines: chains run through degree-2
@@ -2829,11 +2867,7 @@ export class Scene3D {
         // player-drawn Road: a slim carriageway matching the 1966 survey-map roads —
         // a clean dark ribbon of uniform width (mitred so bends don't pinch).
         ribbonSmooth(road, pts, T.renderHW, 0.04);
-        if (e.elevated) for (let i = 2; i < pts.length - 1; i += 4) {
-          const pt = pts[i];
-          const pil = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.5, pt.y, 8), toon(0x9098a0));
-          pil.position.set(pt.x, pt.y / 2, pt.z); this.roadGroup.add(pil);
-        }
+        if (e.elevated) this._addPillars(this.roadGroup, pts, 0.45);
         return;
       }
       const hw = T.width / 2, L = e.lanes || T.lanes, lw = T.width / L;
@@ -2844,11 +2878,7 @@ export class Scene3D {
         markLine(pts, off, Math.abs(off) > 0.05);   // solid only on the centre (between directions)
       }
       stopLine(pts, hw, false); stopLine(pts, hw, true);
-      if (e.elevated) for (let i = 2; i < pts.length - 1; i += 4) {
-        const pt = pts[i];
-        const pil = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.6, pt.y, 8), toon(0x9098a0));
-        pil.position.set(pt.x, pt.y / 2, pt.z); this.roadGroup.add(pil);
-      }
+      if (e.elevated) this._addPillars(this.roadGroup, pts, 0.55);
     });
 
     (roads?.islands || []).forEach((is) => {

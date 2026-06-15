@@ -20,8 +20,9 @@ try {
 
   // RAILWAY — build a historic (normalised) line and a player (world) line over
   // the same flat strip, then compare the geometry signatures they produce.
-  const rail = await p.evaluate(()=>{
-    const v=window.__sgview, W=v.land.length*10;
+  const rail = await p.evaluate(async ()=>{
+    const v=window.__sgview;
+    const { WORLD_SIZE } = await import('/js/data.js'); const W=WORLD_SIZE; // island span (fixed, grid-independent)
     let cx=0, cz=0, found=false;
     for (let X=-200;X<=200 && !found;X+=8) for (let Z=-200;Z<=200 && !found;Z+=8){
       let okp=true; for(let i=-6;i<=6;i++){ const h=v._heightAt(X+i*5,Z); if(h>3||h<=0.2){okp=false;break;} }

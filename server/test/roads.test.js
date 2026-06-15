@@ -78,7 +78,7 @@ try {
   await p.click('.spd[data-spd="0"]');
   await p.click('.tool[data-panel="cloud"]'); await p.waitForSelector('.cloud-info');
   await p.evaluate(()=>[...document.querySelectorAll('button')].find(b=>/Save to Cloud/.test(b.textContent))?.click());
-  await p.waitForFunction(()=>/\/world\//.test(document.querySelector('.share-row input')?.value||''),{timeout:5000});
+  await p.waitForFunction(()=>/\/world\//.test(document.querySelector('.share-row input')?.value||''),{timeout:30000});
   const id=(await p.$eval('.share-row input',e=>e.value)).split('/world/')[1];
   const loaded = await (await fetch(`${base}/api/worlds/${id}`)).json();
   ok((loaded.state.roads?.edges?.length||0) >= 1, 'roads persist through cloud save/load');

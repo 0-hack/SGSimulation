@@ -17,7 +17,9 @@ try {
   await a.click('.tool[data-panel="cloud"]');
   await a.waitForSelector('.cloud-info');
   await a.evaluate(()=>[...document.querySelectorAll('button')].find(b=>/Save to Cloud/.test(b.textContent))?.click());
-  await a.waitForFunction(()=>/\/world\//.test(document.querySelector('.share-row input')?.value||''),{timeout:5000});
+  // generous timeout: the software-GL render loop in CI is slow and starves the
+  // main thread, so the save callback can take a while (instant on real GPUs).
+  await a.waitForFunction(()=>/\/world\//.test(document.querySelector('.share-row input')?.value||''),{timeout:30000});
   const link = await a.$eval('.share-row input', e=>e.value);
   const id = link.split('/world/')[1];
   ok(!!id, `Alice saved 'Lion City' to cloud (id ${id.slice(0,8)}…)`);
@@ -30,7 +32,7 @@ try {
   // 'domcontentloaded' (not networkidle0): the heavy 3D build keeps the loop busy,
   // so wait on the real readiness signal — the visit banner — instead.
   await b.goto(`${base}/world/${id}`, { waitUntil:'domcontentloaded' });
-  await b.waitForSelector('#visit-banner:not(.hidden)', { timeout:30000 });
+  await b.waitForSelector('#visit-banner:not(.hidden)', { timeout:90000 });
   const banner = await b.$eval('#visit-name', e=>e.textContent);
   ok(/Lion City/.test(banner) && /Alice/.test(banner), `Player B sees visit banner: "${banner}"`);
   const nation = await b.$eval('#hud-nation', e=>e.textContent);

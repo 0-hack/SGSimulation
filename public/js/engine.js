@@ -90,7 +90,8 @@ export function newGame({ name = 'New Singapore', owner = 'Anonymous' } = {}) {
 
 // Grid cell -> world coordinates (must match scene3d's cellToWorld).
 function cellWorld(x, y) {
-  return { x: (x + 0.5 - GRID_SIZE / 2) * 10, z: (GRID_SIZE / 2 - y - 0.5) * 10, y: 0 };
+  const CELL = 1600 / GRID_SIZE; // world units per cell (matches scene3d's WORLD_SIZE/N)
+  return { x: (x + 0.5 - GRID_SIZE / 2) * CELL, z: (GRID_SIZE / 2 - y - 0.5) * CELL, y: 0 };
 }
 
 // Recreate roughly how Singapore looked at independence: a small developed town
@@ -119,10 +120,30 @@ function seed1965(state) {
   injectTracedRoads(state.roads);
 }
 
+// ---------------------------------------------------------------------------
+// Save serialization — the grid is GRID_SIZE² cells but almost all are empty, so
+// store it SPARSELY (just the filled cells). On a 640 grid the dense array would be
+// ~2.7 MB of "null,"; sparse it is a few KB. Pack before saving, unpack on load.
+// ---------------------------------------------------------------------------
+export function packState(state) {
+  if (!state || !Array.isArray(state.grid)) return state;
+  const g = state.grid, cells = [];
+  for (let y = 0; y < g.length; y++) { const row = g[y]; if (!row) continue; for (let x = 0; x < row.length; x++) if (row[x]) cells.push([x, y, row[x]]); }
+  return { ...state, grid: { __sparse: true, w: (g[0] && g[0].length) || GRID_SIZE, h: g.length, cells } };
+}
+export function unpackState(state) {
+  if (!state || !state.grid || !state.grid.__sparse) return state;
+  const sp = state.grid, grid = Array.from({ length: sp.h }, () => Array(sp.w).fill(null));
+  for (const [x, y, c] of (sp.cells || [])) if (y >= 0 && y < sp.h && x >= 0 && x < sp.w) grid[y][x] = c;
+  state.grid = grid;
+  return state;
+}
+
 // Bring a loaded save up to the current map size (e.g. older, smaller grids):
 // re-centre the existing layout onto a fresh GRID_SIZE×GRID_SIZE grid.
 export function ensureGrid(state) {
   if (!state) return state;
+  unpackState(state); // expand a sparse-saved grid back to the dense 2D array
   if (typeof state.debt !== 'number') state.debt = 0;
   if (!state.roads) state.roads = { nodes: [], edges: [], islands: [] };
   if (!Array.isArray(state.reclaimed)) state.reclaimed = [];

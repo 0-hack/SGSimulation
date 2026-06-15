@@ -1,7 +1,7 @@
 // Main controller: boots the menu, runs the game loop, wires the UI & cloud.
 import {
   newGame, tickDay, build, demolish, canPlace, derive,
-  resolveEvent, snapshot, refreshSummary, ensureGrid, issueBond, repayDebt,
+  resolveEvent, snapshot, refreshSummary, ensureGrid, packState, issueBond, repayDebt,
   reclaimLand, reclaimCost, buildingCost, priced,
   routeLength, addRoadwork, smoothRoute, spliceRoad,
   polyArea, reclaimAreaCost, addReclaimArea,
@@ -822,13 +822,14 @@ async function cloudSave(isPublic) {
   G.state.landmarks = loadLibrary(); // bundle your designs so visitors can see them
   refreshSummary(G.state);
   try {
+    const packed = packState(G.state); // store the grid sparsely (a 640² grid is ~2.7 MB dense)
     if (G.cloud) {
       await api.updateWorld(G.cloud.id, G.cloud.token, {
-        name: G.state.name, owner: G.state.owner, state: G.state, isPublic,
+        name: G.state.name, owner: G.state.owner, state: packed, isPublic,
       });
     } else {
       const res = await api.createWorld({
-        name: G.state.name, owner: G.state.owner, state: G.state, isPublic,
+        name: G.state.name, owner: G.state.owner, state: packed, isPublic,
       });
       G.cloud = { id: res.id, token: res.token };
     }
@@ -845,7 +846,7 @@ function saveLocal() {
   if (!G.state || G.readOnly) return;
   G.state.landmarks = loadLibrary(); // keep your designs travelling with the save
   try {
-    localStorage.setItem(LS_SAVE, JSON.stringify({ state: G.state, cloud: G.cloud }));
+    localStorage.setItem(LS_SAVE, JSON.stringify({ state: packState(G.state), cloud: G.cloud }));
   } catch { /* quota */ }
 }
 

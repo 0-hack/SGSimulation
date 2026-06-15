@@ -4,7 +4,8 @@ import { CUSTOM_LANDMARKS } from './custom1966.js';
 
 export const START_YEAR = 1965;
 export const START_DATE = { y: 1965, m: 8, d: 9 }; // National Day: 9 Aug 1965
-export const GRID_SIZE = 160;  // a much larger island so roads & buildings sit at a realistic, small human scale
+export const GRID_SIZE = 640;  // a fine 2.5-unit grid (the island stays 1600 units across) so the dense 1966 town fits
+export const WORLD_SIZE = 1600; // world units across the island bounding box — FIXED, independent of grid resolution
 
 // Each "citizen" in state represents ~10 real people; display multiplies by 10.
 export const POP_SCALE = 10;

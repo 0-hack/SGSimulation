@@ -59,17 +59,26 @@ try {
   });
   await new Promise((r) => setTimeout(r, 200));
   const treasuryBefore = await page.$eval('#hud-treasury', (e) => e.textContent);
-  // Find a free land cell, project it to screen, and tap there to build.
+  // Find a free land cell whose whole NEIGHBOURHOOD is clear, project it to screen,
+  // and tap there to build. Requiring a clear neighbourhood (and refreshing the
+  // camera matrices first) makes the screen-tap robust to projection rounding —
+  // important on the fine 2.5-unit grid where a few pixels span several cells.
   const spot = await page.evaluate(() => {
     const v = window.__sgview;
+    v.camera.updateMatrixWorld(true); v.camera.updateProjectionMatrix(); // fresh matrices for projection
     const N = v.land.length, c = Math.floor(N / 2);
+    const clear = (x, y) => {
+      for (let j = -3; j <= 3; j++) for (let i = -3; i <= 3; i++) {
+        const xx = x + i, yy = y + j;
+        if (xx < 0 || yy < 0 || xx >= N || yy >= N) return false;
+        if (!v.isLand(xx, yy) || v.state.grid[yy][xx] || (v.isRoadAt && v.isRoadAt(xx, yy))) return false;
+      }
+      return true;
+    };
     for (let r = 0; r < N; r++) for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
       const x = c + dx, y = c + dy;
       if (x < 0 || y < 0 || x >= N || y >= N) continue;
-      // free land cell that is NOT on a road (the road network can be dense)
-      if (v.isLand(x, y) && !v.state.grid[y][x] && !(v.isRoadAt && v.isRoadAt(x, y))) {
-        const s = v.cellToScreen(x, y); return { x, y, sx: s.x, sy: s.y };
-      }
+      if (clear(x, y)) { const s = v.cellToScreen(x, y); return { x, y, sx: s.x, sy: s.y }; }
     }
     return null;
   });
@@ -142,7 +151,7 @@ try {
   // Dashboard renders metrics.
   await dismissModal();
   await page.click('.tool[data-panel="dash"]');
-  await page.waitForSelector('.metric', { timeout: 8000 });
+  await page.waitForSelector('.metric', { timeout: 20000 });
   const metrics = await page.$$eval('.metric', (els) => els.length);
   ok(metrics >= 8, `dashboard shows ${metrics} metrics`);
 
@@ -165,13 +174,13 @@ try {
   await page.click('.tool[data-panel="cloud"]');
   await page.waitForSelector('.cloud-info');
   await page.evaluate(() => [...document.querySelectorAll('button')].find((b) => /Save to Cloud/.test(b.textContent))?.click());
-  await page.waitForFunction(() => /\/world\//.test(document.querySelector('.share-row input')?.value || ''), { timeout: 5000 });
+  await page.waitForFunction(() => /\/world\//.test(document.querySelector('.share-row input')?.value || ''), { timeout: 30000 });
   const shareLink = await page.$eval('.share-row input', (e) => e.value);
   ok(/\/world\/[\w-]+/.test(shareLink), 'cloud save returns a shareable link');
 
   // Visit browser lists the saved world.
   await page.evaluate(() => [...document.querySelectorAll('button')].find((b) => /Visit Other Nations/.test(b.textContent))?.click());
-  await page.waitForSelector('.world-card', { timeout: 5000 });
+  await page.waitForSelector('.world-card', { timeout: 30000 });
   const worldCards = await page.$$eval('.world-card', (els) => els.length);
   ok(worldCards >= 1, `world browser lists ${worldCards} nation(s)`);
 

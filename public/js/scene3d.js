@@ -4,7 +4,7 @@
 // disasters (floods, haze, storms) are animated. Mirrors the small API that
 // main.js expects from the old 2D view.
 import * as THREE from './vendor/three.module.js';
-import { BUILDINGS, GRID_SIZE, ROAD_TYPES } from './data.js';
+import { BUILDINGS, GRID_SIZE, WORLD_SIZE, ROAD_TYPES } from './data.js';
 import { smoothRoute } from './engine.js';
 import { SG_OUTLINE, SG_ISLANDS, SG_FOREIGN, SG_SANDS, SG_RESERVOIRS, pointInPolygon, landMask, inReservoir, reservoirArea, inRiver, reservoirBranches, riverBranches } from './shape.js';
 import { CUSTOM_HOUSES, CUSTOM_RAILWAYS, CUSTOM_SANDS, CUSTOM_LANDMARKS, SEED_1965 } from './custom1966.js';
@@ -44,13 +44,30 @@ function demHeight(nx, ny) {
 }
 
 const N = GRID_SIZE;
-const WORLD = N * 10;         // world units across the bounding box (TILE stays ~10)
-const TILE = WORLD / N;
+const WORLD = WORLD_SIZE;     // island bounding box in world units — FIXED regardless of grid resolution
+const TILE = WORLD / N;       // size of one grid cell in world units (2.5 at a 640 grid)
+// Building models are authored for the old ~10-unit cell; scale them to the live
+// cell so a building sits in roughly one cell on whatever grid resolution we use.
+const MODEL_SCALE = TILE / 10;
+// Snap/relocate reach in CELLS for a ~110-unit world distance — so heritage seeds
+// that miss land/roads search the same physical area regardless of grid resolution.
+const SNAP_R = Math.max(8, Math.round(110 / TILE));
 const SEA_Y = -1.2;
 const SEA_COLOR = 0x3aa0d8;   // shared by the sea, river, reservoirs & coastal inlets
 const DAY_CYCLE = 1;          // one full day/night cycle per in-game day (locked to the calendar)
 const LIGHT_YEAR = 1970;      // traffic lights appear as the city modernises
 
+// Land mask for the grid. On fine grids (cell << 10) the 869-vertex coastline test
+// is far too slow per-cell, so compute it at a ~10-unit resolution and upsample —
+// the coastline detail is unchanged from the old grid, only placement gets finer.
+function buildLandMask(n) {
+  if (n < 320) return landMask(n);
+  const step = Math.round(n / 160), C = Math.ceil(n / step);
+  const cm = landMask(C);
+  const m = Array.from({ length: n }, () => new Array(n).fill(false));
+  for (let y = 0; y < n; y++) { const src = cm[Math.min(C - 1, (y / step) | 0)], row = m[y]; for (let x = 0; x < n; x++) row[x] = src[Math.min(C - 1, (x / step) | 0)]; }
+  return m;
+}
 // grid cell (gx,gy) -> world centre
 function cellToWorld(gx, gy) {
   const nx = (gx + 0.5) / N, ny = (gy + 0.5) / N;
@@ -134,7 +151,7 @@ export class Scene3D {
     this.roadMode = false;
     this.edgePts = []; this.edgeLen = []; this.edgeMeta = []; this.edgeN1 = []; this.edgeN2 = []; this.edgeMid = []; this.navAdj = []; this.navNodes = [];
     this.state = null;
-    this.land = landMask(N);
+    this.land = buildLandMask(N);
     this.buildings = new Map();   // "x,y" -> { group, key }
     this.sites = new Map();       // "x,y" -> active construction site (rising mesh + scaffold + crane)
     this.anims = [];              // active construction/demolition tweens
@@ -239,6 +256,7 @@ export class Scene3D {
     this._buildAirport();    // Singapore (Paya Lebar) Airport on the east side
     this._buildTracedRoadMask(); // mark cells the 1966 streets run through (so heritage avoids them)
     this._buildHeritage1965(SEED_1965); // the city already standing at independence (Aug 1965)
+    this._fillUrbanDensity();   // pack the 1966 districts dense with decorative shophouse blocks
     this._placeStructures(CUSTOM_HOUSES, 'houseGroup'); // hand-traced houses (free-placed)
     // 3D-designed buildings/landmarks (design.html) are now placed by the PLAYER
     // from the build menu (see BUILDINGS landmark entries in data.js) rather than
@@ -865,7 +883,7 @@ export class Scene3D {
   // data the engine seeds), so the mask matches the rendered roads.
   _buildTracedRoadMask() {
     const mask = Array.from({ length: N }, () => Array(N).fill(false));
-    const mark = (wx, wz) => { const gx = Math.round(wx / 10 + N / 2), gy = Math.round(N / 2 - wz / 10); if (gx >= 0 && gy >= 0 && gx < N && gy < N) mask[gy][gx] = true; };
+    const mark = (wx, wz) => { const gx = Math.round(wx / TILE + N / 2), gy = Math.round(N / 2 - wz / TILE); if (gx >= 0 && gy >= 0 && gx < N && gy < N) mask[gy][gx] = true; };
     for (const e of (ROAD_EDGES_1966 || [])) {
       const a = ROAD_NODES_1966[e[0]], b = ROAD_NODES_1966[e[1]]; if (!a || !b) continue;
       const ax = a[0], az = a[1], bx = b[0], bz = b[1];
@@ -886,8 +904,8 @@ export class Scene3D {
     this.heritagePlacements = []; // {key,gx,gy,name} — seeded into state.grid so they FUNCTION
     const place = (key, cx, cy, name) => {
       const wx = (cx - 0.5) * WORLD, wz = (0.5 - cy) * WORLD;
-      let gx = Math.round(wx / 10 + N / 2), gy = Math.round(N / 2 - wz / 10);
-      if (!this._heritageFree(gx, gy)) { const s = this._nearestFreeLand(gx, gy, 11); if (!s) return; gx = s.x; gy = s.y; }
+      let gx = Math.round(wx / TILE + N / 2), gy = Math.round(N / 2 - wz / TILE);
+      if (!this._heritageFree(gx, gy)) { const s = this._nearestFreeLand(gx, gy, SNAP_R); if (!s) return; gx = s.x; gy = s.y; }
       const c = cellToWorld(gx, gy);
       const m = makeBuilding(key, null);
       // 1965 was a low-rise town of tiny shophouses: shrink the aggregate models
@@ -924,6 +942,57 @@ export class Scene3D {
   }
   // The name of the 1965 heritage building on a cell (for the inspect tooltip).
   heritageAt(x, y) { return this.heritageInfo ? this.heritageInfo.get(`${x},${y}`) : null; }
+  // Fill the 1966 urban districts with a dense mass of small shophouse blocks — the
+  // packed, fine-grained low-rise town the survey map shows. These are decorative
+  // (rendered as two instanced meshes for the whole town, so it's just a couple of
+  // draw calls) and OUTSIDE the economy; their cells are marked unbuildable so the
+  // historic town stays put. The named, functional buildings (SEED_1965) already
+  // carry the homes/jobs — this just makes the districts look as crowded as they were.
+  _fillUrbanDensity() {
+    // [cx, cy, normalised radius, fill probability] — the dense built-up areas
+    const districts = [
+      [0.444, 0.354, 0.034, 0.92], // Chinatown / Raffles Place / the CBD river mouth
+      [0.463, 0.352, 0.020, 0.92], // Collyer Quay waterfront
+      [0.476, 0.398, 0.030, 0.94], // Beach Road & Bugis
+      [0.491, 0.420, 0.028, 0.92], // Kampong Glam / Rochor / Jalan Besar
+      [0.518, 0.434, 0.030, 0.9],  // Kallang
+      [0.547, 0.444, 0.032, 0.9],  // Geylang
+      [0.583, 0.453, 0.026, 0.86], // Katong / Joo Chiat
+      [0.412, 0.400, 0.022, 0.82], // Tiong Bahru / Bukit Ho Swee
+      [0.345, 0.423, 0.026, 0.66], // Queenstown surrounds
+    ];
+    const cells = [];
+    for (const [dcx, dcy, rad, prob] of districts) {
+      const rC = Math.max(1, Math.round(rad * N)), ccx = Math.round(dcx * N), ccy = Math.round(dcy * N);
+      for (let y = ccy - rC; y <= ccy + rC; y++) for (let x = ccx - rC; x <= ccx + rC; x++) {
+        if (x < 0 || y < 0 || x >= N || y >= N) continue;
+        const nx = (x - ccx) / rC, ny = (y - ccy) / rC; if (nx * nx + ny * ny > 1) continue;
+        if (this.reserveMask?.[y]?.[x] || this.riverMask?.[y]?.[x]) continue;
+        if (!this._heritageFree(x, y) || this.isRoadAt(x, y)) continue;  // land, off-street, not already taken
+        if (Math.random() > prob) continue;
+        cells.push([x, y]); this.heritageMask[y][x] = true;             // unbuildable historic town
+      }
+    }
+    if (!cells.length) return;
+    const pastels = [0xe8b04b, 0xd9694f, 0x6fae9e, 0xe2cd7a, 0xc97f9c, 0x7fa8c9, 0xcf8f5a, 0xb86b4a, 0xe7e0cf];
+    const bodyGeo = new THREE.BoxGeometry(2.0, 2.4, 2.4), roofGeo = new THREE.BoxGeometry(2.25, 0.5, 2.65);
+    const bodies = new THREE.InstancedMesh(bodyGeo, toon(0xffffff), cells.length);
+    const roofs = new THREE.InstancedMesh(roofGeo, toon(0x9c4a36), cells.length);
+    bodies.castShadow = false; bodies.receiveShadow = false; roofs.castShadow = false;
+    const pos = new THREE.Vector3(), q = new THREE.Quaternion(), scl = new THREE.Vector3(), m4 = new THREE.Matrix4(), col = new THREE.Color(), YA = new THREE.Vector3(0, 1, 0);
+    for (let i = 0; i < cells.length; i++) {
+      const [x, y] = cells[i], c = cellToWorld(x, y), h = this.terrainHeight(x, y);
+      const rot = (Math.floor(Math.random() * 4)) * Math.PI / 2, hgt = 0.75 + Math.random() * 0.8;
+      q.setFromAxisAngle(YA, rot);
+      pos.set(c.x, h + 1.2 * hgt, c.z); scl.set(1, hgt, 1); m4.compose(pos, q, scl); bodies.setMatrixAt(i, m4);
+      col.setHex(pastels[(x * 5 + y * 3) % pastels.length]); bodies.setColorAt(i, col);
+      pos.set(c.x, h + 2.4 * hgt + 0.18, c.z); scl.set(1, 1, 1); m4.compose(pos, q, scl); roofs.setMatrixAt(i, m4);
+    }
+    bodies.instanceMatrix.needsUpdate = true; roofs.instanceMatrix.needsUpdate = true;
+    if (bodies.instanceColor) bodies.instanceColor.needsUpdate = true;
+    this.heritageGroup.add(bodies); this.heritageGroup.add(roofs);
+    this._urbanFillCount = cells.length;
+  }
   // Nearest land cell that's free for heritage AND clear of the rendered roads.
   _nearestNonRoad(gx, gy, rad) {
     for (let d = 1; d <= rad; d++) for (let oy = -d; oy <= d; oy++) for (let ox = -d; ox <= d; ox++) {
@@ -941,7 +1010,7 @@ export class Scene3D {
     if (this._heritageRoadFixed || !this.heritagePlacements) return;
     for (const p of this.heritagePlacements) {
       if (!this.isRoadAt(p.gx, p.gy)) continue;
-      const s = this._nearestNonRoad(p.gx, p.gy, 12); if (!s) continue;
+      const s = this._nearestNonRoad(p.gx, p.gy, SNAP_R); if (!s) continue;
       if (this.heritageMask) { this.heritageMask[p.gy][p.gx] = false; this.heritageMask[s.y][s.x] = true; }
       if (this.heritageInfo) { const nm = this.heritageInfo.get(`${p.gx},${p.gy}`); if (nm) { this.heritageInfo.delete(`${p.gx},${p.gy}`); this.heritageInfo.set(`${s.x},${s.y}`, nm); } }
       p.gx = s.x; p.gy = s.y;
@@ -1895,6 +1964,7 @@ export class Scene3D {
         o.castShadow = false;
       }
     });
+    g.scale.setScalar(MODEL_SCALE); // match the placed-building size on the live grid
     this.ghost = g; this.ghost.visible = false;
     this.scene.add(g);
   }
@@ -1958,6 +2028,7 @@ export class Scene3D {
     const wrap = new THREE.Group();
     wrap.position.set(c.x, this.terrainHeight(x, y), c.z);
     wrap.rotation.y = (Math.floor(Math.random() * 4)) * Math.PI / 2;
+    wrap.scale.setScalar(MODEL_SCALE); // whole site (building + crane) sized to the live cell
     this.scene.add(wrap);
     // the target building, measured then flattened so it rises with progress
     const b = makeBuilding(key, theme);
@@ -2010,12 +2081,12 @@ export class Scene3D {
     const entry = { group, key, tall, anim: false };
     this.buildings.set(id, entry);
     if (animate) {
-      group.scale.set(1, 0.001, 1);
+      group.scale.set(MODEL_SCALE, MODEL_SCALE * 0.001, MODEL_SCALE);
       entry.anim = true;
       this.anims.push({ group, entry, t: 0, dur: 0.9, type: 'build' });
       this._spawnDust(c.x, c.z, 0x9ad06a);
     } else {
-      group.scale.set(1, tall ? this.devFactor : 1, 1);
+      group.scale.set(MODEL_SCALE, MODEL_SCALE * (tall ? this.devFactor : 1), MODEL_SCALE);
     }
   }
 
@@ -2493,7 +2564,7 @@ export class Scene3D {
     this.devFactor += (target - this.devFactor) * Math.min(1, dt * 0.5);
     for (const entry of this.buildings.values()) {
       if (entry.anim) continue;
-      const want = entry.tall ? this.devFactor : 1;
+      const want = MODEL_SCALE * (entry.tall ? this.devFactor : 1);
       entry.group.scale.y += (want - entry.group.scale.y) * Math.min(1, dt * 0.8);
     }
   }
@@ -3187,11 +3258,11 @@ export class Scene3D {
       a.t += dt;
       const k = Math.min(a.t / a.dur, 1);
       if (a.type === 'build') {
-        const e = easeOutBack(k) * (a.entry?.tall ? this.devFactor : 1);
-        a.group.scale.set(1, Math.max(0.001, e), 1);
+        const e = MODEL_SCALE * easeOutBack(k) * (a.entry?.tall ? this.devFactor : 1);
+        a.group.scale.set(MODEL_SCALE, Math.max(MODEL_SCALE * 0.001, e), MODEL_SCALE);
         if (k >= 1 && a.entry) a.entry.anim = false;
       } else {
-        a.group.scale.y = Math.max(0.001, 1 - k);
+        a.group.scale.y = MODEL_SCALE * Math.max(0.001, 1 - k);
         a.group.rotation.z = k * 0.4;
         a.group.position.y = (a.baseY || 0) - k * 2;
         if (k >= 1) this.scene.remove(a.group);

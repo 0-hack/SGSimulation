@@ -74,7 +74,7 @@ const G = {
 // ===========================================================================
 // Boot
 // ===========================================================================
-const BUILD = '2026-06-15 · 1965-costs-and-builds v33';
+const BUILD = '2026-06-15 · seed-1965-city v34';
 function boot() {
   console.log('%cSG build: ' + BUILD, 'font-weight:bold;color:#11a39c');
   const vEl = document.querySelector('.version'); if (vEl) vEl.textContent = 'build ' + BUILD;
@@ -359,7 +359,9 @@ function onTileTap(x, y) {
     if (demolish(G.state, x, y)) { G.view.onDemolished(x, y); afterEdit(); toast('Demolished.'); }
     return;
   }
+  const heritage = G.view.heritageAt && G.view.heritageAt(x, y);
   if (b.selected) {
+    if (heritage) { toast(`🏛 ${heritage} — a 1965 landmark already stands here.`); return; }
     if (!G.view.isLand(x, y)) { toast('You can only build on land. 🏝️'); return; }
     if (G.view.isRoadAt(x, y)) { toast('There is a road here — you can\'t build on the road. 🛣️'); return; }
     if (canPlace(G.state, x, y, b.selected)) {
@@ -378,6 +380,7 @@ function onTileTap(x, y) {
     // inspect
     const cell = G.state.grid[y][x];
     if (cell) toast(`${BUILDINGS[cell.k].icon} ${BUILDINGS[cell.k].name}`);
+    else if (heritage) toast(`🏛 ${heritage} (here since 1965)`);
   }
 }
 

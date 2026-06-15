@@ -7,7 +7,7 @@ import * as THREE from './vendor/three.module.js';
 import { BUILDINGS, GRID_SIZE, ROAD_TYPES } from './data.js';
 import { smoothRoute } from './engine.js';
 import { SG_OUTLINE, SG_ISLANDS, SG_FOREIGN, SG_SANDS, SG_RESERVOIRS, pointInPolygon, landMask, inReservoir, reservoirArea, inRiver, reservoirBranches, riverBranches } from './shape.js';
-import { CUSTOM_HOUSES, CUSTOM_RAILWAYS, CUSTOM_SANDS, CUSTOM_LANDMARKS } from './custom1966.js';
+import { CUSTOM_HOUSES, CUSTOM_RAILWAYS, CUSTOM_SANDS, CUSTOM_LANDMARKS, SEED_1965 } from './custom1966.js';
 
 // Build one part of a designed landmark (shared shape set with design.html).
 function makeLandmarkPart(p, toonMat) {
@@ -236,6 +236,7 @@ export class Scene3D {
     this._buildCatchment();  // Central Catchment reservoir + nature reserve (centre of island)
     this._buildTerrain();    // the nature-reserve hills (Bukit Timah massif) around the reservoirs
     this._buildAirport();    // Singapore (Paya Lebar) Airport on the east side
+    this._buildHeritage1965(SEED_1965); // the city already standing at independence (Aug 1965)
     this._placeStructures(CUSTOM_HOUSES, 'houseGroup'); // hand-traced houses (free-placed)
     // 3D-designed buildings/landmarks (design.html) are now placed by the PLAYER
     // from the build menu (see BUILDINGS landmark entries in data.js) rather than
@@ -673,7 +674,7 @@ export class Scene3D {
     // for larger grids (the forest reserve stays comparatively dense).
     const forestProb = 0.78 * (48 / N), openProb = 0.32 * (48 / N) * (48 / N);
     for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
-      if (!this.land[y][x] || this.reserveMask?.[y]?.[x] || this.riverMask?.[y]?.[x] || this.airportMask?.[y]?.[x]) continue; // not on the water / runway
+      if (!this.land[y][x] || this.reserveMask?.[y]?.[x] || this.riverMask?.[y]?.[x] || this.airportMask?.[y]?.[x] || this.heritageMask?.[y]?.[x]) continue; // not on water / runway / heritage
       const d = Math.hypot(x - ca.cx, y - ca.cy);
       const forest = d < ca.forestR;                                  // the nature reserve ring
       if (Math.random() > (forest ? forestProb : openProb)) continue;
@@ -853,6 +854,44 @@ export class Scene3D {
   }
 
   // Place a list of hand-placed structures in world space, into this[prop].
+  // Render the historical 1965 city (SEED_1965) as a heritage backdrop: real
+  // building models at their georeferenced spots, cells marked unbuildable so the
+  // player develops AROUND them. They sit outside the economy (already there).
+  _buildHeritage1965(list) {
+    if (this.heritageGroup) this.scene.remove(this.heritageGroup);
+    const g = new THREE.Group(); this.scene.add(g); this.heritageGroup = g;
+    this.heritageMask = Array.from({ length: N }, () => Array(N).fill(false));
+    this.heritageInfo = new Map();
+    const place = (key, cx, cy, name) => {
+      const wx = (cx - 0.5) * WORLD, wz = (0.5 - cy) * WORLD;
+      let gx = Math.round(wx / 10 + N / 2), gy = Math.round(N / 2 - wz / 10);
+      if (!(this.isLand(gx, gy) && !this.heritageMask[gy][gx])) { const s = this._nearestFreeLand(gx, gy, 8); if (!s) return; gx = s.x; gy = s.y; }
+      const c = cellToWorld(gx, gy);
+      const m = makeBuilding(key, null);
+      m.position.set(c.x, this.terrainHeight(gx, gy), c.z); m.rotation.y = Math.floor(Math.random() * 4) * Math.PI / 2;
+      g.add(m);
+      this.heritageMask[gy][gx] = true;
+      if (name) this.heritageInfo.set(`${gx},${gy}`, name);
+    };
+    for (const s of (list || [])) {
+      const n = s.n || 1, sp = s.spread || 0.012;
+      for (let i = 0; i < n; i++) {
+        const a = n > 1 ? (i / n) * Math.PI * 2 + 0.6 : 0, r = n > 1 ? sp * (0.55 + 0.45 * (i % 2)) : 0;
+        place(s.key, s.cx + Math.cos(a) * r, s.cy + Math.sin(a) * r, s.name);
+      }
+    }
+  }
+  // Nearest buildable (land, unoccupied) grid cell within `rad` of (gx,gy).
+  _nearestFreeLand(gx, gy, rad) {
+    for (let d = 1; d <= rad; d++) for (let oy = -d; oy <= d; oy++) for (let ox = -d; ox <= d; ox++) {
+      if (Math.max(Math.abs(ox), Math.abs(oy)) !== d) continue;
+      const x = gx + ox, y = gy + oy;
+      if (x >= 0 && y >= 0 && x < N && y < N && this.isLand(x, y) && !(this.heritageMask && this.heritageMask[y][x])) return { x, y };
+    }
+    return null;
+  }
+  // The name of the 1965 heritage building on a cell (for the inspect tooltip).
+  heritageAt(x, y) { return this.heritageInfo ? this.heritageInfo.get(`${x},${y}`) : null; }
   _placeStructures(list, prop) {
     if (this[prop]) this.scene.remove(this[prop]);
     const grp = new THREE.Group(); this.scene.add(grp); this[prop] = grp;
@@ -1276,7 +1315,7 @@ export class Scene3D {
   }
   isLand(x, y) {
     const base = (this.land[y] && this.land[y][x]) || (this.reclaimedMask && this.reclaimedMask[y] && this.reclaimedMask[y][x]);
-    return !!(base && !(this.reserveMask && this.reserveMask[y][x]) && !(this.riverMask && this.riverMask[y][x]) && !(this.airportMask && this.airportMask[y][x]));
+    return !!(base && !(this.reserveMask && this.reserveMask[y][x]) && !(this.riverMask && this.riverMask[y][x]) && !(this.airportMask && this.airportMask[y][x]) && !(this.heritageMask && this.heritageMask[y][x]));
   }
   // Can grid cell (x,y) be reclaimed? True only for OPEN SINGAPORE SEA — i.e.
   // not already (or being) reclaimed, not Singapore land, not protected water,

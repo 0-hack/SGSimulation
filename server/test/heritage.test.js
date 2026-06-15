@@ -37,7 +37,7 @@ try {
     const d = derive(v.state);
     return { placed, masked, onLand, blocked, named, gridFilled, heritageCells, dup,
       homes:d.homes, jobs:Math.round(d.jobs), powerRatio:+d.powerRatio.toFixed(2), waterRatio:+d.waterRatio.toFixed(2),
-      pressure:+d.housingPressure.toFixed(2), pop:v.state.population };
+      pressure:+d.housingPressure.toFixed(2), unemp:+d.unemployment.toFixed(3), pop:v.state.population };
   });
   ok(r.placed >= 25, `the 1965 city is placed on the map (${r.placed} buildings)`);
   ok(r.masked === r.placed && r.onLand === r.masked, `every landmark sits on land (${r.onLand}/${r.masked})`);
@@ -48,6 +48,7 @@ try {
   ok(r.homes > 0 && r.jobs > 0, `the city functions: houses & employs people (homes ${r.homes}, jobs ${r.jobs})`);
   ok(r.powerRatio >= 1 && r.waterRatio >= 1, `the city is powered & watered from day one (power ${r.powerRatio}×, water ${r.waterRatio}×)`);
   ok(r.pressure <= 1.1, `the starting population is housed (pressure ${r.pressure}, pop ${r.pop})`);
+  ok(r.unemp >= 0.07 && r.unemp <= 0.13, `unemployment sits at the historical ~10% of 1965 (${(r.unemp*100).toFixed(1)}%)`);
 
   ok(errs.length===0, 'no console/page errors'+(errs.length?': '+errs[0]:''));
 } catch(e){ fail++; console.error('  ✗ threw:', e.message, e.stack); }

@@ -51,9 +51,11 @@ export function newGame({ name = 'New Singapore', owner = 'Anonymous' } = {}) {
     // Scaled citizens (×POP_SCALE for display). Sized to the standing 1965 city
     // (SEED_1965, seeded into the grid by the 3D view): its kampongs, shophouses
     // and early HDB estates house this many people, its port/factories/services
-    // employ most of the workforce, and its power station + water mains supply
-    // them — a working, lived-in republic on day one, with room to grow.
-    population: 26000,
+    // employ the workforce, and its power stations + water mains supply them.
+    // Deliberately set so the labour force slightly outnumbers the jobs the young
+    // economy can offer — ~10% unemployment, the real, pressing problem of 1965
+    // that drove the industrialisation drive. The player grows the city out of it.
+    population: 47500,
     approval: 58,
     education: 20,
     health: 25,

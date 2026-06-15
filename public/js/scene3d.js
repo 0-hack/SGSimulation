@@ -8,6 +8,7 @@ import { BUILDINGS, GRID_SIZE, ROAD_TYPES } from './data.js';
 import { smoothRoute } from './engine.js';
 import { SG_OUTLINE, SG_ISLANDS, SG_FOREIGN, SG_SANDS, SG_RESERVOIRS, pointInPolygon, landMask, inReservoir, reservoirArea, inRiver, reservoirBranches, riverBranches } from './shape.js';
 import { CUSTOM_HOUSES, CUSTOM_RAILWAYS, CUSTOM_SANDS, CUSTOM_LANDMARKS, SEED_1965 } from './custom1966.js';
+import { ROAD_NODES_1966, ROAD_EDGES_1966 } from './roads1966.js';
 
 // Build one part of a designed landmark (shared shape set with design.html).
 function makeLandmarkPart(p, toonMat) {
@@ -236,6 +237,7 @@ export class Scene3D {
     this._buildCatchment();  // Central Catchment reservoir + nature reserve (centre of island)
     this._buildTerrain();    // the nature-reserve hills (Bukit Timah massif) around the reservoirs
     this._buildAirport();    // Singapore (Paya Lebar) Airport on the east side
+    this._buildTracedRoadMask(); // mark cells the 1966 streets run through (so heritage avoids them)
     this._buildHeritage1965(SEED_1965); // the city already standing at independence (Aug 1965)
     this._placeStructures(CUSTOM_HOUSES, 'houseGroup'); // hand-traced houses (free-placed)
     // 3D-designed buildings/landmarks (design.html) are now placed by the PLAYER
@@ -857,6 +859,25 @@ export class Scene3D {
   // Render the historical 1965 city (SEED_1965) as a heritage backdrop: real
   // building models at their georeferenced spots, cells marked unbuildable so the
   // player develops AROUND them. They sit outside the economy (already there).
+  // Rasterise the traced 1966 street network into a per-cell mask: every grid cell
+  // a road runs through is flagged, so the heritage city is placed in the BLOCKS
+  // between the streets, not on top of them. Nodes/edges are world-space (the same
+  // data the engine seeds), so the mask matches the rendered roads.
+  _buildTracedRoadMask() {
+    const mask = Array.from({ length: N }, () => Array(N).fill(false));
+    const mark = (wx, wz) => { const gx = Math.round(wx / 10 + N / 2), gy = Math.round(N / 2 - wz / 10); if (gx >= 0 && gy >= 0 && gx < N && gy < N) mask[gy][gx] = true; };
+    for (const e of (ROAD_EDGES_1966 || [])) {
+      const a = ROAD_NODES_1966[e[0]], b = ROAD_NODES_1966[e[1]]; if (!a || !b) continue;
+      const ax = a[0], az = a[1], bx = b[0], bz = b[1];
+      const steps = Math.max(1, Math.ceil(Math.hypot(bx - ax, bz - az) / 4));
+      for (let s = 0; s <= steps; s++) { const t = s / steps; mark(ax + (bx - ax) * t, az + (bz - az) * t); }
+    }
+    this._roadMask = mask;
+  }
+  // Is the cell free for a heritage building: on land, not already taken, not a street.
+  _heritageFree(gx, gy) {
+    return this.isLand(gx, gy) && !(this.heritageMask && this.heritageMask[gy][gx]) && !(this._roadMask && this._roadMask[gy][gx]);
+  }
   _buildHeritage1965(list) {
     if (this.heritageGroup) this.scene.remove(this.heritageGroup);
     const g = new THREE.Group(); this.scene.add(g); this.heritageGroup = g;
@@ -866,23 +887,23 @@ export class Scene3D {
     const place = (key, cx, cy, name) => {
       const wx = (cx - 0.5) * WORLD, wz = (0.5 - cy) * WORLD;
       let gx = Math.round(wx / 10 + N / 2), gy = Math.round(N / 2 - wz / 10);
-      if (!(this.isLand(gx, gy) && !this.heritageMask[gy][gx])) { const s = this._nearestFreeLand(gx, gy, 8); if (!s) return; gx = s.x; gy = s.y; }
+      if (!this._heritageFree(gx, gy)) { const s = this._nearestFreeLand(gx, gy, 11); if (!s) return; gx = s.x; gy = s.y; }
       const c = cellToWorld(gx, gy);
       const m = makeBuilding(key, null);
       // 1965 was a low-rise town of tiny shophouses: shrink the aggregate models
       // hard so the heritage city reads as the small, dense, fine-grained place the
       // 1966 survey map shows — shophouses smallest, big works (port/power/factory)
       // a touch larger — rather than looming oversized over the island.
-      const sc = key === 'shophouse' ? 0.42
-        : key === 'kampong' ? 0.46
-        : (key === 'port' || key === 'power_station' || key === 'factory' || key === 'processing') ? 0.66
-        : 0.52;
+      const sc = key === 'shophouse' ? 0.36
+        : key === 'kampong' ? 0.42
+        : (key === 'port' || key === 'power_station' || key === 'factory' || key === 'processing') ? 0.62
+        : 0.5;
       m.scale.setScalar(sc);
       m.position.set(c.x, this.terrainHeight(gx, gy), c.z); m.rotation.y = Math.floor(Math.random() * 4) * Math.PI / 2;
       g.add(m);
       this.heritageMask[gy][gx] = true;
       if (name) this.heritageInfo.set(`${gx},${gy}`, name);
-      this.heritagePlacements.push({ key, gx, gy, name: name || null });
+      this.heritagePlacements.push({ key, gx, gy, name: name || null, mesh: m });
     };
     for (const s of (list || [])) {
       const n = s.n || 1, sp = s.spread || 0.012;
@@ -897,12 +918,37 @@ export class Scene3D {
     for (let d = 1; d <= rad; d++) for (let oy = -d; oy <= d; oy++) for (let ox = -d; ox <= d; ox++) {
       if (Math.max(Math.abs(ox), Math.abs(oy)) !== d) continue;
       const x = gx + ox, y = gy + oy;
-      if (x >= 0 && y >= 0 && x < N && y < N && this.isLand(x, y) && !(this.heritageMask && this.heritageMask[y][x])) return { x, y };
+      if (x >= 0 && y >= 0 && x < N && y < N && this._heritageFree(x, y)) return { x, y };
     }
     return null;
   }
   // The name of the 1965 heritage building on a cell (for the inspect tooltip).
   heritageAt(x, y) { return this.heritageInfo ? this.heritageInfo.get(`${x},${y}`) : null; }
+  // Nearest land cell that's free for heritage AND clear of the rendered roads.
+  _nearestNonRoad(gx, gy, rad) {
+    for (let d = 1; d <= rad; d++) for (let oy = -d; oy <= d; oy++) for (let ox = -d; ox <= d; ox++) {
+      if (Math.max(Math.abs(ox), Math.abs(oy)) !== d) continue;
+      const x = gx + ox, y = gy + oy;
+      if (x >= 0 && y >= 0 && x < N && y < N && this._heritageFree(x, y) && !this.isRoadAt(x, y)) return { x, y };
+    }
+    return null;
+  }
+  // Once the streets are actually rendered (rebuildRoadNet builds edgePts), the raw
+  // road-cell mask isn't a perfect match for the carriageway+clearance the renderer
+  // draws. Nudge any heritage building that ended up sitting on a street to the
+  // nearest clear block, moving its model, mask and name with it. Runs once.
+  _relocateHeritageOffRoads() {
+    if (this._heritageRoadFixed || !this.heritagePlacements) return;
+    for (const p of this.heritagePlacements) {
+      if (!this.isRoadAt(p.gx, p.gy)) continue;
+      const s = this._nearestNonRoad(p.gx, p.gy, 12); if (!s) continue;
+      if (this.heritageMask) { this.heritageMask[p.gy][p.gx] = false; this.heritageMask[s.y][s.x] = true; }
+      if (this.heritageInfo) { const nm = this.heritageInfo.get(`${p.gx},${p.gy}`); if (nm) { this.heritageInfo.delete(`${p.gx},${p.gy}`); this.heritageInfo.set(`${s.x},${s.y}`, nm); } }
+      p.gx = s.x; p.gy = s.y;
+      const c = cellToWorld(s.x, s.y); if (p.mesh) p.mesh.position.set(c.x, this.terrainHeight(s.x, s.y), c.z);
+    }
+    this._heritageRoadFixed = true;
+  }
   // Seed the standing 1965 city into the live economy: each rendered heritage
   // building becomes a real, already-finished grid cell (so derive() counts its
   // homes/jobs/power/water/services). The heritageGroup keeps rendering the models,
@@ -1827,7 +1873,7 @@ export class Scene3D {
   }
 
   // ---- external API (mirrors the 2D view) ----------------------------------
-  setState(state) { this.state = state; this.applyHeritageToGrid(state); this._syncReclaimed(); this.syncAll(); this.rebuildRoadNet(); this._buildPlayerRailways(state); this._buildPlayerAirstrips(state); this.syncRoadworks(state); }
+  setState(state) { this.state = state; this.rebuildRoadNet(); this._relocateHeritageOffRoads(); this.applyHeritageToGrid(state); this._syncReclaimed(); this.syncAll(); this._buildPlayerRailways(state); this._buildPlayerAirstrips(state); this.syncRoadworks(state); }
   setShortages(s) { this.shortages = s; }
   setPreview(key, theme) {
     this.previewKey = key; this.previewTheme = theme; this.bulldoze = false;

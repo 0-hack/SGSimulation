@@ -55,7 +55,7 @@ export function newGame({ name = 'New Singapore', owner = 'Anonymous' } = {}) {
     // Deliberately set so the labour force slightly outnumbers the jobs the young
     // economy can offer — ~10% unemployment, the real, pressing problem of 1965
     // that drove the industrialisation drive. The player grows the city out of it.
-    population: 56000,
+    population: 74000,
     approval: 58,
     education: 20,
     health: 25,

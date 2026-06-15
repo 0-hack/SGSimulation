@@ -29,35 +29,43 @@ export const CUSTOM_LANDMARKS = [];
 // estate / row), `spread` its radius — the cluster counts set each district's
 // real-life FOOTPRINT. Off-land seeds snap to the nearest land cell at runtime.
 export const SEED_1965 = [
-  // ---- The dense commercial town crammed onto the south WATERFRONT: Collyer
-  //      Quay, Raffles Place, Boat Quay, Telok Ayer & Chinatown were a tight black
-  //      mass of shophouses, trading firms and hawkers right at the shoreline
-  //      (the coast here is cy≈0.31–0.36). Packed tight & small, hugging the sea. ----
-  { key: 'godown',       cx: 0.450, cy: 0.335, n: 2, spread: 0.009, name: 'Singapore River godowns' },
-  { key: 'shophouse',    cx: 0.462, cy: 0.350, n: 5, spread: 0.009, name: 'Collyer Quay' },
-  { key: 'shophouse',    cx: 0.450, cy: 0.356, n: 5, spread: 0.009, name: 'Raffles Place & Boat Quay' },
-  { key: 'shophouse',    cx: 0.434, cy: 0.354, n: 6, spread: 0.011, name: 'Chinatown (Kreta Ayer)' },
-  { key: 'shophouse',    cx: 0.421, cy: 0.348, n: 3, spread: 0.010, name: 'Tanjong Pagar' },
-  { key: 'market',       cx: 0.446, cy: 0.348, name: 'Telok Ayer Market' },
+  // ---- The dense commercial heart at the river mouth & Raffles Place. In 1966
+  //      this was a tight grid of SHOPHOUSES, godowns, banks and trading houses —
+  //      mostly 2–5 storeys, with only a handful of taller blocks (the Asia
+  //      Insurance and Bank of China buildings, ~18 storeys); the high-rise office
+  //      CBD only rose in the 1970s–80s. Packed into the blocks between the streets ----
+  { key: 'godown',       cx: 0.448, cy: 0.336, n: 2, spread: 0.010, name: 'Singapore River godowns' },
+  { key: 'shophouse',    cx: 0.434, cy: 0.353, n: 6, spread: 0.010, name: 'Chinatown (Kreta Ayer)' },
+  { key: 'shophouse',    cx: 0.450, cy: 0.357, n: 5, spread: 0.010, name: 'Raffles Place & Boat Quay' },
+  { key: 'shophouse',    cx: 0.462, cy: 0.351, n: 3, spread: 0.009, name: 'Collyer Quay' },
+  { key: 'shophouse',    cx: 0.423, cy: 0.349, n: 3, spread: 0.010, name: 'Tanjong Pagar' },
+  { key: 'market',       cx: 0.444, cy: 0.347, name: 'Telok Ayer Market' },
   // ---- Port & dockyards lining Keppel Harbour, plus the coastal power stations ----
   { key: 'port',         cx: 0.414, cy: 0.332, name: 'Keppel Harbour' },
-  { key: 'diesel',       cx: 0.432, cy: 0.337, name: 'St James Power Station' },
+  { key: 'diesel',       cx: 0.432, cy: 0.338, name: 'St James Power Station' },
   { key: 'power_station', cx: 0.314, cy: 0.300, name: 'Pasir Panjang Power Station' },
   { key: 'power_station', cx: 0.298, cy: 0.330, name: 'Pasir Panjang ‘B’ Station' },
   { key: 'sewage',       cx: 0.430, cy: 0.340, name: 'Singapore River sewerage works' },
   // ---- Civic & administrative core, just behind the quays (City Hall / Padang) ----
-  { key: 'colonial',     cx: 0.462, cy: 0.378, name: 'Parliament House & City Hall' },
-  { key: 'police',       cx: 0.454, cy: 0.380, name: 'Hill Street Police Station' },
-  { key: 'fire_station', cx: 0.458, cy: 0.386, name: 'Central Fire Station' },
-  { key: 'cinema',       cx: 0.447, cy: 0.390, name: 'Cathay Cinema' },
-  { key: 'community_centre', cx: 0.470, cy: 0.392, name: 'People’s Association centre' },
+  { key: 'colonial',     cx: 0.464, cy: 0.380, name: 'Parliament House & City Hall' },
+  { key: 'police',       cx: 0.456, cy: 0.382, name: 'Hill Street Police Station' },
+  { key: 'fire_station', cx: 0.460, cy: 0.388, name: 'Central Fire Station' },
+  { key: 'cinema',       cx: 0.450, cy: 0.392, name: 'Cathay Cinema' },
   { key: 'hospital',     cx: 0.418, cy: 0.378, name: 'Singapore General Hospital' },
-  { key: 'clinic',       cx: 0.452, cy: 0.408, name: 'Kandang Kerbau Hospital' },
-  { key: 'stadium',      cx: 0.480, cy: 0.410, name: 'Jalan Besar Stadium' },
-  // ---- The urban density runs EAST along the coast: Geylang, Kallang & Katong ----
-  { key: 'shophouse',    cx: 0.520, cy: 0.430, n: 4, spread: 0.012, name: 'Geylang' },
-  { key: 'shophouse',    cx: 0.585, cy: 0.444, n: 3, spread: 0.012, name: 'Katong / Joo Chiat' },
-  { key: 'kampong',      cx: 0.558, cy: 0.460, n: 2, spread: 0.03, name: 'Geylang Serai kampong' },
+  // ---- The most crowded part of 1966: from City Hall the built-up town runs
+  //      NORTH-EAST and EAST in an almost-unbroken mass of shophouses — Beach Road,
+  //      Bugis, Kampong Glam, Rochor, Jalan Besar, Lavender, Kallang, Geylang and
+  //      Katong. This is the real dense belt, weighted east of the civic core ----
+  { key: 'shophouse',    cx: 0.476, cy: 0.396, n: 7, spread: 0.011, name: 'Beach Road & Bugis' },
+  { key: 'community_centre', cx: 0.470, cy: 0.392, name: 'People’s Association centre' },
+  { key: 'shophouse',    cx: 0.488, cy: 0.410, n: 6, spread: 0.011, name: 'Kampong Glam & Rochor' },
+  { key: 'clinic',       cx: 0.481, cy: 0.404, name: 'Kandang Kerbau Hospital' },
+  { key: 'shophouse',    cx: 0.498, cy: 0.424, n: 6, spread: 0.011, name: 'Jalan Besar & Lavender' },
+  { key: 'stadium',      cx: 0.487, cy: 0.416, name: 'Jalan Besar Stadium' },
+  { key: 'shophouse',    cx: 0.518, cy: 0.432, n: 7, spread: 0.012, name: 'Kallang' },
+  { key: 'shophouse',    cx: 0.546, cy: 0.442, n: 7, spread: 0.012, name: 'Geylang' },
+  { key: 'shophouse',    cx: 0.582, cy: 0.452, n: 5, spread: 0.012, name: 'Katong / Joo Chiat' },
+  { key: 'kampong',      cx: 0.562, cy: 0.466, n: 2, spread: 0.03, name: 'Geylang Serai kampong' },
   // ---- Public housing: the real early HDB/SIT estates standing by 1965
   //      (~54,000 flats built). They sit a little INLAND, north of the old town;
   //      most of the rest of the island still lived in kampongs ----
@@ -75,7 +83,8 @@ export const SEED_1965 = [
   { key: 'standpipe',    cx: 0.440, cy: 0.398, name: 'City water mains' },
   { key: 'standpipe',    cx: 0.345, cy: 0.430, name: 'Queenstown water mains' },
   { key: 'standpipe',    cx: 0.452, cy: 0.486, name: 'Toa Payoh water mains' },
-  { key: 'standpipe',    cx: 0.520, cy: 0.440, name: 'Kallang water mains' },
+  { key: 'standpipe',    cx: 0.515, cy: 0.438, name: 'Kallang water mains' },
+  { key: 'standpipe',    cx: 0.556, cy: 0.450, name: 'Geylang water mains' },
   { key: 'reservoir',    cx: 0.475, cy: 0.545, name: 'Seletar Reservoir' },
   // ---- Education & green ----
   { key: 'tech_school',  cx: 0.360, cy: 0.470, name: 'University of Singapore (Bukit Timah)' },

@@ -862,6 +862,7 @@ export class Scene3D {
     const g = new THREE.Group(); this.scene.add(g); this.heritageGroup = g;
     this.heritageMask = Array.from({ length: N }, () => Array(N).fill(false));
     this.heritageInfo = new Map();
+    this.heritagePlacements = []; // {key,gx,gy,name} — seeded into state.grid so they FUNCTION
     const place = (key, cx, cy, name) => {
       const wx = (cx - 0.5) * WORLD, wz = (0.5 - cy) * WORLD;
       let gx = Math.round(wx / 10 + N / 2), gy = Math.round(N / 2 - wz / 10);
@@ -872,6 +873,7 @@ export class Scene3D {
       g.add(m);
       this.heritageMask[gy][gx] = true;
       if (name) this.heritageInfo.set(`${gx},${gy}`, name);
+      this.heritagePlacements.push({ key, gx, gy, name: name || null });
     };
     for (const s of (list || [])) {
       const n = s.n || 1, sp = s.spread || 0.012;
@@ -892,6 +894,19 @@ export class Scene3D {
   }
   // The name of the 1965 heritage building on a cell (for the inspect tooltip).
   heritageAt(x, y) { return this.heritageInfo ? this.heritageInfo.get(`${x},${y}`) : null; }
+  // Seed the standing 1965 city into the live economy: each rendered heritage
+  // building becomes a real, already-finished grid cell (so derive() counts its
+  // homes/jobs/power/water/services). The heritageGroup keeps rendering the models,
+  // so syncAll() SKIPS these cells to avoid drawing them twice. Idempotent and
+  // one-shot per save (state.heritageSeeded) so a demolished landmark stays gone.
+  applyHeritageToGrid(state) {
+    if (!state || !state.grid || state.heritageSeeded) return;
+    for (const p of (this.heritagePlacements || [])) {
+      const row = state.grid[p.gy];
+      if (row && !row[p.gx]) row[p.gx] = { k: p.key, heritage: true, name: p.name || null };
+    }
+    state.heritageSeeded = true;
+  }
   _placeStructures(list, prop) {
     if (this[prop]) this.scene.remove(this[prop]);
     const grp = new THREE.Group(); this.scene.add(grp); this[prop] = grp;
@@ -1803,7 +1818,7 @@ export class Scene3D {
   }
 
   // ---- external API (mirrors the 2D view) ----------------------------------
-  setState(state) { this.state = state; this._syncReclaimed(); this.syncAll(); this.rebuildRoadNet(); this._buildPlayerRailways(state); this._buildPlayerAirstrips(state); this.syncRoadworks(state); }
+  setState(state) { this.state = state; this.applyHeritageToGrid(state); this._syncReclaimed(); this.syncAll(); this.rebuildRoadNet(); this._buildPlayerRailways(state); this._buildPlayerAirstrips(state); this.syncRoadworks(state); }
   setShortages(s) { this.shortages = s; }
   setPreview(key, theme) {
     this.previewKey = key; this.previewTheme = theme; this.bulldoze = false;
@@ -1849,6 +1864,7 @@ export class Scene3D {
       for (let x = 0; x < N; x++) {
         const cell = this.state.grid[y]?.[x];
         if (!cell) continue;
+        if (cell.heritage) continue; // 1965 heritage building — drawn by heritageGroup, not here
         if (cell.build && cell.build.left > 0) continue; // shown as a construction site below
         this._addMesh(x, y, cell.k, false, cell.c);
       }

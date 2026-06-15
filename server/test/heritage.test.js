@@ -1,6 +1,8 @@
-// The 1965 city (SEED_1965) is pre-placed on the map: landmark buildings render,
-// their cells are unbuildable, they carry names for inspection, and they sit OUTSIDE
-// the economy (state.grid stays empty at the start — the player develops around them).
+// The 1965 city (SEED_1965) is pre-placed on the map AND wired into the economy:
+// landmark buildings render, their cells are unbuildable and protected from
+// demolition, they carry names for inspection, and — the point of this test — they
+// FUNCTION: seeded into state.grid they house the starting population, employ the
+// workforce and supply power & water from day one.
 import puppeteer from 'puppeteer';
 import { app } from '../server.js';
 const server = app.listen(0);
@@ -15,8 +17,9 @@ try {
   await p.goto(base,{waitUntil:'networkidle0'});
   await p.click('#btn-new'); await p.waitForSelector('#game:not(.hidden)');
 
-  const r = await p.evaluate(()=>{
+  const r = await p.evaluate(async ()=>{
     const v=window.__sgview, N=v.land.length;
+    const { derive } = await import('/js/engine.js');
     const placed = v.heritageGroup ? v.heritageGroup.children.length : 0;
     const masked = v.heritageMask ? v.heritageMask.flat().filter(Boolean).length : 0;
     // every masked cell is on land and unbuildable, and has a name where expected
@@ -26,15 +29,25 @@ try {
       if(!v.isLand(x,y)) blocked++;             // heritage cells must read as NOT buildable
       if(v.heritageAt(x,y)) named++;
     }
-    // the player's economy starts empty — heritage is NOT in state.grid
-    const gridFilled = v.state.grid.flat().filter(Boolean).length;
-    return { placed, masked, onLand, blocked, named, gridFilled };
+    // the standing city IS in the economy now — heritage cells fill the grid and
+    // are flagged + rendered only once (heritageGroup, not the grid mesh pass)
+    const grid = v.state.grid;
+    let gridFilled=0, heritageCells=0, dup=0;
+    for(let y=0;y<N;y++) for(let x=0;x<N;x++){ const c=grid[y][x]; if(c){ gridFilled++; if(c.heritage){ heritageCells++; if(v.buildings.has(`${x},${y}`)) dup++; } } }
+    const d = derive(v.state);
+    return { placed, masked, onLand, blocked, named, gridFilled, heritageCells, dup,
+      homes:d.homes, jobs:Math.round(d.jobs), powerRatio:+d.powerRatio.toFixed(2), waterRatio:+d.waterRatio.toFixed(2),
+      pressure:+d.housingPressure.toFixed(2), pop:v.state.population };
   });
   ok(r.placed >= 25, `the 1965 city is placed on the map (${r.placed} buildings)`);
   ok(r.masked === r.placed && r.onLand === r.masked, `every landmark sits on land (${r.onLand}/${r.masked})`);
   ok(r.blocked === r.masked, `heritage cells are unbuildable (${r.blocked}/${r.masked})`);
-  ok(r.named >= 15, `landmarks carry names for inspection (${r.named} named cells)`);
-  ok(r.gridFilled === 0, 'heritage is a backdrop — the player\'s economy still starts from scratch');
+  ok(r.named >= 18, `landmarks carry names for inspection (${r.named} named cells)`);
+  ok(r.heritageCells === r.placed, `every landmark is a real grid cell (${r.heritageCells}/${r.placed})`);
+  ok(r.dup === 0, 'heritage is drawn once — not duplicated by the grid mesh pass');
+  ok(r.homes > 0 && r.jobs > 0, `the city functions: houses & employs people (homes ${r.homes}, jobs ${r.jobs})`);
+  ok(r.powerRatio >= 1 && r.waterRatio >= 1, `the city is powered & watered from day one (power ${r.powerRatio}×, water ${r.waterRatio}×)`);
+  ok(r.pressure <= 1.1, `the starting population is housed (pressure ${r.pressure}, pop ${r.pop})`);
 
   ok(errs.length===0, 'no console/page errors'+(errs.length?': '+errs[0]:''));
 } catch(e){ fail++; console.error('  ✗ threw:', e.message, e.stack); }

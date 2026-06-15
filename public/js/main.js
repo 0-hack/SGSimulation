@@ -74,7 +74,7 @@ const G = {
 // ===========================================================================
 // Boot
 // ===========================================================================
-const BUILD = '2026-06-15 · seed-1965-city v34';
+const BUILD = '2026-06-15 · functional-1965-city v35';
 function boot() {
   console.log('%cSG build: ' + BUILD, 'font-weight:bold;color:#11a39c');
   const vEl = document.querySelector('.version'); if (vEl) vEl.textContent = 'build ' + BUILD;
@@ -356,6 +356,8 @@ function onTileTap(x, y) {
   if (G.readOnly) { toast('You are visiting — building is disabled here.'); return; }
   const b = G.build;
   if (b.bulldoze) {
+    const here = G.state.grid[y]?.[x];
+    if (here && here.heritage) { toast(`🏛 ${here.name || 'A 1965 landmark'} — this heritage building can't be demolished.`); return; }
     if (demolish(G.state, x, y)) { G.view.onDemolished(x, y); afterEdit(); toast('Demolished.'); }
     return;
   }
@@ -379,7 +381,8 @@ function onTileTap(x, y) {
   } else {
     // inspect
     const cell = G.state.grid[y][x];
-    if (cell) toast(`${BUILDINGS[cell.k].icon} ${BUILDINGS[cell.k].name}`);
+    if (cell && cell.heritage) toast(`🏛 ${cell.name || heritage || BUILDINGS[cell.k].name} (here since 1965)`);
+    else if (cell) toast(`${BUILDINGS[cell.k].icon} ${BUILDINGS[cell.k].name}`);
     else if (heritage) toast(`🏛 ${heritage} (here since 1965)`);
   }
 }

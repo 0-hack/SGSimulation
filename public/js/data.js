@@ -493,10 +493,14 @@ export const HISTORICAL_EVENTS = [
     choice: {
       prompt: 'How do you respond?',
       options: [
-        { label: 'Convert bases to industry (Jurong)', fx: { treasury: -40, jobsBoost: 0.05, approval: 4, spawn: [
-          { key: 'factory', cx: 0.186, cy: 0.452 },
-          { key: 'factory', cx: 0.197, cy: 0.458 },
-          { key: 'godown', cx: 0.178, cy: 0.460 },
+        { label: 'Build the Jurong Industrial Estate', fx: { treasury: -90, jobsBoost: 0.04, approval: 5, growth: 0.02, spawn: [
+          { key: 'port',       cx: 0.128, cy: 0.432 }, // Jurong Port — deep-water wharves on the SW coast
+          { key: 'godown',     cx: 0.142, cy: 0.440 }, // wharf godowns
+          { key: 'processing', cx: 0.152, cy: 0.458 }, // heavy industry (shipyard / steel mill)
+          { key: 'factory',    cx: 0.166, cy: 0.452 }, // the planned factory estate, laid out along the roads
+          { key: 'factory',    cx: 0.178, cy: 0.462 },
+          { key: 'hdb_flat',   cx: 0.190, cy: 0.476 }, // Taman Jurong — housing for the workers
+          { key: 'school',     cx: 0.200, cy: 0.470 }, // Jurong Town amenities
         ] } },
         { label: 'Austerity & caution', fx: { treasury: 20, approval: -4 } },
       ],

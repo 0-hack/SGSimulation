@@ -62,7 +62,7 @@ const G = {
   acc: 0,
   lastFrame: 0,
   hudTimer: 0,
-  build: { cat: 'residential', selected: null, bulldoze: false, theme: null },
+  build: { cat: 'residential', selected: null, bulldoze: false, theme: null, rot: 0 },
   road: { tool: null, type: 'road', elevated: false, pending: [] },
   reclaim: { active: false },  // land-reclamation tool: tap sea to fill land
   editPause: false,            // true while a build/road/reclaim tool is active — freezes time & the world
@@ -96,7 +96,10 @@ function boot() {
 
   // exit "place mode": the ✕ Done button or the Esc key
   $('tool-banner-stop').onclick = cancelTools;
-  $('tool-banner-rotate').onclick = () => { if (G.view && G.view.pieceMode) G.view.rotatePiece(Math.PI / 4); };
+  $('tool-banner-rotate').onclick = () => {
+    if (G.view && G.view.pieceMode) G.view.rotatePiece(Math.PI / 4);
+    else if (G.build.selected) rotateBuild(Math.PI / 12); // 15° per tap
+  };
   // commit bar for a drawn route / reclaim area
   $('dc-build').onclick = () => { const fn = G._pendingCommit; closeCommit(false); if (fn) fn(); };
   $('dc-cancel').onclick = () => { closeCommit(true); toast('Discarded.'); };
@@ -105,7 +108,10 @@ function boot() {
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
     if (e.key === 'Escape' && G._pendingCommit) { closeCommit(true); toast('Discarded.'); e.preventDefault(); return; }
     if (e.key === 'Escape' && activeTool()) { cancelTools(); toast('Stopped placing.'); e.preventDefault(); }
-    if ((e.key === 'r' || e.key === 'R') && G.view && G.view.pieceMode) { G.view.rotatePiece(Math.PI / 4); e.preventDefault(); }
+    if (e.key === 'r' || e.key === 'R') {
+      if (G.view && G.view.pieceMode) { G.view.rotatePiece(Math.PI / 4); e.preventDefault(); }
+      else if (G.build.selected) { rotateBuild(Math.PI / 12); e.preventDefault(); }
+    }
   });
 
   // speed buttons + adjustable rate chip
@@ -369,6 +375,7 @@ function onTileTap(x, y) {
     if (canPlace(G.state, x, y, b.selected)) {
       const theme = BUILDINGS[b.selected].customizable ? b.theme : null;
       build(G.state, x, y, b.selected, theme);
+      if (G.state.grid[y][x]) G.state.grid[y][x].r = b.rot || 0; // remember the chosen orientation
       G.view.syncConstruction(G.state); // shows the construction site (it tops out over time)
       afterEdit();
       toast(`${BUILDINGS[b.selected].name} — construction started.`);
@@ -414,8 +421,17 @@ function updateToolBanner() {
   if (!t) { el.classList.add('hidden'); return; }
   $('tool-banner-text').innerHTML = `<b>⏸ Edit mode · ${t.label}</b><br><span class="tb-sub">Time paused — tap the map to ${t.verb}</span>`;
   const piece = G.road.tool === 'straight' || G.road.tool === 'curveL' || G.road.tool === 'curveR';
-  $('tool-banner-rotate').classList.toggle('hidden', !piece);   // rotate only matters for free piece placement
+  // rotate is available for free road pieces AND for any building being placed
+  $('tool-banner-rotate').classList.toggle('hidden', !(piece || G.build.selected));
   el.classList.remove('hidden');
+}
+// Spin the building (and its ghost preview) before it's placed. Steps of 15° give
+// effectively any-angle control; the chosen angle rides along onto the placed cell.
+function rotateBuild(delta) {
+  G.build.rot = ((G.build.rot || 0) + delta) % (Math.PI * 2);
+  if (G.view) G.view.setBuildRotation(G.build.rot);
+  const deg = ((Math.round(G.build.rot * 180 / Math.PI) % 360) + 360) % 360;
+  toast(`Rotated to ${deg}°`);
 }
 // Enter/leave edit mode: pause time (the loop checks G.editPause), freeze the
 // world animation, and flag the UI so it's obvious editing is on.

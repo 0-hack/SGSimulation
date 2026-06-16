@@ -882,15 +882,40 @@ export class Scene3D {
   // between the streets, not on top of them. Nodes/edges are world-space (the same
   // data the engine seeds), so the mask matches the rendered roads.
   _buildTracedRoadMask() {
-    const mask = Array.from({ length: N }, () => Array(N).fill(false));
-    const mark = (wx, wz) => { const gx = Math.round(wx / TILE + N / 2), gy = Math.round(N / 2 - wz / TILE); if (gx >= 0 && gy >= 0 && gx < N && gy < N) mask[gy][gx] = true; };
+    const mask = Array.from({ length: N }, () => new Array(N).fill(false));   // carriageway cells
+    const near = Array.from({ length: N }, () => new Array(N).fill(false));   // carriageway + clearance
+    const dir = Array.from({ length: N }, () => new Float32Array(N).fill(NaN)); // bearing of the nearest street
+    const dist = Array.from({ length: N }, () => new Float32Array(N).fill(1e9));
+    const clearC = Math.max(1, Math.round(2.6 / TILE)); // keep blocks ~1 cell off the carriageway (no overlap, keeps density)
+    const dirC = Math.max(clearC + 1, Math.ceil(14 / TILE)); // reach for orientation into the blocks
+    const stamp = (wx, wz, ang) => {
+      const cgx = Math.round(wx / TILE + N / 2), cgy = Math.round(N / 2 - wz / TILE);
+      if (cgx >= 0 && cgy >= 0 && cgx < N && cgy < N) mask[cgy][cgx] = true;
+      for (let oy = -dirC; oy <= dirC; oy++) for (let ox = -dirC; ox <= dirC; ox++) {
+        const gx = cgx + ox, gy = cgy + oy; if (gx < 0 || gy < 0 || gx >= N || gy >= N) continue;
+        const d = Math.hypot(ox, oy);
+        if (d < dist[gy][gx]) { dist[gy][gx] = d; dir[gy][gx] = ang; }
+        if (d <= clearC) near[gy][gx] = true;
+      }
+    };
     for (const e of (ROAD_EDGES_1966 || [])) {
       const a = ROAD_NODES_1966[e[0]], b = ROAD_NODES_1966[e[1]]; if (!a || !b) continue;
       const ax = a[0], az = a[1], bx = b[0], bz = b[1];
-      const steps = Math.max(1, Math.ceil(Math.hypot(bx - ax, bz - az) / 4));
-      for (let s = 0; s <= steps; s++) { const t = s / steps; mark(ax + (bx - ax) * t, az + (bz - az) * t); }
+      const ang = Math.atan2(bx - ax, bz - az);    // bearing so a block's local +Z runs ALONG the street
+      const steps = Math.max(1, Math.ceil(Math.hypot(bx - ax, bz - az) / 1.5)); // fine sampling: mark every carriageway cell
+      for (let s = 0; s <= steps; s++) { const t = s / steps; stamp(ax + (bx - ax) * t, az + (bz - az) * t, ang); }
     }
-    this._roadMask = mask;
+    this._roadMask = mask; this._roadNear = near; this._roadDir = dir;
+  }
+  // Solid land — on the landmass with a one-cell margin all round, so a building
+  // never sits half in the sea at the jagged coastline. Uses the raw land mask (not
+  // isLand) so neighbouring buildings don't disqualify a cell — only the actual sea.
+  _solidLand(x, y) {
+    for (let oy = -1; oy <= 1; oy++) for (let ox = -1; ox <= 1; ox++) {
+      const xx = x + ox, yy = y + oy;
+      if (xx < 0 || yy < 0 || xx >= N || yy >= N || !this.land[yy][xx] || this.reserveMask?.[yy]?.[xx] || this.riverMask?.[yy]?.[xx]) return false;
+    }
+    return true;
   }
   // Is the cell free for a heritage building: on land, not already taken, not a street.
   _heritageFree(gx, gy) {
@@ -917,7 +942,9 @@ export class Scene3D {
         : (key === 'port' || key === 'power_station' || key === 'factory' || key === 'processing') ? 0.62
         : 0.5;
       m.scale.setScalar(sc);
-      m.position.set(c.x, this.terrainHeight(gx, gy), c.z); m.rotation.y = Math.floor(Math.random() * 4) * Math.PI / 2;
+      const rd = this._roadDir && this._roadDir[gy][gx];
+      m.position.set(c.x, this.terrainHeight(gx, gy), c.z);
+      m.rotation.y = (rd == null || Number.isNaN(rd)) ? Math.floor(Math.random() * 4) * Math.PI / 2 : rd; // face the street
       g.add(m);
       this.heritageMask[gy][gx] = true;
       if (name) this.heritageInfo.set(`${gx},${gy}`, name);
@@ -968,28 +995,39 @@ export class Scene3D {
         if (x < 0 || y < 0 || x >= N || y >= N) continue;
         const nx = (x - ccx) / rC, ny = (y - ccy) / rC; if (nx * nx + ny * ny > 1) continue;
         if (this.reserveMask?.[y]?.[x] || this.riverMask?.[y]?.[x]) continue;
-        if (!this._heritageFree(x, y) || this.isRoadAt(x, y)) continue;  // land, off-street, not already taken
+        if (this.heritageMask[y][x]) continue;                          // already taken by a landmark
+        if (!this._solidLand(x, y)) continue;                           // strictly inland — never on the shore
+        if (this._roadMask && this._roadMask[y][x]) continue;           // off the carriageway (blocks front the street)
         if (Math.random() > prob) continue;
         cells.push([x, y]); this.heritageMask[y][x] = true;             // unbuildable historic town
       }
     }
     if (!cells.length) return;
-    const pastels = [0xe8b04b, 0xd9694f, 0x6fae9e, 0xe2cd7a, 0xc97f9c, 0x7fa8c9, 0xcf8f5a, 0xb86b4a, 0xe7e0cf];
-    const bodyGeo = new THREE.BoxGeometry(2.0, 2.4, 2.4), roofGeo = new THREE.BoxGeometry(2.25, 0.5, 2.65);
+    const walls = [0xe8b04b, 0xd9694f, 0x6fae9e, 0xe2cd7a, 0xc97f9c, 0x7fa8c9, 0xcf8f5a, 0xb86b4a, 0xe7e0cf, 0xd6c08a];
+    const tiles = [0x9c4a36, 0xb15a3c, 0x8f4630, 0xa85a3a, 0x7d3f2c]; // terracotta roof shades
+    const bodyGeo = new THREE.BoxGeometry(1, 1, 1), roofGeo = new THREE.BoxGeometry(1.14, 0.26, 1.2);
     const bodies = new THREE.InstancedMesh(bodyGeo, toon(0xffffff), cells.length);
-    const roofs = new THREE.InstancedMesh(roofGeo, toon(0x9c4a36), cells.length);
-    bodies.castShadow = false; bodies.receiveShadow = false; roofs.castShadow = false;
+    const roofs = new THREE.InstancedMesh(roofGeo, toon(0xffffff), cells.length);
+    bodies.castShadow = false; bodies.receiveShadow = false; roofs.castShadow = false; roofs.receiveShadow = false;
     const pos = new THREE.Vector3(), q = new THREE.Quaternion(), scl = new THREE.Vector3(), m4 = new THREE.Matrix4(), col = new THREE.Color(), YA = new THREE.Vector3(0, 1, 0);
+    const rnd = (s) => { s = Math.sin(s) * 43758.5453; return s - Math.floor(s); }; // deterministic per-cell jitter
     for (let i = 0; i < cells.length; i++) {
-      const [x, y] = cells[i], c = cellToWorld(x, y), h = this.terrainHeight(x, y);
-      const rot = (Math.floor(Math.random() * 4)) * Math.PI / 2, hgt = 0.75 + Math.random() * 0.8;
-      q.setFromAxisAngle(YA, rot);
-      pos.set(c.x, h + 1.2 * hgt, c.z); scl.set(1, hgt, 1); m4.compose(pos, q, scl); bodies.setMatrixAt(i, m4);
-      col.setHex(pastels[(x * 5 + y * 3) % pastels.length]); bodies.setColorAt(i, col);
-      pos.set(c.x, h + 2.4 * hgt + 0.18, c.z); scl.set(1, 1, 1); m4.compose(pos, q, scl); roofs.setMatrixAt(i, m4);
+      const [x, y] = cells[i], c = cellToWorld(x, y), hT = this.terrainHeight(x, y);
+      // orient PARALLEL to the nearest street (so the town reads as rows of shophouses,
+      // not a field of random boxes); a touch of jitter keeps it from looking stamped.
+      const d = this._roadDir && this._roadDir[y][x];
+      const ang = (Number.isNaN(d) || d == null ? rnd(x * 12.9 + y * 78.2) * Math.PI : d) + (rnd(x * 3.1 + y * 7.7) - 0.5) * 0.16;
+      const w = 1.35 + rnd(x * 1.7 + y * 9.3) * 0.5, dp = 1.45 + rnd(x * 4.4 + y * 2.1) * 0.6; // small footprint, fronts the street
+      const h = 1.9 + rnd(x * 6.1 + y * 1.3) * 2.6;                                          // 1–3 storeys
+      q.setFromAxisAngle(YA, ang);
+      pos.set(c.x, hT + h / 2, c.z); scl.set(w, h, dp); m4.compose(pos, q, scl); bodies.setMatrixAt(i, m4);
+      col.setHex(walls[(x * 5 + y * 3) % walls.length]); bodies.setColorAt(i, col);
+      pos.set(c.x, hT + h + 0.12, c.z); scl.set(w, 1, dp); m4.compose(pos, q, scl); roofs.setMatrixAt(i, m4);
+      col.setHex(tiles[(x * 7 + y * 5) % tiles.length]); roofs.setColorAt(i, col);
     }
     bodies.instanceMatrix.needsUpdate = true; roofs.instanceMatrix.needsUpdate = true;
     if (bodies.instanceColor) bodies.instanceColor.needsUpdate = true;
+    if (roofs.instanceColor) roofs.instanceColor.needsUpdate = true;
     this.heritageGroup.add(bodies); this.heritageGroup.add(roofs);
     this._urbanFillCount = cells.length;
   }
@@ -1948,6 +1986,9 @@ export class Scene3D {
     this.previewKey = key; this.previewTheme = theme; this.bulldoze = false;
     this._makeGhost(key);
   }
+  // The orientation (radians) the player has dialled in for the next building; the
+  // ghost previews it and onTileTap stamps it onto the placed cell.
+  setBuildRotation(rad) { this.buildRot = rad; if (this.ghost) this.ghost.rotation.y = rad; }
   setBulldoze(on) {
     this.bulldoze = on; this.previewKey = null;
     this._makeGhost(null);
@@ -1973,6 +2014,7 @@ export class Scene3D {
     const { x, y } = this.hoverCell;
     const c = cellToWorld(x, y);
     this.ghost.position.set(c.x, this.terrainHeight(x, y), c.z);
+    this.ghost.rotation.y = this.buildRot || 0; // preview the player's chosen orientation
     this.ghost.visible = true;
     const ok = this.isLand(x, y) && !this.buildings.has(`${x},${y}`);
     this.ghost.traverse((o) => { if (o.material) o.material.color.set(ok ? 0x9be15d : 0xff5a5a); });
@@ -2027,7 +2069,8 @@ export class Scene3D {
     const c = cellToWorld(x, y);
     const wrap = new THREE.Group();
     wrap.position.set(c.x, this.terrainHeight(x, y), c.z);
-    wrap.rotation.y = (Math.floor(Math.random() * 4)) * Math.PI / 2;
+    const rcell = this.state?.grid?.[y]?.[x];
+    wrap.rotation.y = (rcell && typeof rcell.r === 'number') ? rcell.r : (Math.floor(Math.random() * 4)) * Math.PI / 2;
     wrap.scale.setScalar(MODEL_SCALE); // whole site (building + crane) sized to the live cell
     this.scene.add(wrap);
     // the target building, measured then flattened so it rises with progress
@@ -2074,7 +2117,8 @@ export class Scene3D {
     const group = makeBuilding(key, theme);
     const c = cellToWorld(x, y);
     group.position.set(c.x, this.terrainHeight(x, y), c.z);
-    group.rotation.y = (Math.floor(Math.random() * 4)) * Math.PI / 2;
+    const rcell = this.state?.grid?.[y]?.[x];
+    group.rotation.y = (rcell && typeof rcell.r === 'number') ? rcell.r : (Math.floor(Math.random() * 4)) * Math.PI / 2;
     group.castShadow = true;
     this.scene.add(group);
     const tall = b.cat === 'residential' || b.cat === 'industry';

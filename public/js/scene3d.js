@@ -1169,6 +1169,7 @@ export class Scene3D {
   _buildRailways(list) {
     if (this.railGroup) this.scene.remove(this.railGroup);
     const g = new THREE.Group(); this.scene.add(g); this.railGroup = g;
+    const tracks = [];
     for (const poly of (list || [])) {
       if (!poly || poly.length < 2) continue;
       // historic lines are normalised [nx,ny]; map to world, then render with the
@@ -1176,8 +1177,11 @@ export class Scene3D {
       // traced and in-game track look identical.
       const world = poly.map(([nx, ny]) => ({ x: (nx - 0.5) * WORLD, z: (0.5 - ny) * WORLD }));
       const dense = this._resamplePoly(world, 1.4);
-      this._railTrack(g, dense.map((q) => new THREE.Vector3(q.x, this._roadY(q.x, q.z), q.z)));
+      const pts = dense.map((q) => new THREE.Vector3(q.x, this._roadY(q.x, q.z), q.z));
+      this._railTrack(g, pts);
+      tracks.push({ pts, kind: 'train' });
     }
+    this._histTrainTracks = tracks;   // the historic KTM lines get steam/diesel trains running on them
   }
 
   // Mark cells under hand-placed buildings as unbuildable.
@@ -2688,23 +2692,26 @@ export class Scene3D {
     // are filled, so the track never climbs at silly angles. Profile against the RAW
     // ground first (bypass existing carves), then carve the corridor to the grade.
     this._carves = null;
-    const rails = [], viaducts = [];
+    const rails = [], viaducts = [], mrtways = [];
     for (const entry of ((state && state.railways) || [])) {
       const poly = Array.isArray(entry) ? entry : (entry && entry.pts);   // legacy arrays or { pts, … }
       if (!poly || poly.length < 2) continue;
       const dense = this._resamplePoly(poly.map(([x, z]) => ({ x, z })), 1.4);
       if (dense.length < 2) continue;
-      if (!Array.isArray(entry) && entry.elevated) viaducts.push(dense);   // elevated viaduct
+      if (!Array.isArray(entry) && entry.mrt) mrtways.push(dense);            // MRT guideway (always elevated)
+      else if (!Array.isArray(entry) && entry.elevated) viaducts.push(dense); // heavy-rail elevated viaduct
       else rails.push(this._railProfile(poly.map(([x, z]) => ({ x, z })), 1.4)); // graded, cut hills
     }
     // full-cut half-width must exceed a terrain-mesh cell (~6.7 m) so the coarse mesh
     // is actually cut to grade right under the track (else a hill covers the rails)
     this._railCarves = rails.map((r) => ({ poly: r.dense, halfW: 7, blend: 6, floors: r.grade }));
     this._syncCarves();   // cut the hills down to each railway's grade (+ airport pads)
+    const tracks = [];                       // {pts, kind} — where trains will run
     for (const r of rails) {
       const pts = r.dense.map((q, i) => new THREE.Vector3(q.x, r.grade[i], q.z));
       this._railEmbankment(g, r);            // fill embankment under the track over any dip
       this._railTrack(g, pts);               // ballast + sleepers + rails on the smooth grade
+      tracks.push({ pts, kind: 'train' });
     }
     for (const dense of viaducts) {          // elevated viaduct: flat deck clearing all below, on pillars
       const n = dense.length, deckY = this._elevatedDeckY(dense, 2);
@@ -2712,7 +2719,25 @@ export class Scene3D {
       this._addRibbon(g, pts, 1.9, 0x6b6f74, -0.18);   // concrete deck under the track
       this._railTrack(g, pts);
       this._addPillars(g, pts, 0.55);
+      tracks.push({ pts, kind: 'train' });
     }
+    for (const dense of mrtways) {           // MRT: a clean concrete guideway on slim piers (no ballast/sleepers)
+      const n = dense.length, deckY = this._elevatedDeckY(dense, 2);
+      const pts = dense.map((q, i) => { const gy = this._roadY(q.x, q.z), t = i / (n - 1), ramp = Math.min(1, Math.min(t, 1 - t) / 0.18); return new THREE.Vector3(q.x, gy + ramp * (deckY - gy), q.z); });
+      this._mrtGuideway(g, pts);
+      tracks.push({ pts, kind: 'mrt' });
+    }
+    this._playerTrainTracks = tracks;
+    this._buildTrains();
+  }
+  // A sleek MRT viaduct: a pale box-girder deck on slim round piers, with a thin
+  // running rail down the middle — distinct from the ballasted heavy-rail track.
+  _mrtGuideway(g, pts) {
+    if (!pts || pts.length < 2) return;
+    this._addRibbon(g, pts, 1.25, 0xc7ccd1, 0.0);        // box-girder deck (pale concrete)
+    this._addRibbon(g, pts, 1.45, 0x9aa2a9, -0.55);      // deck underside / parapet shadow
+    this._addRibbon(g, pts, 0.18, 0x6a7178, 0.12);       // centre running beam
+    this._addPillars(g, pts, 0.5);
   }
   // A fill embankment under the track wherever the graded line sits above the (now
   // cut) ground — a skirt from the ballast edge down to the terrain on each side.
@@ -2848,6 +2873,51 @@ export class Scene3D {
       p.mesh.position.set(pos.x, pos.y + 0.5 + climb, pos.z); // ride on the raised runway platform
       p.mesh.rotation.y = Math.atan2(ahead.x - pos.x, ahead.z - pos.z);
       p.mesh.visible = p.t <= 1.2;
+    }
+  }
+  // ---- trains: living rolling stock on every railway & MRT line ---------------
+  // Spawn one articulated train per track (historic KTM lines, player heavy-rail,
+  // and MRT viaducts). The train kind/vintage follows the year, so the fleet
+  // visibly modernises — steam → diesel → modern — as the country develops.
+  _buildTrains() {
+    if (this._trainGroup) this.scene.remove(this._trainGroup);
+    const g = new THREE.Group(); this.scene.add(g); this._trainGroup = g;
+    this._trains = [];
+    const tracks = [...(this._histTrainTracks || []), ...(this._playerTrainTracks || [])];
+    const year = this.state?.date?.y ?? 1965;
+    for (const tk of tracks) {
+      const total = this._polyLen(tk.pts);
+      if (total < 14) continue;                 // too short to run a train
+      const era = tk.kind === 'mrt' ? 'mrt' : (year < 1972 ? 'steam' : year < 2005 ? 'diesel' : 'modern');
+      const cars = era === 'mrt' ? 3 : era === 'steam' ? 3 : 4;
+      const train = makeTrain(era, cars);
+      for (const c of train.cars) g.add(c);
+      const carU = (train.carLen * 1.06) / total;   // arc-fraction gap between coupled cars
+      this._trains.push({
+        track: tk, cars: train.cars, total, carU,
+        u: Math.random() * 0.6, dir: 1,
+        speed: era === 'mrt' ? 13 : era === 'steam' ? 6 : 9,
+        rideY: tk.kind === 'mrt' ? 0.5 : 0.34,
+      });
+    }
+  }
+  _updateTrains(dt) {
+    for (const tr of (this._trains || [])) {
+      tr.u += tr.dir * dt * tr.speed / tr.total;
+      // shuttle: when the head reaches an end, reverse (and flip which way the cars trail)
+      if (tr.u > 1) { tr.u = 1; tr.dir = -1; }
+      else if (tr.u < 0) { tr.u = 0; tr.dir = 1; }
+      const pts = tr.track.pts, eps = 0.012;
+      for (let i = 0; i < tr.cars.length; i++) {
+        const cu = tr.u - tr.dir * i * tr.carU;        // each car trails the one ahead
+        const car = tr.cars[i];
+        if (cu < 0 || cu > 1) { car.visible = false; continue; }
+        car.visible = true;
+        const pos = this._alongPoly(pts, cu);
+        const ahead = this._alongPoly(pts, Math.min(1, Math.max(0, cu + tr.dir * eps)));
+        car.position.set(pos.x, pos.y + tr.rideY, pos.z);
+        car.rotation.y = Math.atan2((ahead.x - pos.x) * tr.dir, (ahead.z - pos.z) * tr.dir);
+      }
     }
   }
   // Render routes still under construction: the built part grows from the start,
@@ -3389,6 +3459,7 @@ export class Scene3D {
     this._updatePeople(adt);
     this._updateBoats(adt);
     if (!this.frozen) this._updateAirstripPlanes(dt);   // taxiing/landing aircraft on drawn runways
+    if (!this.frozen) this._updateTrains(dt);           // trains shuttling along every railway & MRT line
     this._updateDisaster(adt);
     this._commitSky();   // paint the gradient sky after day/night + weather + haze tints
     if (this._snapMarker && this._snapMarker.visible) { const s = 1 + 0.18 * Math.sin(performance.now() / 180); this._snapMarker.scale.set(s, s, 1); } // pulse the "start here" ring
@@ -3928,7 +3999,7 @@ export function makeBuilding(key, theme) {
       g.add(cyl(0.8, 1, 8, 0xb6b6b6, 2.8, 4, 2.4));
       g.add(cyl(1.4, 1.4, 3, 0xc9cfd2, -3, 1.5, 2.6));
     }
-  } else if (cat === 'civic') {
+  } else if (cat === 'civic' || cat === 'roads') {   // 'roads' = Transport: MRT/train stations & viaduct spans share the civic builders
     if (key === 'colonial') {
       lawn(g, 9, 9, 0x6fb15a);
       const cream = 0xefe7d4, roofc = 0xa6553a;
@@ -3982,6 +4053,26 @@ export function makeBuilding(key, theme) {
       g.add(partBox(8.85, 0.62, 1.3, mat(0x29435c), 0, deckY + 1.9, 0));         // continuous window strip
       g.add(partBox(8.8, 0.2, 1.75, mat(col), 0, deckY + 2.5, 0));               // coloured roof band
       g.add(partBox(0.5, 1.5, 1.45, mat(0xcdd2d6), 4.5, deckY + 1.55, 0));       // tapered nose at the front
+    } else if (key === 'rail_station') {
+      // an old-school 1965 railway station: a cream colonial booking hall with a
+      // clock tower, a long platform under a pitched canopy, and a train waiting.
+      lawn(g, 9, 9, 0x9aae8a);
+      g.add(partBox(4.6, 3.4, 3.4, mat(0xeae0c8), -2.0, 1.7, 1.2));              // booking hall (colonial cream)
+      g.add(partBox(4.7, 0.5, 3.5, mat(0xb8624a), -2.0, 3.55, 1.2));            // cornice
+      for (const wx of [-3.5, -2.0, -0.5]) g.add(partBox(0.7, 1.3, 0.12, mat(0x3a5566), wx, 1.7, 2.95)); // arched windows
+      g.add(partBox(1.5, 5.4, 1.5, mat(0xe6dcc2), -4.1, 2.7, 0.4));             // clock tower shaft
+      g.add(partBox(1.7, 0.6, 1.7, mat(0xb8624a), -4.1, 5.5, 0.4));             // tower cap
+      g.add(partBox(0.9, 0.9, 0.1, mat(0xf7f2e2, {}, 1.2), -4.1, 4.9, 1.28));   // clock face (faint glow)
+      g.add(partBox(0.9, 0.1, 0.9, mat(0x6b4a2a), -4.1, 6.0, 0.4));             // tower roof finial slab
+      // long platform + pitched canopy on posts
+      g.add(partBox(8.6, 0.4, 2.2, mat(0xcfc6b2), 1.0, 0.4, -2.4));             // raised platform
+      for (const px of [-2.6, 0.2, 3.0]) g.add(cyl(0.12, 0.12, 2.6, 0x5a6066, px, 1.3, -3.2)); // canopy posts
+      const canopy = partBox(8.8, 0.2, 2.8, mat(0x7a8085), 1.0, 2.7, -2.8); canopy.rotation.x = -0.12; g.add(canopy); // pitched canopy
+      g.add(partBox(8.8, 0.3, 0.3, mat(0x5a3a22), 1.0, 2.55, -1.45));           // canopy front beam
+      // a waiting train at the platform
+      g.add(partBox(7.6, 1.7, 1.5, mat(0x2c5aa0), 1.2, 1.55, -2.4));            // coaches
+      g.add(partBox(7.65, 0.55, 1.1, mat(0xf2e6c8, {}, 0.9), 1.2, 1.75, -2.4)); // cream window band
+      g.add(partBox(7.6, 0.18, 1.55, mat(0xe8e2d2), 1.2, 2.45, -2.4));          // roof
     } else if (key === 'school') {
       lawn(g, 9, 9, 0x6fb15a);
       g.add(partBox(7, 3.6, 3, mat(col), 0, 1.8, -2.2));
@@ -4175,6 +4266,65 @@ function makeVehicle(kind, vintage = false) {
   for (const z of [1.05, -1.05]) { g.add(wheel(-0.78, z)); g.add(wheel(0.78, z)); }
   if (kind === 'taxi') g.add(partBox(0.5, 0.26, 0.32, mat(0x1d2733), 0, 1.4, -0.1)); // roof sign
   return { mesh: g, len: 3.2 };
+}
+
+// ===========================================================================
+// Trains — articulated rolling stock that runs along the rails & MRT viaducts.
+// Each car is an independent Group (nose toward +Z) so the renderer can place
+// them one behind another along a curved track. The kind follows the era:
+// steam (≤1971) → diesel (≤2004) → modern, plus the sleek silver MRT metro.
+// Returns { cars:[Group…], carLen } with carLen already at world scale.
+// ===========================================================================
+function makeTrain(era, carCount = 3) {
+  const cars = [];
+  const VS = 0.6;                          // match the road-vehicle scale
+  const glass = 0x2b3b48;
+  const add = (build) => { const c = new THREE.Group(); build(c); c.traverse((m) => { if (m.isMesh) m.castShadow = true; }); c.scale.setScalar(VS); cars.push(c); };
+  let rawLen = 4.4;
+  if (era === 'mrt') {
+    rawLen = 4.5;
+    for (let i = 0; i < carCount; i++) add((c) => {
+      c.add(partBox(1.7, 1.55, 4.3, mat(0xdfe4e8), 0, 0.9, 0));                  // brushed-silver body
+      c.add(partBox(1.76, 0.66, 3.7, mat(0x3aa3d8, {}, 1.3), 0, 1.15, 0));       // glowing window strip
+      c.add(partBox(1.66, 0.24, 4.3, mat(0x2c6fa0), 0, 1.74, 0));                // roof band
+      const nose = (i === 0) ? 1 : (i === carCount - 1) ? -1 : 0;
+      if (nose) { c.add(partBox(1.5, 0.7, 0.5, mat(0x20242b), 0, 0.95, 2.15 * nose)); c.add(partBox(0.5, 0.22, 0.1, mat(0xfff2c2, {}, 1.7), 0, 0.7, 2.3 * nose)); }
+    });
+    return { cars, carLen: rawLen * VS };
+  }
+  if (era === 'steam') {
+    rawLen = 4.2;
+    add((c) => {                                                                  // steam locomotive
+      c.add(partBox(1.4, 0.42, 3.6, mat(0x1b1e23), 0, 0.45, -0.3));               // black footplate/chassis
+      const boiler = cyl(0.56, 0.56, 3.0, 0x27402f, 0, 1.05, 0.35); boiler.rotation.x = Math.PI / 2; c.add(boiler); // green boiler
+      c.add(partBox(1.42, 1.25, 1.3, mat(0x223428), 0, 1.15, -1.45));             // cab
+      c.add(cyl(0.17, 0.24, 0.8, 0x111317, 0, 1.78, 1.45));                       // funnel
+      c.add(cyl(0.16, 0.16, 0.4, 0x3a3f45, 0, 1.62, 0.2));                        // steam dome
+      c.add(partBox(0.5, 0.34, 0.12, mat(0xfff2c2, {}, 1.8), 0, 0.7, 1.92));      // front lamp
+    });
+    for (let i = 1; i < carCount; i++) add((c) => {                               // teak-brown coaches
+      c.add(partBox(1.5, 1.3, 3.8, mat(0x7a3b2a), 0, 0.9, 0));
+      c.add(partBox(1.56, 0.52, 3.2, mat(0xf2e6c8, {}, 0.9), 0, 1.1, 0));         // cream window band (faint glow)
+      c.add(partBox(1.52, 0.2, 3.8, mat(0x5a2c1f), 0, 1.62, 0));                  // roof
+    });
+    return { cars, carLen: rawLen * VS };
+  }
+  // diesel (≤2004) or modern multiple-unit
+  const modern = era === 'modern';
+  const locoCol = modern ? 0xc23b3b : 0x2c5aa0;
+  rawLen = 4.4;
+  add((c) => {                                                                    // power car / loco
+    c.add(partBox(1.6, 1.6, 4.0, mat(locoCol), 0, 0.95, 0));
+    c.add(partBox(1.66, 0.5, 1.5, mat(glass, {}, modern ? 1.0 : 0.0), 0, 1.4, 0.9)); // cab glass
+    c.add(partBox(1.62, 0.22, 4.0, mat(0xe8e2d2), 0, 1.82, 0));                   // roof stripe
+    c.add(partBox(0.42, 0.3, 0.12, mat(0xfff2c2, {}, 1.7), 0, 0.7, 2.05));        // headlight
+  });
+  for (let i = 1; i < carCount; i++) add((c) => {                                 // passenger coaches
+    c.add(partBox(1.5, 1.5, 3.9, mat(modern ? 0xeceef0 : 0xcdd2d6), 0, 0.9, 0));
+    c.add(partBox(1.56, 0.56, 3.3, mat(glass, {}, 0.95), 0, 1.12, 0));            // glowing window band
+    c.add(partBox(1.52, 0.2, 3.9, mat(locoCol), 0, 1.62, 0));                     // roof band
+  });
+  return { cars, carLen: rawLen * VS };
 }
 
 // ---- street props & boats -------------------------------------------------

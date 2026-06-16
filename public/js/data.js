@@ -40,6 +40,7 @@ export const CATEGORIES = [
 export const ROAD_TYPES = {
   road:    { name: 'Road',    icon: '🚗', lanes: 2, width: 1.8, renderHW: 0.34, speed: 12, cost: 6,  asphalt: '#3a3e45' },
   railway: { name: 'Railway', icon: '🚆', lanes: 1, width: 2.6, speed: 0,  cost: 30, asphalt: '#5b5040', rail: true },
+  mrt:     { name: 'MRT',     icon: '🚇', lanes: 1, width: 2.4, speed: 0,  cost: 45, asphalt: '#9aa6b0', rail: true, mrt: true, alwaysElevated: true },
   airport: { name: 'Airport', icon: '✈️', lanes: 1, width: 9,   speed: 0,  cost: 80, asphalt: '#35383d', air: true },
 };
 
@@ -216,16 +217,22 @@ export const BUILDINGS = {
     desc: 'A grand British colonial civic hall with columns and a clock tower — the administrative seat inherited from the empire.',
   },
   mrt: {
-    name: 'MRT Station', cat: 'civic', icon: '🚇', color: '#5db85d',
+    name: 'MRT Station', cat: 'roads', icon: '🚇', color: '#5db85d',
     cost: 100, upkeep: 2.0, year: 1987, homes: 0, jobs: 200,
     power: -20, water: -4, pollution: -3, happiness: 8, education: 0,
-    desc: 'Mass Rapid Transit. Cuts congestion and pollution, and boosts happiness citywide.',
+    desc: 'Mass Rapid Transit station. Drop it on (or beside) an MRT viaduct line so trains call here. Cuts congestion and pollution, and boosts happiness citywide.',
   },
   mrt_line: {
-    name: 'Elevated MRT Viaduct', cat: 'civic', icon: '🚝', color: '#aab6c0',
+    name: 'Elevated MRT Viaduct', cat: 'roads', icon: '🚝', color: '#aab6c0',
     cost: 70, upkeep: 1.5, year: 1987, homes: 0, jobs: 120,
     power: -10, water: -2, pollution: -5, happiness: 6,
-    desc: 'A length of elevated guideway carrying the trains over the city on concrete viaducts. Links the stations into a network — speeds commutes, takes cars off the road and clears the air.',
+    desc: 'A single span of elevated guideway. (Tip: pick the 🚇 MRT mode in the Transport toolkit to DRAW a whole viaduct line — straight, curved or freeform — instead of placing spans one by one.)',
+  },
+  rail_station: {
+    name: 'Train Station', cat: 'roads', icon: '🚉', color: '#c7a05a',
+    cost: 24, upkeep: 0.6, year: 1965, homes: 0, jobs: 120,
+    power: -4, water: -2, pollution: 1, happiness: 4,
+    desc: 'An old-school 1965 railway station in the colonial style — a long platform canopy, a clock-towered booking hall and a steam/diesel train at the platform. Put it on the railway line so trains stop in town.',
   },
 
   mall: {

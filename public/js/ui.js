@@ -64,9 +64,16 @@ export function renderBuild(state, ctx) {
   wrap.append(tabs);
 
   // Roads category shows the road-drawing toolkit instead of buildings.
-  if (ctx.cat === 'roads') { wrap.append(renderRoads(ctx)); return wrap; }
-  // Reclaim category shows the land-reclamation tool instead of buildings.
-  if (ctx.cat === 'land') { wrap.append(renderReclaim(state, ctx)); return wrap; }
+  // Transport shows the draw toolkit AND its placeable structures (MRT/train
+  // stations, single viaduct spans) — so road, rail, MRT all live in one place.
+  if (ctx.cat === 'roads') {
+    wrap.append(renderRoads(ctx));
+    wrap.append(el('div', 'section-title', 'Stations & structures'));
+    // fall through to the building grid (filtered to the Transport category)
+  } else if (ctx.cat === 'land') {
+    // Reclaim category shows the land-reclamation tool instead of buildings.
+    wrap.append(renderReclaim(state, ctx)); return wrap;
+  }
 
   // Colour-theme picker — shown for categories that contain customizable builds.
   const hasCustom = Object.values(BUILDINGS).some((b) => b.cat === ctx.cat && b.customizable);
@@ -133,8 +140,11 @@ function renderRoads(ctx) {
   wrap.append(typeRow);
 
   // elevated toggle — a flyover (road), viaduct (railway) or raised runway, lifted
-  // above everything below it. Available for ALL modes.
-  {
+  // above everything below it. Available for ALL modes EXCEPT the MRT, which is
+  // always an elevated viaduct (so we show a fixed note instead of a toggle).
+  if (ROAD_TYPES[r.type]?.alwaysElevated) {
+    wrap.append(el('p', 'tool-hint', '🚇 The MRT always runs on an elevated viaduct — draw the line and it rises onto concrete piers automatically.'));
+  } else {
     const air = ROAD_TYPES[r.type]?.air;
     const label = air ? 'Elevated runway (raised on pillars)' : 'Elevated flyover / bridge';
     const bridge = el('div', 'checkbox');

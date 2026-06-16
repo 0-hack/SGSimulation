@@ -535,7 +535,7 @@ function onRouteDrawn(pts, opts = {}) {
   const route = opts.raw ? pts.map((p) => ({ x: p.x, z: p.z })) : smoothRoute(pts, Math.min(7, Math.max(3, (G.view?.cam?.radius || 70) * 0.035)));
   // an elevated flyover / viaduct / raised runway costs more (deck + pillars) but
   // needs NO earthworks — it bridges over everything below instead of cutting it.
-  const elevated = G.road.elevated;
+  const elevated = G.road.elevated || !!T.alwaysElevated;   // MRT viaducts are always raised
   const cost = priced(T.cost * Math.max(1, len / 20) * (elevated ? 1.8 : 1), G.state);
   let total = cost, days = Math.max(8, Math.min(80, Math.round(len / 8))) + (elevated ? 6 : 0);
   let detail = elevated ? `${Math.round(len)} m elevated ${T.name.toLowerCase()} · ${money(cost)}` : `${Math.round(len)} m · ${money(cost)}`;
@@ -544,7 +544,7 @@ function onRouteDrawn(pts, opts = {}) {
     if (G.state.treasury < amount) { toast(`Need ${money(amount)} to build this ${T.name.toLowerCase()}.`); return; }
     G.state.treasury -= amount;
     const kind = T.air ? 'air' : T.rail ? 'rail' : 'road';
-    addRoadwork(G.state, { pts: route, kind, type: G.road.type, lanes: T.lanes, elevated: G.road.elevated, tunnel: !!tunnel, total: buildDays });
+    addRoadwork(G.state, { pts: route, kind, type: G.road.type, lanes: T.lanes, elevated, mrt: !!T.mrt, tunnel: !!tunnel, total: buildDays });
     G.view.syncRoadworks(G.state);
     G.view.clearRoadPreview();
     if (G.view.clearPieceChain) G.view.clearPieceChain();   // staged chain is now under construction
@@ -622,9 +622,10 @@ function applyRoadToolMode() {
   const tool = G.road.tool;
   const T = ROAD_TYPES[G.road.type] || ROAD_TYPES.road;
   const piece = tool === 'straight' || tool === 'curveL' || tool === 'curveR';   // fixed Lego pieces
-  if (tool === 'draw') G.view.setDrawMode(true, onRouteDrawn, { type: G.road.type, elevated: G.road.elevated, rail: !!T.rail, air: !!T.air });
+  const elev = G.road.elevated || !!T.alwaysElevated;        // MRT viaducts are always raised
+  if (tool === 'draw') G.view.setDrawMode(true, onRouteDrawn, { type: G.road.type, elevated: elev, rail: !!T.rail, air: !!T.air });
   else G.view.setDrawMode(false);
-  G.view.setPieceMode(piece, piece ? { piece: tool, kind: T.air ? 'air' : T.rail ? 'rail' : 'road', type: G.road.type, elevated: G.road.elevated, onChain: onPieceChain } : null);
+  G.view.setPieceMode(piece, piece ? { piece: tool, kind: T.air ? 'air' : T.rail ? 'rail' : 'road', type: G.road.type, elevated: elev, onChain: onPieceChain } : null);
   G.view.setRoundaboutPreview(tool === 'roundabout');        // translucent ring shows where it lands
   G.view.setRoadMode(!!tool && !piece && tool !== 'draw');   // roundabout / erase use plain taps
 }
@@ -708,7 +709,7 @@ function refreshPanel() {
       selectBuilding: (k) => {
         G.build.selected = G.build.selected === k ? null : k;
         G.build.bulldoze = false; G.reclaim.active = false; G.view.setPaintMode(false);
-        G.road.tool = null; G.view.setRoadMode(false); G.view.showRoadPreview([]);
+        G.road.tool = null; G.view.setRoadMode(false); G.view.setDrawMode(false); G.view.setPieceMode(false); G.view.showRoadPreview([]);
         G.view.setPreview(G.build.selected, G.build.theme);
         refreshPanel();
         if (G.build.selected) {

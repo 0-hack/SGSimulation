@@ -411,7 +411,7 @@ export function addRoadwork(state, route) {
   if (!state.roadworks) state.roadworks = [];
   state.roadworks.push({
     pts: route.pts, kind: route.kind || 'road', type: route.type || 'road',
-    lanes: route.lanes || 2, elevated: !!route.elevated, tunnel: !!route.tunnel,
+    lanes: route.lanes || 2, elevated: !!route.elevated, mrt: !!route.mrt, tunnel: !!route.tunnel,
     total: route.total, left: route.total,
   });
   return { ok: true };
@@ -528,7 +528,7 @@ function advanceRoadworks(state) {
     if (w.left > 0) { still.push(w); continue; }
     if (w.kind === 'rail') {
       // store geometry + whether it's an elevated viaduct (renderer reads elevated)
-      (state.railways || (state.railways = [])).push({ pts: w.pts.map((p) => [p.x, p.z]), elevated: !!w.elevated });
+      (state.railways || (state.railways = [])).push({ pts: w.pts.map((p) => [p.x, p.z]), elevated: !!w.elevated, mrt: !!w.mrt });
     } else if (w.kind === 'air') {
       (state.airstrips || (state.airstrips = [])).push({ pts: w.pts.map((p) => [p.x, p.z]), elevated: !!w.elevated });
     } else {

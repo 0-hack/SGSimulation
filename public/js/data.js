@@ -494,9 +494,9 @@ export const HISTORICAL_EVENTS = [
       prompt: 'How do you respond?',
       options: [
         { label: 'Convert bases to industry (Jurong)', fx: { treasury: -40, jobsBoost: 0.05, approval: 4, spawn: [
-          { key: 'factory', cx: 0.190, cy: 0.450 },
-          { key: 'factory', cx: 0.206, cy: 0.468 },
-          { key: 'godown', cx: 0.168, cy: 0.488 },
+          { key: 'factory', cx: 0.186, cy: 0.452 },
+          { key: 'factory', cx: 0.197, cy: 0.458 },
+          { key: 'godown', cx: 0.178, cy: 0.460 },
         ] } },
         { label: 'Austerity & caution', fx: { treasury: 20, approval: -4 } },
       ],
@@ -522,6 +522,22 @@ export const HISTORICAL_EVENTS = [
     },
   },
   {
+    id: 'east_coast', y: 1975, m: 6, title: 'East Coast Reclamation',
+    body: 'Dredgers have pumped a broad new shoreline up from the seabed off the east coast — hundreds of hectares of fresh, empty land. What rises on it?',
+    choice: {
+      prompt: 'Develop the reclaimed land as…',
+      options: [
+        { label: 'A new HDB town + seaside park', fx: { treasury: -120, approval: 6, growth: 0.02, spawn: [
+          { key: 'hdb_newtown', cx: 0.622, cy: 0.498 },
+          { key: 'hdb_flat', cx: 0.640, cy: 0.486 },
+          { key: 'park', cx: 0.604, cy: 0.486 },
+          { key: 'market', cx: 0.628, cy: 0.480 },
+        ] } },
+        { label: 'Hold it in reserve for now', fx: { approval: -2 } },
+      ],
+    },
+  },
+  {
     id: 'recession_85', y: 1985, m: 1, title: '1985 Recession',
     body: 'Singapore enters its first post-independence recession. Output shrinks for the first time.',
     effects: { treasury: -90, approval: -7, growthShock: -0.06 },
@@ -533,8 +549,11 @@ export const HISTORICAL_EVENTS = [
   },
   {
     id: 'sars', y: 2003, m: 3, title: 'SARS Outbreak',
-    body: 'A deadly respiratory virus spreads through the region. Hospitals are overwhelmed.',
-    effects: { treasury: -80, approval: -6, healthShock: -25 },
+    body: 'A deadly respiratory virus spreads through the region. Hospitals are overwhelmed — the government rushes up an isolation hospital and clinics.',
+    effects: { treasury: -80, approval: -6, healthShock: -25, spawn: [
+      { key: 'hospital', cx: 0.470, cy: 0.430 },
+      { key: 'clinic', cx: 0.488, cy: 0.446 },
+    ] },
   },
   {
     id: 'gfc', y: 2008, m: 9, title: 'Global Financial Crisis',
@@ -584,8 +603,17 @@ export const RANDOM_EVENTS = [
   },
   {
     id: 'water_dispute', title: 'Water Price Dispute', minYear: 1965,
-    body: 'A dispute over imported water reminds everyone how vulnerable supply is.',
-    effects: { approval: -4 },
+    body: 'A dispute over imported water from Johor reminds everyone how vulnerable the supply is. Invest in self-sufficiency?',
+    choice: {
+      prompt: 'Secure the water supply?',
+      options: [
+        { label: 'Build local water (reservoir + mains)', fx: { treasury: -40, approval: 5, spawn: [
+          { key: 'reservoir', cx: 0.395, cy: 0.520 },
+          { key: 'standpipe', cx: 0.418, cy: 0.502 },
+        ] } },
+        { label: 'Keep relying on imports', fx: { approval: -4 } },
+      ],
+    },
   },
   {
     id: 'grant', title: 'Budget Surplus Windfall', minYear: 1972,

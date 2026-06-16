@@ -3841,6 +3841,17 @@ export function makeBuilding(key, theme) {
       const rim = new THREE.Mesh(new THREE.TorusGeometry(4.2, 0.45, 8, 26), mat(0x6f8f55));
       rim.rotation.x = Math.PI / 2; rim.position.y = 0.4; g.add(rim);
       g.add(partBox(0.5, 0.5, 3, mat(0x8a6f4a), 4, 0.4, 0));
+    } else if (key === 'reservoir_big') {
+      // a big dammed reservoir: a broad oval lake, a concrete dam wall + crest road, and an outlet tower
+      const water = new THREE.Mesh(new THREE.CircleGeometry(5.6, 30), mat(0x2f86c4, { metalness: 0.3, roughness: 0.15 }));
+      water.rotation.x = -Math.PI / 2; water.position.set(0, 0.14, -0.6); water.scale.set(1, 0.72, 1); g.add(water);
+      const rim = new THREE.Mesh(new THREE.TorusGeometry(5.6, 0.5, 8, 30), mat(0x6f8f55));
+      rim.rotation.x = Math.PI / 2; rim.scale.set(1, 1, 0.72); rim.position.set(0, 0.45, -0.6); g.add(rim);
+      g.add(partBox(9.4, 1.9, 1.0, mat(0xc3bb9e), 0, 0.95, 3.4));                 // concrete dam wall
+      g.add(partBox(9.4, 0.32, 1.1, mat(0xd6d0bb), 0, 1.95, 3.4));               // crest road on the dam
+      for (let dx = -3.6; dx <= 3.6; dx += 1.8) g.add(partBox(0.18, 0.7, 0.18, mat(0x8a8f95), dx, 2.3, 3.0)); // railings
+      g.add(partBox(1.8, 2.0, 1.5, mat(0x9aa6ad), 3.4, 1.0, 3.6));               // gatehouse / pump station
+      g.add(cyl(0.8, 0.9, 2.2, 0xc9cfd2, -3.6, 1.1, 3.5));                       // outlet tower
     } else {
       g.add(partBox(6, 2.6, 4, mat(0x9aa6ad), -1.5, 1.3, -1.5));
       const tanks = key === 'desal' ? 3 : 2;
@@ -3923,6 +3934,21 @@ export function makeBuilding(key, theme) {
       g.add(partBox(9, 0.8, 4.4, mat(0x9aa0a6), 0, 5.4, 0));
       const train = tower(8, 2.4, 3, 'glass', 0, 0, { color: col }); train.position.y = 7; g.add(train);
       g.add(partBox(9.4, 0.4, 5, mat(0xbfd6e6, { metalness: 0.3 }), 0, 8.6, 0));
+    } else if (key === 'mrt_line') {
+      // a length of ELEVATED MRT guideway — concrete piers, a deck, and a train on top
+      lawn(g, 9, 9, 0x8fa98a);
+      const deckY = 5.2;
+      for (const px of [-3.2, 0, 3.2]) {                                         // piers + pier caps
+        g.add(cyl(0.55, 0.72, deckY, 0xb9bfc4, px, deckY / 2, 0));
+        g.add(partBox(1.7, 0.5, 2.4, mat(0xa9b0b6), px, deckY + 0.25, 0));
+      }
+      g.add(partBox(9.3, 0.5, 2.6, mat(0xc7ccd1), 0, deckY + 0.55, 0));          // the guideway deck
+      for (const rz of [-0.6, 0.6]) g.add(partBox(9.3, 0.12, 0.12, mat(0x707b82), 0, deckY + 0.87, rz)); // rails
+      for (const carx of [-2.3, 2.3]) {                                         // a two-car train
+        g.add(partBox(4.1, 1.7, 1.95, mat(0xe2e6e9), carx, deckY + 1.75, 0));   // car body
+        g.add(partBox(4.15, 0.62, 1.55, mat(0x29435c), carx, deckY + 2.02, 0)); // window strip
+        g.add(partBox(4.1, 0.2, 2.0, mat(col), carx, deckY + 2.62, 0));         // coloured roof band
+      }
     } else if (key === 'school') {
       lawn(g, 9, 9, 0x6fb15a);
       g.add(partBox(7, 3.6, 3, mat(col), 0, 1.8, -2.2));

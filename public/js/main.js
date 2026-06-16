@@ -2,6 +2,7 @@
 import {
   newGame, tickDay, build, demolish, canPlace, derive,
   resolveEvent, snapshot, refreshSummary, ensureGrid, packState, issueBond, repayDebt,
+  projectProgress, checkProjects,
   reclaimLand, reclaimCost, buildingCost, priced,
   routeLength, addRoadwork, smoothRoute, spliceRoad,
   polyArea, reclaimAreaCost, addReclaimArea,
@@ -256,6 +257,7 @@ function loop(ts) {
         if ((G.state.roadworks || []).length < rwBefore) { G.view.rebuildRoadNet(); G.view._buildPlayerRailways(G.state); G.view._buildPlayerAirstrips(G.state); } } // a route finished -> render it for real
       updateHud(G.state, G.readOnly);
       updateShortages();
+      flushProjectToasts();             // a national project may have just topped out
       if (G.state.pendingEvent) { showEvent(); }
       // refresh open live panels occasionally
       if (G.currentPanel === 'dash' && G.hudTimer > 0.5) { refreshPanel(); G.hudTimer = 0; }
@@ -284,6 +286,11 @@ function updateShortages() {
 
   const alerts = $('alerts');
   const msgs = [];
+  // Active national projects come first — a live build checklist guiding the player.
+  for (const p of projectProgress(G.state, d)) {
+    const parts = p.items.map((it) => `${BUILDINGS[it.key] ? BUILDINGS[it.key].name : it.key} ${it.have}/${it.count}`);
+    msgs.push({ t: `📋 ${p.title}: ${parts.join(', ')}`, warn: false, proj: true });
+  }
   if (power) msgs.push({ t: 'Power shortage — build more generation', warn: false });
   if (water) msgs.push({ t: 'Water shortage — build reservoirs / plants', warn: false });
   if (d.housingPressure > 1.05) msgs.push({ t: 'Housing shortage — citizens are overcrowded', warn: true });
@@ -295,9 +302,16 @@ function updateShortages() {
   if (key === lastShortageKey) return;
   lastShortageKey = key;
   alerts.innerHTML = '';
-  for (const m of msgs.slice(0, 3)) {
-    alerts.append(el('div', 'alert' + (m.warn ? ' warn' : ''), m.t));
+  for (const m of msgs.slice(0, 4)) {
+    alerts.append(el('div', 'alert' + (m.warn ? ' warn' : '') + (m.proj ? ' project' : ''), m.t));
   }
+}
+// Celebrate any national project the player just finished (engine flags them).
+function flushProjectToasts() {
+  const done = G.state && G.state.justCompleted;
+  if (!done || !done.length) return;
+  for (const title of done) toast(`🎉 National project complete — ${title}! The nation reaps the reward.`);
+  G.state.justCompleted = [];
 }
 
 function setSpeed(s) {
@@ -396,6 +410,8 @@ function onTileTap(x, y) {
 
 function afterEdit() {
   G.dirty = true;
+  checkProjects(G.state);   // building may have just finished a national project
+  flushProjectToasts();
   refreshSummary(G.state);
   updateHud(G.state, G.readOnly);
   updateShortages();
@@ -758,10 +774,15 @@ function showEvent() {
     b.onclick = () => {
       resolveEvent(G.state, i);
       $('event-modal').classList.add('hidden');
-      if (G.view) G.view.syncConstruction(G.state); // show anything the decision just started building
+      if (G.view) G.view.syncConstruction(G.state); // show anything the decision built itself (e.g. emergency hospital)
       afterEdit();
       const opt = ev.choice.options[i];
       if (opt && opt.fx && opt.fx.spawn) toast('🏗 Works approved — construction has begun on the map.');
+      if (opt && opt.fx && opt.fx.project) {       // a guided build task: point the player at the Build menu
+        const p = opt.fx.project;
+        toast(`📋 National project: ${p.title}. ${p.hint}.`);
+        openPanel('build');
+      }
       setSpeed(G.prevSpeed || 1);
     };
     actions.append(b);

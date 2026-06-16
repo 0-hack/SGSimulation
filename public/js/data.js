@@ -137,6 +137,12 @@ export const BUILDINGS = {
     power: -2, water: 80, pollution: -2, happiness: 3,
     desc: 'Catches rainwater. Cheap and clean, but limited by the weather.',
   },
+  reservoir_big: {
+    name: 'Major Reservoir', cat: 'water', icon: '🌊', color: '#3f86c4',
+    cost: 90, upkeep: 1.5, year: 1965, homes: 0, jobs: 40,
+    power: -4, water: 260, pollution: -3, happiness: 6, health: 4,
+    desc: 'A large dammed reservoir — the kind that grew into MacRitchie, Upper Seletar and, later, the Marina Barrage. A strategic store of fresh water that weans the nation off imported supply.',
+  },
   desal: {
     name: 'Desalination Plant', cat: 'water', icon: '🌊', color: '#2f6f9f',
     cost: 150, upkeep: 4.5, year: 1990, homes: 0, jobs: 120,
@@ -206,6 +212,12 @@ export const BUILDINGS = {
     cost: 100, upkeep: 2.0, year: 1987, homes: 0, jobs: 200,
     power: -20, water: -4, pollution: -3, happiness: 8, education: 0,
     desc: 'Mass Rapid Transit. Cuts congestion and pollution, and boosts happiness citywide.',
+  },
+  mrt_line: {
+    name: 'Elevated MRT Viaduct', cat: 'civic', icon: '🚝', color: '#aab6c0',
+    cost: 70, upkeep: 1.5, year: 1987, homes: 0, jobs: 120,
+    power: -10, water: -2, pollution: -5, happiness: 6,
+    desc: 'A length of elevated guideway carrying the trains over the city on concrete viaducts. Links the stations into a network — speeds commutes, takes cars off the road and clears the air.',
   },
 
   mall: {
@@ -493,15 +505,11 @@ export const HISTORICAL_EVENTS = [
     choice: {
       prompt: 'How do you respond?',
       options: [
-        { label: 'Build the Jurong Industrial Estate', fx: { treasury: -90, jobsBoost: 0.04, approval: 5, growth: 0.02, spawn: [
-          { key: 'port',       cx: 0.128, cy: 0.432 }, // Jurong Port — deep-water wharves on the SW coast
-          { key: 'godown',     cx: 0.142, cy: 0.440 }, // wharf godowns
-          { key: 'processing', cx: 0.152, cy: 0.458 }, // heavy industry (shipyard / steel mill)
-          { key: 'factory',    cx: 0.166, cy: 0.452 }, // the planned factory estate, laid out along the roads
-          { key: 'factory',    cx: 0.178, cy: 0.462 },
-          { key: 'hdb_flat',   cx: 0.190, cy: 0.476 }, // Taman Jurong — housing for the workers
-          { key: 'school',     cx: 0.200, cy: 0.470 }, // Jurong Town amenities
-        ] } },
+        { label: 'Industrialise — build the Jurong Estate', fx: { treasury: -20, approval: 2,
+          project: { id: 'jurong', title: 'Build the Jurong Industrial Estate',
+            hint: 'On the SW coast build Jurong Port, the Rubber & Tin works and 2 Factories',
+            need: [{ key: 'port', count: 1 }, { key: 'processing', count: 1 }, { key: 'factory', count: 2 }],
+            reward: { jobsBoost: 0.05, growth: 0.02, approval: 5 } } } },
         { label: 'Austerity & caution', fx: { treasury: 20, approval: -4 } },
       ],
     },
@@ -517,10 +525,10 @@ export const HISTORICAL_EVENTS = [
     choice: {
       prompt: 'Approve the MRT?',
       options: [
-        { label: 'Build the MRT (-$200M)', fx: { treasury: -200, unlock: 'mrt', approval: 6, growth: 0.03, spawn: [
-          { key: 'mrt', cx: 0.452, cy: 0.402 },
-          { key: 'mrt', cx: 0.430, cy: 0.470 },
-        ] } },
+        { label: 'Approve the MRT — build the network', fx: { treasury: -30, approval: 2, unlockMany: ['mrt', 'mrt_line'],
+          project: { id: 'mrt', title: 'Build the MRT network',
+            hint: 'Place 3 MRT Stations and 2 Elevated Viaducts — now in Build › Services',
+            need: [{ key: 'mrt', count: 3 }, { key: 'mrt_line', count: 2 }], reward: { approval: 8, growth: 0.03 } } } },
         { label: 'Buses are enough', fx: { approval: -3 } },
       ],
     },
@@ -531,12 +539,10 @@ export const HISTORICAL_EVENTS = [
     choice: {
       prompt: 'Develop the reclaimed land as…',
       options: [
-        { label: 'A new HDB town + seaside park', fx: { treasury: -120, approval: 6, growth: 0.02, spawn: [
-          { key: 'hdb_newtown', cx: 0.622, cy: 0.498 },
-          { key: 'hdb_flat', cx: 0.640, cy: 0.486 },
-          { key: 'park', cx: 0.604, cy: 0.486 },
-          { key: 'market', cx: 0.628, cy: 0.480 },
-        ] } },
+        { label: 'Develop a new HDB town there', fx: { treasury: -20, approval: 2,
+          project: { id: 'east_coast', title: 'Develop the East Coast',
+            hint: 'On the new east-coast land build an HDB New Town and a seaside Park',
+            need: [{ key: 'hdb_newtown', count: 1 }, { key: 'park', count: 1 }], reward: { approval: 6, growth: 0.02 } } } },
         { label: 'Hold it in reserve for now', fx: { approval: -2 } },
       ],
     },
@@ -588,9 +594,10 @@ export const RANDOM_EVENTS = [
     choice: {
       prompt: 'Offer them a deal?',
       options: [
-        { label: 'Generous tax holiday', fx: { treasury: -30, jobsBoost: 0.06, incomeMult: 0.05, approval: 3, spawn: [
-          { key: 'factory', cx: 0.215, cy: 0.455 },
-        ] } },
+        { label: 'Generous tax holiday', fx: { treasury: -30, incomeMult: 0.05, approval: 3,
+          project: { id: 'fdi', title: 'Host the electronics multinational',
+            hint: 'Build a Factory for the MNC to set up in',
+            need: [{ key: 'factory', count: 1 }], reward: { jobsBoost: 0.06 } } } },
         { label: 'Decline', fx: {} },
       ],
     },
@@ -611,10 +618,10 @@ export const RANDOM_EVENTS = [
     choice: {
       prompt: 'Secure the water supply?',
       options: [
-        { label: 'Build local water (reservoir + mains)', fx: { treasury: -40, approval: 5, spawn: [
-          { key: 'reservoir', cx: 0.395, cy: 0.520 },
-          { key: 'standpipe', cx: 0.418, cy: 0.502 },
-        ] } },
+        { label: 'Invest in water self-sufficiency', fx: { treasury: -15, approval: 2, unlockMany: ['reservoir_big'],
+          project: { id: 'water', title: 'Achieve water self-sufficiency',
+            hint: 'Build a Major Reservoir and 2 sets of Water Mains — now in Build › Water',
+            need: [{ key: 'reservoir_big', count: 1 }, { key: 'standpipe', count: 2 }], reward: { approval: 6 } } } },
         { label: 'Keep relying on imports', fx: { approval: -4 } },
       ],
     },

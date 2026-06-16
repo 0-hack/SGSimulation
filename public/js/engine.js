@@ -76,6 +76,8 @@ export function newGame({ name = 'New Singapore', owner = 'Anonymous' } = {}) {
     economy: { inflation: 0.02, priceIndex: 1, currency: 1 }, // dynamic inflation / price level / SGD strength
     constructing: [],         // [x,y] cells whose building is still being built
     landmarks: [],            // 3D-designed landmarks saved into THIS world (per-player; for build menu + visitors)
+    projects: [],             // active guided national projects the player is building toward
+    projectsDone: [],         // ids of completed national projects
     roadworks: [],            // routes (road/rail/air) drawn on the map, still under construction
     railways: [],             // finished player-drawn railway lines (polylines of {x,z})
     airstrips: [],            // finished player-drawn airport runways (polylines of {x,z})
@@ -151,6 +153,8 @@ export function ensureGrid(state) {
   if (!Array.isArray(state.reclaimAreas)) state.reclaimAreas = [];
   if (!Array.isArray(state.reclaimedAreas)) state.reclaimedAreas = [];
   if (!Array.isArray(state.landmarks)) state.landmarks = [];
+  if (!Array.isArray(state.projects)) state.projects = [];
+  if (!Array.isArray(state.projectsDone)) state.projectsDone = [];
   if (!Array.isArray(state.roadworks)) state.roadworks = [];
   if (!Array.isArray(state.railways)) state.railways = [];
   if (!Array.isArray(state.airstrips)) state.airstrips = [];
@@ -704,8 +708,64 @@ function applyEffects(state, fx, d) {
     state.perks.jobsBoost += fx.jobsBoost || 0;
     state.perks.incomeMult += fx.incomeMult || 0;
   }
-  if (fx.spawn) spawnDevelopment(state, fx.spawn); // a decision that physically builds on the map
+  if (fx.unlockMany) for (const k of fx.unlockMany) state.unlocked[k] = true;
+  if (fx.spawn) spawnDevelopment(state, fx.spawn); // a decision the government builds itself (e.g. an emergency hospital)
+  if (fx.project) startProject(state, fx.project, d); // a decision the PLAYER is guided to build
 }
+
+// ---------------------------------------------------------------------------
+// Guided national projects — instead of teleporting buildings in, a decision can
+// UNLOCK the needed building types and set a tracked build task ("build 3 MRT
+// stations + 2 viaducts"). The player builds them (so they cost money and feed the
+// economy like anything else); finishing the checklist pays a national reward.
+// ---------------------------------------------------------------------------
+function startProject(state, p, d) {
+  if (!p || !p.id) return;
+  if (!Array.isArray(state.projects)) state.projects = [];
+  if (!Array.isArray(state.projectsDone)) state.projectsDone = [];
+  if (state.projects.some((x) => x.id === p.id) || state.projectsDone.includes(p.id)) return;
+  const dd = d || derive(state);
+  const base = {};
+  for (const n of (p.need || [])) { state.unlocked[n.key] = true; base[n.key] = (dd.counts && dd.counts[n.key]) || 0; }
+  state.projects.push({
+    id: p.id, title: p.title, hint: p.hint || '',
+    need: (p.need || []).map((n) => ({ key: n.key, count: n.count })),
+    base, reward: p.reward || null,
+  });
+}
+// Per-project progress for the UI: how many of each required building are built
+// SINCE the project began (so pre-existing buildings don't auto-complete it).
+export function projectProgress(state, d) {
+  if (!state || !Array.isArray(state.projects)) return [];
+  const dd = d || derive(state);
+  return state.projects.map((pr) => {
+    const items = pr.need.map((n) => {
+      const have = Math.max(0, ((dd.counts[n.key] || 0) - (pr.base[n.key] || 0)));
+      return { key: n.key, have: Math.min(have, n.count), count: n.count };
+    });
+    return { id: pr.id, title: pr.title, hint: pr.hint, items, done: items.every((it) => it.have >= it.count) };
+  });
+}
+// Complete any project whose checklist is met: pay the reward, log it, retire it.
+function updateProjects(state, d) {
+  if (!state.projects || !state.projects.length) return;
+  const prog = projectProgress(state, d);
+  const done = new Set(prog.filter((p) => p.done).map((p) => p.id));
+  if (!done.size) return;
+  const still = [];
+  for (const pr of state.projects) {
+    if (done.has(pr.id)) {
+      (state.projectsDone || (state.projectsDone = [])).push(pr.id);
+      if (pr.reward) applyEffects(state, pr.reward, d);
+      state.lastProjectDone = pr.title;
+      (state.justCompleted || (state.justCompleted = [])).push(pr.title); // for the UI to celebrate
+      logEvent(state, `National project complete — ${pr.title}.`);
+    } else still.push(pr);
+  }
+  state.projects = still;
+}
+// Re-check projects immediately (called by the UI right after the player builds).
+export function checkProjects(state) { updateProjects(state, derive(state)); return state.lastProjectDone; }
 
 // Drop a government development onto the map when the player accepts a proposal
 // (e.g. converting the British bases into the Jurong industrial estate). Each item
@@ -872,6 +932,7 @@ export function tickDay(state) {
   advanceRoadworks(state);    // tick drawn roads/railways toward completion
 
   const d = derive(state);
+  updateProjects(state, d); // a guided national project may have just been finished
 
   // Smooth daily drift so meters visibly move between monthly settlements.
   state.approval = clamp(approach(state.approval, approvalTarget(state, d), 0.02), 0, 100);

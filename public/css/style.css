@@ -217,6 +217,7 @@ body.edit-mode #city {
   box-shadow: none; text-shadow: 0 1px 4px rgba(0,0,0,0.9), 0 0 3px rgba(0,0,0,0.85);
 }
 .alert.warn { color: var(--warn); border-color: transparent; }
+.alert.project { color: #ffd86b; } /* national build project — guidance, not a warning */
 
 .cam-hint {
   position: absolute; left: 50%; top: 64px; transform: translateX(-50%);

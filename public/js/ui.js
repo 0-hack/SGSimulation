@@ -1,6 +1,6 @@
 // UI rendering helpers: builds the contents of each bottom sheet/panel.
 // Returns DOM and wires callbacks; keeps main.js focused on orchestration.
-import { BUILDINGS, CATEGORIES, POLICIES, POP_SCALE, THEMES, ROAD_TYPES } from './data.js';
+import { BUILDINGS, CATEGORIES, POLICIES, POP_SCALE, THEMES, ROAD_TYPES, SANDBOX } from './data.js';
 import { derive, isUnlocked, formatDate, debtCeiling, bondRate, reclaimCost, buildingCost, buildDays, priceIndex, inflationRate, currencyStrength } from './engine.js';
 import { ICONS, CAT_ICON } from './icons.js';
 
@@ -310,7 +310,7 @@ export function renderDash(state, ctx = {}) {
     bar.innerHTML = `<i style="width:${Math.min(100, ceil ? debt / ceil * 100 : 0)}%;background:${debt / ceil > 0.8 ? 'var(--bad)' : 'var(--warn)'}"></i>`;
     fin.append(bar);
     const frow = el('div', 'fin-actions');
-    for (const amt of [100, 250, 500]) {
+    for (const amt of (SANDBOX ? [500, 5000, 50000] : [100, 250, 500])) { // sandbox: big denominations for quick test cash
       const b = el('button', 'btn tiny', `Issue ${money(amt)}`);
       if (amt > room + 0.5) { b.disabled = true; b.style.opacity = '0.4'; }
       b.onclick = () => ctx.borrow(amt);

@@ -10,6 +10,14 @@ export const WORLD_SIZE = 1600; // world units across the island bounding box �
 // Each "citizen" in state represents ~10 real people; display multiplies by 10.
 export const POP_SCALE = 10;
 
+// ───────────────────────────────────────────────────────────────────────────
+// SANDBOX / TEST MODE. When true: bond issuance is UNLIMITED (no debt ceiling,
+// no interest) and EVERY building is unlocked and buildable from 1965 — so you can
+// raise any amount of cash and review every building. Set back to `false` for the
+// normal, balanced game.
+// ───────────────────────────────────────────────────────────────────────────
+export const SANDBOX = true;
+
 // ---------------------------------------------------------------------------
 // BUILDINGS
 // Positive power/water = generates; negative = consumes.

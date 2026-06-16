@@ -13,7 +13,7 @@ import {
   updateHud, renderBuild, renderPolicy, renderDash, renderNews,
   money, num, pct, el,
 } from './ui.js';
-import { BUILDINGS, CATEGORIES, POP_SCALE, ROAD_TYPES, landmarkToBuilding } from './data.js';
+import { BUILDINGS, CATEGORIES, POP_SCALE, ROAD_TYPES, landmarkToBuilding, SANDBOX } from './data.js';
 import { loadLibrary } from './landmarks.js';
 import { injectIcons, ICONS, WEATHER } from './icons.js';
 
@@ -75,7 +75,7 @@ const G = {
 // ===========================================================================
 // Boot
 // ===========================================================================
-const BUILD = '2026-06-15 · functional-1965-city v35';
+const BUILD = '2026-06-16 · guided-projects v36' + (SANDBOX ? ' · 🧪 SANDBOX' : '');
 function boot() {
   console.log('%cSG build: ' + BUILD, 'font-weight:bold;color:#11a39c');
   const vEl = document.querySelector('.version'); if (vEl) vEl.textContent = 'build ' + BUILD;

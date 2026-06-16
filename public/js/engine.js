@@ -2,7 +2,7 @@
 // Pure-ish logic (no DOM) so it can be unit-tested in Node as well.
 import {
   BUILDINGS, POLICIES, START_DATE, GRID_SIZE, POP_SCALE,
-  HISTORICAL_EVENTS, RANDOM_EVENTS,
+  HISTORICAL_EVENTS, RANDOM_EVENTS, SANDBOX,
 } from './data.js';
 import { onLand, inReservoir, inRiver } from './shape.js';
 import { ROAD_NODES_1966, ROAD_EDGES_1966 } from './roads1966.js';
@@ -201,6 +201,7 @@ export function canPlace(state, x, y, key) {
 export function isUnlocked(state, key) {
   const b = BUILDINGS[key];
   if (!b) return false;
+  if (SANDBOX) return true;              // test mode: every building buildable from the start
   if (state.unlocked[key]) return true;
   return state.date.y >= b.year;
 }
@@ -546,6 +547,7 @@ function advanceRoadworks(state) {
 // ---------------------------------------------------------------------------
 // Annual coupon rate rises with how much of the borrowing limit is used (credit risk).
 export function bondRate(state) {
+  if (SANDBOX) return 0;                 // test mode: unlimited, interest-free borrowing
   const ceil = debtCeiling(state);
   const util = ceil > 0 ? Math.min(1, (state.debt || 0) / ceil) : 1;
   // Fisher: nominal yield ≈ real rate + inflation + credit-risk premium.
@@ -553,6 +555,7 @@ export function bondRate(state) {
 }
 // How much the government can owe — scales with the economy (annual revenue) & population.
 export function debtCeiling(state) {
+  if (SANDBOX) return 1e9;               // test mode: effectively unlimited bond issuance
   const annualRev = (state.lastFinance?.grossIncome || 0) * 12;
   const pop = (state.population || 0) * POP_SCALE;
   return Math.round(Math.max(400, annualRev * 3 + pop * 0.002));

@@ -758,7 +758,10 @@ function showEvent() {
     b.onclick = () => {
       resolveEvent(G.state, i);
       $('event-modal').classList.add('hidden');
+      if (G.view) G.view.syncConstruction(G.state); // show anything the decision just started building
       afterEdit();
+      const opt = ev.choice.options[i];
+      if (opt && opt.fx && opt.fx.spawn) toast('🏗 Works approved — construction has begun on the map.');
       setSpeed(G.prevSpeed || 1);
     };
     actions.append(b);

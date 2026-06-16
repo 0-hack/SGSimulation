@@ -704,6 +704,35 @@ function applyEffects(state, fx, d) {
     state.perks.jobsBoost += fx.jobsBoost || 0;
     state.perks.incomeMult += fx.incomeMult || 0;
   }
+  if (fx.spawn) spawnDevelopment(state, fx.spawn); // a decision that physically builds on the map
+}
+
+// Drop a government development onto the map when the player accepts a proposal
+// (e.g. converting the British bases into the Jurong industrial estate). Each item
+// { key, cx, cy } lands on the nearest free land cell and rises as a construction
+// site, so the decision is VISIBLE and feeds the economy (jobs/income) once built.
+function spawnDevelopment(state, list) {
+  if (!Array.isArray(state.constructing)) state.constructing = [];
+  state.govBuilt = state.govBuilt || []; // cells added by events (so the view can pick them up)
+  for (const s of (list || [])) {
+    const b = BUILDINGS[s.key]; if (!b) continue;
+    const gx0 = Math.round((s.cx ?? 0.5) * GRID_SIZE), gy0 = Math.round((s.cy ?? 0.5) * GRID_SIZE);
+    const cell = nearestBuildableCell(state, gx0, gy0, 18); if (!cell) continue;
+    const days = buildDays(b);
+    state.grid[cell.y][cell.x] = { k: s.key, gov: true, build: { total: days, left: days } };
+    state.constructing.push([cell.x, cell.y]);
+    state.govBuilt.push([cell.x, cell.y]);
+  }
+}
+// Nearest empty Singapore-land grid cell to (gx,gy) within `rad` (ring search).
+function nearestBuildableCell(state, gx, gy, rad) {
+  for (let d = 0; d <= rad; d++) for (let oy = -d; oy <= d; oy++) for (let ox = -d; ox <= d; ox++) {
+    if (d > 0 && Math.max(Math.abs(ox), Math.abs(oy)) !== d) continue;
+    const x = gx + ox, y = gy + oy;
+    if (x < 0 || y < 0 || x >= GRID_SIZE || y >= GRID_SIZE) continue;
+    if (!state.grid[y][x] && isLandCell(x, y)) return { x, y };
+  }
+  return null;
 }
 
 function checkHistorical(state) {

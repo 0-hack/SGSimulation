@@ -493,7 +493,11 @@ export const HISTORICAL_EVENTS = [
     choice: {
       prompt: 'How do you respond?',
       options: [
-        { label: 'Convert bases to industry (Jurong)', fx: { treasury: -20, jobsBoost: 0.08, approval: 4 } },
+        { label: 'Convert bases to industry (Jurong)', fx: { treasury: -40, jobsBoost: 0.05, approval: 4, spawn: [
+          { key: 'factory', cx: 0.190, cy: 0.450 },
+          { key: 'factory', cx: 0.206, cy: 0.468 },
+          { key: 'godown', cx: 0.168, cy: 0.488 },
+        ] } },
         { label: 'Austerity & caution', fx: { treasury: 20, approval: -4 } },
       ],
     },
@@ -509,7 +513,10 @@ export const HISTORICAL_EVENTS = [
     choice: {
       prompt: 'Approve the MRT?',
       options: [
-        { label: 'Build the MRT (-$200M)', fx: { treasury: -200, unlock: 'mrt', approval: 6, growth: 0.03 } },
+        { label: 'Build the MRT (-$200M)', fx: { treasury: -200, unlock: 'mrt', approval: 6, growth: 0.03, spawn: [
+          { key: 'mrt', cx: 0.452, cy: 0.402 },
+          { key: 'mrt', cx: 0.430, cy: 0.470 },
+        ] } },
         { label: 'Buses are enough', fx: { approval: -3 } },
       ],
     },
@@ -558,7 +565,9 @@ export const RANDOM_EVENTS = [
     choice: {
       prompt: 'Offer them a deal?',
       options: [
-        { label: 'Generous tax holiday', fx: { treasury: -30, jobsBoost: 0.06, incomeMult: 0.05, approval: 3 } },
+        { label: 'Generous tax holiday', fx: { treasury: -30, jobsBoost: 0.06, incomeMult: 0.05, approval: 3, spawn: [
+          { key: 'factory', cx: 0.215, cy: 0.455 },
+        ] } },
         { label: 'Decline', fx: {} },
       ],
     },

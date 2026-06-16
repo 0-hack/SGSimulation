@@ -17,7 +17,7 @@ try {
 
   // the elevated toggle is offered for road, railway AND airport
   await p.click('.tool[data-panel="build"]'); await p.waitForSelector('.cat-tab');
-  await p.evaluate(()=>[...document.querySelectorAll('.cat-tab')].find(t=>/Roads/.test(t.textContent)).click());
+  await p.evaluate(()=>[...document.querySelectorAll('.cat-tab')].find(t=>/Transport/.test(t.textContent)).click());
   await p.waitForSelector('.road-tool');
   const toggles = await p.evaluate(()=>{
     const out={};

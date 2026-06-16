@@ -20,8 +20,11 @@ try {
   const r = await p.evaluate(async ()=>{
     const v=window.__sgview, N=v.land.length;
     const { derive } = await import('/js/engine.js');
-    // the FUNCTIONAL 1965 buildings (named landmarks seeded into the economy)
-    const placements = v.heritagePlacements || [];
+    // The FUNCTIONAL 1965 buildings = named landmarks seeded into the economy (not the
+    // decorative town shophouses, which carry no economy and are demolishable).
+    const all = v.heritagePlacements || [];
+    const placements = all.filter(p=>!p.decor);
+    const fill = all.filter(p=>p.decor).length;       // real, demolishable town shophouses
     const placed = placements.length;
     let onLand=0, inGrid=0, blocked=0, dup=0;
     for(const pl of placements){
@@ -32,10 +35,11 @@ try {
       if(v.buildings.has(`${pl.gx},${pl.gy}`)) dup++;  // not double-drawn by the grid pass
     }
     const named = placements.filter(pl=>v.heritageAt(pl.gx,pl.gy)).length;
+    // a decorative shophouse can be demolished (removeHeritageVisual frees the cell)
+    let demolished=false; if(all.find(p=>p.decor)){ const dc=all.find(p=>p.decor); demolished = v.removeHeritageVisual(dc.gx,dc.gy) && !v.heritageMask[dc.gy][dc.gx]; }
     const masked = v.heritageMask ? v.heritageMask.flat().filter(Boolean).length : 0;
-    const fill = v._urbanFillCount || 0;                  // decorative dense-town blocks
     const d = derive(v.state);
-    return { placed, masked, fill, onLand, blocked, inGrid, named, dup,
+    return { placed, masked, fill, onLand, blocked, inGrid, named, dup, demolished,
       homes:d.homes, jobs:Math.round(d.jobs), powerRatio:+d.powerRatio.toFixed(2), waterRatio:+d.waterRatio.toFixed(2),
       pressure:+d.housingPressure.toFixed(2), unemp:+d.unemployment.toFixed(3), pop:v.state.population };
   });
@@ -45,7 +49,8 @@ try {
   ok(r.named >= 18, `landmarks carry names for inspection (${r.named} named)`);
   ok(r.inGrid === r.placed, `every landmark is a real grid cell (${r.inGrid}/${r.placed})`);
   ok(r.dup === 0, 'heritage is drawn once — not duplicated by the grid mesh pass');
-  ok(r.fill >= 1500, `the urban districts are packed dense with shophouse blocks (${r.fill} blocks)`);
+  ok(r.fill >= 200, `the central districts are filled with real, demolishable shophouses (${r.fill})`);
+  ok(r.demolished, 'a town shophouse can be demolished (its cell is freed)');
   ok(r.homes > 0 && r.jobs > 0, `the city functions: houses & employs people (homes ${r.homes}, jobs ${r.jobs})`);
   ok(r.powerRatio >= 1 && r.waterRatio >= 1, `the city is powered & watered from day one (power ${r.powerRatio}×, water ${r.waterRatio}×)`);
   ok(r.pressure <= 1.1, `the starting population is housed (pressure ${r.pressure}, pop ${r.pop})`);

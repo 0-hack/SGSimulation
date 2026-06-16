@@ -30,7 +30,7 @@ try {
   // --- ROAD: Build → Roads → Draw, then drag a freehand road -----------------
   await p.click('.tool[data-panel="build"]');
   await p.waitForSelector('.cat-tab');
-  await p.evaluate(() => [...document.querySelectorAll('.cat-tab')].find((t) => /Roads/.test(t.textContent)).click());
+  await p.evaluate(() => [...document.querySelectorAll('.cat-tab')].find((t) => /Transport/.test(t.textContent)).click());
   await p.waitForSelector('.road-tool');
   await p.evaluate(() => [...document.querySelectorAll('.road-tool')].find((b) => /Draw/.test(b.textContent)).click());
   await sleep(150);
@@ -53,7 +53,7 @@ try {
 
   // --- SNAP: in Draw mode, hover an existing road end -> "start here" ring ----
   await p.click('.tool[data-panel="build"]');
-  await p.evaluate(() => [...document.querySelectorAll('.cat-tab')].find((t) => /Roads/.test(t.textContent)).click());
+  await p.evaluate(() => [...document.querySelectorAll('.cat-tab')].find((t) => /Transport/.test(t.textContent)).click());
   await p.waitForSelector('.road-tool');
   await p.evaluate(() => [...document.querySelectorAll('.road-tool')].find((b) => /Draw/.test(b.textContent)).click());
   // top-down so the on-screen point sits right over the road on the ground plane

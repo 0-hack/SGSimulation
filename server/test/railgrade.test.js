@@ -29,7 +29,7 @@ try {
 
   // draw a railway over the hill → commit bar shows the flatten breakdown, single Build
   await p.click('.tool[data-panel="build"]'); await p.waitForSelector('.cat-tab');
-  await p.evaluate(()=>[...document.querySelectorAll('.cat-tab')].find(t=>/Roads/.test(t.textContent)).click());
+  await p.evaluate(()=>[...document.querySelectorAll('.cat-tab')].find(t=>/Transport/.test(t.textContent)).click());
   await p.waitForSelector('.road-tool');
   await p.evaluate(()=>[...document.querySelectorAll('.road-types .opt')].find(b=>/Railway/.test(b.textContent))?.click());
   await p.evaluate(()=>[...document.querySelectorAll('.road-tool')].find(b=>/Draw/.test(b.textContent))?.click());

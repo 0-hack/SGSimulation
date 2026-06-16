@@ -16,7 +16,7 @@ try {
   await p.click('#btn-new'); await p.waitForSelector('#game:not(.hidden)');
 
   const openRoads = async () => { await p.click('.tool[data-panel="build"]'); await p.waitForSelector('.cat-tab');
-    await p.evaluate(()=>[...document.querySelectorAll('.cat-tab')].find(t=>/Roads/.test(t.textContent)).click()); await p.waitForSelector('.road-tool'); };
+    await p.evaluate(()=>[...document.querySelectorAll('.cat-tab')].find(t=>/Transport/.test(t.textContent)).click()); await p.waitForSelector('.road-tool'); };
   await openRoads();
   const labels = await p.evaluate(()=>[...document.querySelectorAll('.road-tool span:last-child')].map(s=>s.textContent.trim()));
   ok(labels.some(l=>/Straight/.test(l)) && labels.filter(l=>/Curve/.test(l)).length===2, `piece tools shown (Straight + two Curves): ${JSON.stringify(labels)}`);

@@ -14,7 +14,7 @@ try {
   await p.goto(base,{waitUntil:'networkidle0'});
   await p.click('#btn-new'); await p.waitForSelector('#game:not(.hidden)');
   const openRoads = async () => { await p.click('.tool[data-panel="build"]'); await p.waitForSelector('.cat-tab');
-    await p.evaluate(()=>[...document.querySelectorAll('.cat-tab')].find(t=>/Roads/.test(t.textContent)).click()); await p.waitForSelector('.road-tool'); };
+    await p.evaluate(()=>[...document.querySelectorAll('.cat-tab')].find(t=>/Transport/.test(t.textContent)).click()); await p.waitForSelector('.road-tool'); };
 
   // (1) confirming a build exits the tool — no ghost left hovering
   await openRoads();

@@ -377,8 +377,12 @@ function onTileTap(x, y) {
   const b = G.build;
   if (b.bulldoze) {
     const here = G.state.grid[y]?.[x];
-    if (here && here.heritage) { toast(`🏛 ${here.name || 'A 1965 landmark'} — this heritage building can't be demolished.`); return; }
-    if (demolish(G.state, x, y)) { G.view.onDemolished(x, y); afterEdit(); toast('Demolished.'); }
+    if (here) {                                    // a real grid building (player-built OR an economy landmark)
+      const name = here.heritage ? (here.name || BUILDINGS[here.k]?.name) : BUILDINGS[here.k]?.name;
+      if (demolish(G.state, x, y)) { G.view.onDemolished(x, y); if (here.heritage) G.view.removeHeritageVisual(x, y); afterEdit(); toast(`Demolished ${name || 'building'}.`); }
+      return;
+    }
+    if (G.view.removeHeritageVisual && G.view.removeHeritageVisual(x, y)) { afterEdit(); toast('Demolished.'); return; } // decorative town shophouse (not in the economy)
     return;
   }
   const heritage = G.view.heritageAt && G.view.heritageAt(x, y);
@@ -424,7 +428,7 @@ function afterEdit() {
 function activeTool() {
   if (G.readOnly) return null;
   if (G.build.selected && BUILDINGS[G.build.selected]) return { verb: 'build', label: BUILDINGS[G.build.selected].name };
-  if (G.build.bulldoze) return { verb: 'remove', label: '🚜 Bulldoze' };
+  if (G.build.bulldoze) return { verb: 'remove', label: '🚜 Demolish' };
   if (G.reclaim.active) return { verb: 'fill with land', label: '🏝 Reclaim' };
   if (G.road.tool) return { verb: 'draw', label: '🛣 Road · ' + G.road.tool };
   return null;
@@ -720,7 +724,7 @@ function refreshPanel() {
         G.road.tool = null; G.view.setRoadMode(false); G.view.showRoadPreview([]);
         G.view.setBulldoze(G.build.bulldoze);
         refreshPanel();
-        if (G.build.bulldoze) { closeSheet(); toast('Bulldoze mode: tap buildings to remove. ✕ Done / Esc to stop.'); }
+        if (G.build.bulldoze) { closeSheet(); toast('Demolish mode: tap any building to remove it. ✕ Done / Esc to stop.'); }
         updateToolBanner();
       },
     }));

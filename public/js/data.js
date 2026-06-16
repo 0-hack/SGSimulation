@@ -30,7 +30,7 @@ export const CATEGORIES = [
   { id: 'civic', name: 'Services', icon: '🏥' },
   { id: 'green', name: 'Environment', icon: '🌳' },
   { id: 'leisure', name: 'Coast & Leisure', icon: '⛱️' },
-  { id: 'roads', name: 'Roads', icon: '🛣️' },
+  { id: 'roads', name: 'Transport', icon: '🛣️' },
   { id: 'land', name: 'Reclaim', icon: '🏝️' },
 ];
 

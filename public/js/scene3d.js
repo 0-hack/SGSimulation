@@ -979,18 +979,21 @@ export class Scene3D {
   // A tiny shophouse facade drawn once to a canvas and shared by every fill block
   // (tinted per-instance): two floors of shuttered windows over a ground-floor
   // shopfront and door. Cheap detail so the town isn't a field of blank boxes.
-  _fillFacadeTexture() {
-    if (this._facadeTex) return this._facadeTex;
-    const cv = document.createElement('canvas'); cv.width = 48; cv.height = 72; const g = cv.getContext('2d');
-    g.fillStyle = '#ffffff'; g.fillRect(0, 0, 48, 72);                       // wall (tinted per-instance)
-    g.fillStyle = 'rgba(48,58,68,0.9)';                                      // windows (dark glass)
-    for (const fy of [8, 28]) for (const wx of [7, 27]) g.fillRect(wx, fy, 14, 13);
-    g.strokeStyle = 'rgba(110,100,85,0.55)'; g.lineWidth = 2;                // floor string-courses
-    g.beginPath(); g.moveTo(0, 25); g.lineTo(48, 25); g.moveTo(0, 47); g.lineTo(48, 47); g.stroke();
-    g.fillStyle = 'rgba(38,30,24,0.92)'; g.fillRect(4, 50, 40, 20);          // ground-floor shopfront
-    g.fillStyle = 'rgba(80,63,46,0.95)'; g.fillRect(20, 55, 10, 15);         // door
-    const t = new THREE.CanvasTexture(cv); if ('SRGBColorSpace' in THREE) t.colorSpace = THREE.SRGBColorSpace;
-    this._facadeTex = t; return t;
+  // A small real shophouse for the dense 1966 town: a narrow-front, deep rectangular
+  // body with a window band that GLOWS at night, a clay roof and a street door.
+  // Shares materials so hundreds of them stay cheap, and is an individual mesh so the
+  // player can DEMOLISH each one. (Built via the heritage system; not in the economy.)
+  _makeFillShophouse(wallMat, h) {
+    const g = new THREE.Group();
+    // Built at world scale (~one grid cell wide) so neighbouring cells abut into a
+    // continuous shophouse terrace — the side-by-side rows of the 1965 town centre.
+    const w = 2.3, d = 2.0;
+    g.add(partBox(w, h, d, wallMat, 0, h / 2, 0));                                 // body
+    g.add(partBox(w + 0.04, 0.66, d + 0.04, this._fillWinMat, 0, h * 0.64, 0));    // upper window band (glows at night)
+    g.add(partBox(w + 0.14, 0.32, d + 0.16, this._fillRoofMat, 0, h + 0.14, 0));   // clay roof slab
+    g.add(partBox(w * 0.5, 0.5, 0.08, this._fillWinMat, 0, h * 0.18, d / 2 + 0.03)); // lit shopfront
+    g.add(partBox(0.46, h * 0.34, 0.06, this._fillDoorMat, w * 0.28, h * 0.17, d / 2 + 0.05)); // street door
+    return g;
   }
   _fillUrbanDensity() {
     // [cx, cy, normalised radius, fill probability] — the dense built-up areas
@@ -1005,48 +1008,47 @@ export class Scene3D {
       [0.412, 0.400, 0.022, 0.82], // Tiong Bahru / Bukit Ho Swee
       [0.345, 0.423, 0.026, 0.66], // Queenstown surrounds
     ];
-    const cells = [];
-    for (const [dcx, dcy, rad, prob] of districts) {
+    // Fill each district SOLID (every eligible cell) so the shophouses form continuous
+    // terraces — packed rows, not a scatter. Real demolishable buildings are heavier than
+    // instanced blocks, so spend a fixed budget district-by-district: the inner town
+    // centres come out fully dense, outer fringes thin out once the budget is gone.
+    const MAX = 600;
+    const seen = new Set();
+    let cells = [];
+    for (const [dcx, dcy, rad] of districts) {
+      if (cells.length >= MAX) break;
       const rC = Math.max(1, Math.round(rad * N)), ccx = Math.round(dcx * N), ccy = Math.round(dcy * N);
       for (let y = ccy - rC; y <= ccy + rC; y++) for (let x = ccx - rC; x <= ccx + rC; x++) {
         if (x < 0 || y < 0 || x >= N || y >= N) continue;
         const nx = (x - ccx) / rC, ny = (y - ccy) / rC; if (nx * nx + ny * ny > 1) continue;
+        const key = y * N + x; if (seen.has(key)) continue;
         if (this.reserveMask?.[y]?.[x] || this.riverMask?.[y]?.[x]) continue;
         if (this.heritageMask[y][x]) continue;                          // already taken by a landmark
         if (!this._solidLand(x, y)) continue;                           // strictly inland — never on the shore
         if (this._roadMask && this._roadMask[y][x]) continue;           // off the carriageway (blocks front the street)
-        if (Math.random() > prob) continue;
-        cells.push([x, y]); this.heritageMask[y][x] = true;             // unbuildable historic town
+        seen.add(key); cells.push([x, y]);
       }
     }
     if (!cells.length) return;
-    const walls = [0xe8b04b, 0xd9694f, 0x6fae9e, 0xe2cd7a, 0xc97f9c, 0x7fa8c9, 0xcf8f5a, 0xb86b4a, 0xe7e0cf, 0xd6c08a];
-    const tiles = [0x9c4a36, 0xb15a3c, 0x8f4630, 0xa85a3a, 0x7d3f2c]; // terracotta roof shades
-    const bodyGeo = new THREE.BoxGeometry(1, 1, 1), roofGeo = new THREE.BoxGeometry(1.14, 0.26, 1.2);
-    const bodyMat = toon(0xffffff); bodyMat.map = this._fillFacadeTexture(); bodyMat.needsUpdate = true; // doors/windows on every block
-    const bodies = new THREE.InstancedMesh(bodyGeo, bodyMat, cells.length);
-    const roofs = new THREE.InstancedMesh(roofGeo, toon(0xffffff), cells.length);
-    bodies.castShadow = false; bodies.receiveShadow = false; roofs.castShadow = false; roofs.receiveShadow = false;
-    const pos = new THREE.Vector3(), q = new THREE.Quaternion(), scl = new THREE.Vector3(), m4 = new THREE.Matrix4(), col = new THREE.Color(), YA = new THREE.Vector3(0, 1, 0);
-    const rnd = (s) => { s = Math.sin(s) * 43758.5453; return s - Math.floor(s); }; // deterministic per-cell jitter
-    for (let i = 0; i < cells.length; i++) {
-      const [x, y] = cells[i], c = cellToWorld(x, y), hT = this.terrainHeight(x, y);
-      // orient PARALLEL to the nearest street (so the town reads as rows of shophouses,
-      // not a field of random boxes); a touch of jitter keeps it from looking stamped.
+    const pastels = [0xe8b04b, 0xd9694f, 0x6fae9e, 0xe2cd7a, 0xc97f9c, 0x7fa8c9, 0xcf8f5a, 0xb86b4a, 0xe7e0cf, 0xd6c08a];
+    this._fillWallMats = this._fillWallMats || pastels.map((c) => mat(c));         // shared, so hundreds stay cheap
+    this._fillWinMat = this._fillWinMat || reg(mat(0x2a3a48), 1.5);                // shared window band that lights up at night
+    this._fillRoofMat = this._fillRoofMat || mat(0xa85a3a);
+    this._fillDoorMat = this._fillDoorMat || mat(0x3a2c20);
+    const rnd = (s) => { s = Math.sin(s) * 43758.5453; return s - Math.floor(s); };
+    for (const [x, y] of cells) {
+      const c = cellToWorld(x, y), hT = this.terrainHeight(x, y);
+      const h = 2.4 + rnd(x * 6.1 + y * 1.3) * 1.4;                                // 2–3 storeys, varied
+      const m = this._makeFillShophouse(this._fillWallMats[(x * 5 + y * 3) % this._fillWallMats.length], h);
+      // Front the nearest street so neighbours line up into a terrace; tiny jitter only.
       const d = this._roadDir && this._roadDir[y][x];
-      const ang = (Number.isNaN(d) || d == null ? rnd(x * 12.9 + y * 78.2) * Math.PI : d) + (rnd(x * 3.1 + y * 7.7) - 0.5) * 0.16;
-      const w = 1.35 + rnd(x * 1.7 + y * 9.3) * 0.5, dp = 1.45 + rnd(x * 4.4 + y * 2.1) * 0.6; // small footprint, fronts the street
-      const h = 1.9 + rnd(x * 6.1 + y * 1.3) * 2.6;                                          // 1–3 storeys
-      q.setFromAxisAngle(YA, ang);
-      pos.set(c.x, hT + h / 2, c.z); scl.set(w, h, dp); m4.compose(pos, q, scl); bodies.setMatrixAt(i, m4);
-      col.setHex(walls[(x * 5 + y * 3) % walls.length]); bodies.setColorAt(i, col);
-      pos.set(c.x, hT + h + 0.12, c.z); scl.set(w, 1, dp); m4.compose(pos, q, scl); roofs.setMatrixAt(i, m4);
-      col.setHex(tiles[(x * 7 + y * 5) % tiles.length]); roofs.setColorAt(i, col);
+      const base = (Number.isNaN(d) || d == null) ? (Math.abs((x + y) % 2) ? 0 : Math.PI / 2) : d;
+      const ang = base + (rnd(x * 3.1 + y * 7.7) - 0.5) * 0.06;
+      m.position.set(c.x, hT, c.z); m.rotation.y = ang;
+      this.heritageGroup.add(m);
+      this.heritageMask[y][x] = true;
+      this.heritagePlacements.push({ key: 'shophouse', gx: x, gy: y, name: null, mesh: m, decor: true }); // demolishable, no economy
     }
-    bodies.instanceMatrix.needsUpdate = true; roofs.instanceMatrix.needsUpdate = true;
-    if (bodies.instanceColor) bodies.instanceColor.needsUpdate = true;
-    if (roofs.instanceColor) roofs.instanceColor.needsUpdate = true;
-    this.heritageGroup.add(bodies); this.heritageGroup.add(roofs);
     this._urbanFillCount = cells.length;
   }
   // Nearest land cell that's free for heritage AND clear of the rendered roads.
@@ -1082,10 +1084,25 @@ export class Scene3D {
   applyHeritageToGrid(state) {
     if (!state || !state.grid || state.heritageSeeded) return;
     for (const p of (this.heritagePlacements || [])) {
+      if (p.decor) continue;                 // decorative town shophouses — rendered, not in the economy
       const row = state.grid[p.gy];
       if (row && !row[p.gx]) row[p.gx] = { k: p.key, heritage: true, name: p.name || null };
     }
     state.heritageSeeded = true;
+  }
+  // Demolish a heritage building (named landmark OR decorative town shophouse): remove
+  // its model, free its cell (so the player can build there), and clear the name.
+  removeHeritageVisual(x, y) {
+    if (!this.heritagePlacements) return false;
+    const i = this.heritagePlacements.findIndex((p) => p.gx === x && p.gy === y);
+    if (i < 0) return false;
+    const p = this.heritagePlacements[i];
+    if (p.mesh && this.heritageGroup) this.heritageGroup.remove(p.mesh);
+    if (this.heritageMask && this.heritageMask[y]) this.heritageMask[y][x] = false;
+    if (this.heritageInfo) this.heritageInfo.delete(`${x},${y}`);
+    this.heritagePlacements.splice(i, 1);
+    const c = cellToWorld(x, y); this._spawnDust(c.x, c.z, 0xbfb09a, 22);
+    return true;
   }
   _placeStructures(list, prop) {
     if (this[prop]) this.scene.remove(this[prop]);
@@ -3801,10 +3818,14 @@ export function makeBuilding(key, theme) {
       const conf = key === 'condo_estate'
         ? { slabs: [[-2.7, -1.7, 2.7, 20, 2.7], [0.5, -2.6, 2.5, 16, 2.5], [2.7, 1.5, 2.7, 23, 2.7], [-1.6, 2.3, 2.6, 18, 2.6]], style: 'glass' }
         : key === 'hdb_newtown'
-          ? { slabs: [[-2.4, -1, 3.6, 16, 2.6], [1.4, -2.2, 3.4, 14, 2.4], [2.2, 1.8, 3.2, 18, 2.4]], style: 'hdb' }
+          // a real HDB estate: a long slab block + two perpendicular slab wings (the
+          // classic long-corridor layout — long and rectangular, not square towers).
+          ? { slabs: [[0, -2.7, 9.0, 16, 2.3], [-3.4, 1.1, 2.3, 14, 5.4], [3.4, 1.1, 2.3, 14, 5.4]], style: 'hdb' }
           : key === 'condo'
             ? { slabs: [[-1.8, -1, 3.0, 17, 3.0], [1.8, 1.2, 2.8, 14, 2.8]], style: 'glass' }
-            : { slabs: [[-2, -0.5, 3.4, 12, 3.0], [1.8, 0.6, 3.2, 14, 2.8]], style: 'hdb' };
+            // hdb_flat: a single long-corridor slab with a short return wing (an L), so the
+            // flats are a long rectangle (long common corridor) rather than a square block.
+            : { slabs: [[0, -1.4, 8.6, 12, 2.2], [3.5, 1.3, 2.2, 12, 4.6]], style: 'hdb' };
       for (const [dx, dz, w, h, d] of conf.slabs) { g.add(tower(w, h, d, conf.style, dx, dz, topt)); roofKit(g, dx, dz, w, d, h); }
       g.add(partBox(8, 1.6, 4.4, mat(0xcdbfa3), 0, 0.8, 2.6));
       if (key === 'condo' || key === 'condo_estate') {

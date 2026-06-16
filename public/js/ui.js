@@ -48,7 +48,7 @@ export function renderBuild(state, ctx) {
   // Tool actions: inspect/bulldoze
   const actions = el('div', 'tool-actions');
   const bulldoze = el('button', 'btn danger' + (ctx.bulldoze ? ' active' : ''),
-    `<span class="bi">${ICONS.bulldoze}</span> Bulldoze`);
+    `<span class="bi">${ICONS.bulldoze}</span> Demolish`);
   bulldoze.onclick = () => ctx.toggleBulldoze();
   actions.append(bulldoze);
   wrap.append(actions);
@@ -149,7 +149,7 @@ function renderRoads(ctx) {
   const onLand = !ROAD_TYPES[r.type]?.rail && !ROAD_TYPES[r.type]?.air;   // roundabout is road-only
   const defs = [
     ['draw', '✏️ Draw'], ['straight', '▭ Straight'], ['curveL', '↰ Curve'], ['curveR', '↱ Curve'],
-    ...(onLand ? [['roundabout', 'Roundabout']] : []), ['erase', 'Erase'],
+    ...(onLand ? [['roundabout', 'Roundabout']] : []), ['erase', '🚜 Demolish'],
   ];
   for (const [id, label] of defs) {
     const ico = ICONS[id] || (id.startsWith('curve') ? ICONS.curve : '');

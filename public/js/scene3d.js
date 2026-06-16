@@ -886,16 +886,17 @@ export class Scene3D {
     const near = Array.from({ length: N }, () => new Array(N).fill(false));   // carriageway + clearance
     const dir = Array.from({ length: N }, () => new Float32Array(N).fill(NaN)); // bearing of the nearest street
     const dist = Array.from({ length: N }, () => new Float32Array(N).fill(1e9));
-    const clearC = Math.max(1, Math.round(2.6 / TILE)); // keep blocks ~1 cell off the carriageway (no overlap, keeps density)
-    const dirC = Math.max(clearC + 1, Math.ceil(14 / TILE)); // reach for orientation into the blocks
+    const dirC = Math.max(2, Math.ceil(14 / TILE)); // reach for orientation into the blocks
+    const markR = 2.2, clearR = 2.6;                 // world-unit radii: carriageway footprint, and clearance
     const stamp = (wx, wz, ang) => {
       const cgx = Math.round(wx / TILE + N / 2), cgy = Math.round(N / 2 - wz / TILE);
-      if (cgx >= 0 && cgy >= 0 && cgx < N && cgy < N) mask[cgy][cgx] = true;
       for (let oy = -dirC; oy <= dirC; oy++) for (let ox = -dirC; ox <= dirC; ox++) {
         const gx = cgx + ox, gy = cgy + oy; if (gx < 0 || gy < 0 || gx >= N || gy >= N) continue;
-        const d = Math.hypot(ox, oy);
-        if (d < dist[gy][gx]) { dist[gy][gx] = d; dir[gy][gx] = ang; }
-        if (d <= clearC) near[gy][gx] = true;
+        const cw = cellToWorld(gx, gy), dw = Math.hypot(cw.x - wx, cw.z - wz); // true world distance, so corner-crossing cells aren't missed
+        if (dw < markR) mask[gy][gx] = true;          // a building here would sit on the carriageway
+        if (dw < clearR) near[gy][gx] = true;
+        const dc = Math.hypot(ox, oy);
+        if (dc < dist[gy][gx]) { dist[gy][gx] = dc; dir[gy][gx] = ang; }
       }
     };
     for (const e of (ROAD_EDGES_1966 || [])) {
@@ -975,6 +976,22 @@ export class Scene3D {
   // draw calls) and OUTSIDE the economy; their cells are marked unbuildable so the
   // historic town stays put. The named, functional buildings (SEED_1965) already
   // carry the homes/jobs — this just makes the districts look as crowded as they were.
+  // A tiny shophouse facade drawn once to a canvas and shared by every fill block
+  // (tinted per-instance): two floors of shuttered windows over a ground-floor
+  // shopfront and door. Cheap detail so the town isn't a field of blank boxes.
+  _fillFacadeTexture() {
+    if (this._facadeTex) return this._facadeTex;
+    const cv = document.createElement('canvas'); cv.width = 48; cv.height = 72; const g = cv.getContext('2d');
+    g.fillStyle = '#ffffff'; g.fillRect(0, 0, 48, 72);                       // wall (tinted per-instance)
+    g.fillStyle = 'rgba(48,58,68,0.9)';                                      // windows (dark glass)
+    for (const fy of [8, 28]) for (const wx of [7, 27]) g.fillRect(wx, fy, 14, 13);
+    g.strokeStyle = 'rgba(110,100,85,0.55)'; g.lineWidth = 2;                // floor string-courses
+    g.beginPath(); g.moveTo(0, 25); g.lineTo(48, 25); g.moveTo(0, 47); g.lineTo(48, 47); g.stroke();
+    g.fillStyle = 'rgba(38,30,24,0.92)'; g.fillRect(4, 50, 40, 20);          // ground-floor shopfront
+    g.fillStyle = 'rgba(80,63,46,0.95)'; g.fillRect(20, 55, 10, 15);         // door
+    const t = new THREE.CanvasTexture(cv); if ('SRGBColorSpace' in THREE) t.colorSpace = THREE.SRGBColorSpace;
+    this._facadeTex = t; return t;
+  }
   _fillUrbanDensity() {
     // [cx, cy, normalised radius, fill probability] — the dense built-up areas
     const districts = [
@@ -1006,7 +1023,8 @@ export class Scene3D {
     const walls = [0xe8b04b, 0xd9694f, 0x6fae9e, 0xe2cd7a, 0xc97f9c, 0x7fa8c9, 0xcf8f5a, 0xb86b4a, 0xe7e0cf, 0xd6c08a];
     const tiles = [0x9c4a36, 0xb15a3c, 0x8f4630, 0xa85a3a, 0x7d3f2c]; // terracotta roof shades
     const bodyGeo = new THREE.BoxGeometry(1, 1, 1), roofGeo = new THREE.BoxGeometry(1.14, 0.26, 1.2);
-    const bodies = new THREE.InstancedMesh(bodyGeo, toon(0xffffff), cells.length);
+    const bodyMat = toon(0xffffff); bodyMat.map = this._fillFacadeTexture(); bodyMat.needsUpdate = true; // doors/windows on every block
+    const bodies = new THREE.InstancedMesh(bodyGeo, bodyMat, cells.length);
     const roofs = new THREE.InstancedMesh(roofGeo, toon(0xffffff), cells.length);
     bodies.castShadow = false; bodies.receiveShadow = false; roofs.castShadow = false; roofs.receiveShadow = false;
     const pos = new THREE.Vector3(), q = new THREE.Quaternion(), scl = new THREE.Vector3(), m4 = new THREE.Matrix4(), col = new THREE.Color(), YA = new THREE.Vector3(0, 1, 0);

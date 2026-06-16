@@ -73,6 +73,24 @@ export const BUILDINGS = {
     power: -6, water: -8, pollution: 1, happiness: 5,
     desc: 'Public housing from the Housing & Development Board. A 1-room "Emergency" flat (23 m²) cost about $6,000 to build and rented for ~$20/month; the HDB had already put up 54,000 flats by 1965. Affordable homes for the masses.',
   },
+  terrace: {
+    name: 'Terrace Houses', cat: 'residential', icon: '🏘️', color: '#d9b58a', customizable: true,
+    cost: 10, upkeep: 0.4, year: 1965, homes: 1500, jobs: 80,
+    power: -2, water: -3, pollution: 1, happiness: 5, income: 1,
+    desc: 'A short row of two-storey terrace houses — a step up from the kampong, each with its own front door and a little garden. Modest, tidy, quintessentially old Singapore.',
+  },
+  bungalow: {
+    name: 'Bungalow', cat: 'residential', icon: '🏡', color: '#eae2cc', customizable: true,
+    cost: 12, upkeep: 0.3, year: 1965, homes: 300, jobs: 0,
+    power: -2, water: -3, pollution: 0, happiness: 9, income: 2,
+    desc: 'A detached single-storey house with a porch and garden — comfortable middle-class living. Houses few, but lifts land value and happiness.',
+  },
+  walkup: {
+    name: 'SIT Walk-up Flats', cat: 'residential', icon: '🏢', color: '#e3d3a6', customizable: true,
+    cost: 20, upkeep: 0.8, year: 1965, homes: 3200, jobs: 120,
+    power: -4, water: -6, pollution: 1, happiness: 5,
+    desc: 'Four-storey walk-up flats in the style the Singapore Improvement Trust built through the 1950s — no lifts, long common corridors, but solid, affordable homes that rehoused thousands from the kampongs.',
+  },
   hdb_newtown: {
     name: 'HDB New Town', cat: 'residential', icon: '🏙️', color: '#e0a85e', customizable: true,
     cost: 90, upkeep: 3.0, year: 1968, homes: 14000, jobs: 600,

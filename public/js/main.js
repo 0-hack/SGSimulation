@@ -419,7 +419,8 @@ function updateToolBanner() {
   setEditPause(!!t);
   if (!el) return;
   if (!t) { el.classList.add('hidden'); return; }
-  $('tool-banner-text').innerHTML = `<b>⏸ Edit mode · ${t.label}</b><br><span class="tb-sub">Time paused — tap the map to ${t.verb}</span>`;
+  const rotHint = G.build.selected ? ' · ⟳ / R rotates 15°' : '';
+  $('tool-banner-text').innerHTML = `<b>⏸ Edit mode · ${t.label}</b><br><span class="tb-sub">Time paused — tap the map to ${t.verb}${rotHint}</span>`;
   const piece = G.road.tool === 'straight' || G.road.tool === 'curveL' || G.road.tool === 'curveR';
   // rotate is available for free road pieces AND for any building being placed
   $('tool-banner-rotate').classList.toggle('hidden', !(piece || G.build.selected));

@@ -3759,6 +3759,42 @@ export function makeBuilding(key, theme) {
       g.add(partBox(rw, 0.2, 0.2, mat(0x8f4630), 0, body + rh, 0));                            // ridge cap
       for (const sx of [-1, 1])                                                                // gable end walls
         g.add(partBox(0.12, rh, depth, mat(0xd8cdb6), sx * rw / 2, body + rh / 2, 0));
+    } else if (key === 'terrace') {
+      // a short row of two-storey terrace houses — front doors, windows, pitched tile roofs
+      lawn(g, 9, 9, 0x8fb060);
+      const units = 3, uw = 2.4, depth = 3.6, body = 3.2, fz = depth / 2;
+      const cols = [0xe7d6a8, 0xd9b58a, 0xcfd0bd, 0xe2c79a];
+      const x0 = -((units - 1) * uw) / 2;
+      for (let i = 0; i < units; i++) {
+        const ux = x0 + i * uw, wc = tint != null ? tint : cols[i % cols.length];
+        g.add(partBox(uw - 0.08, body, depth, mat(wc), ux, body / 2, 0));                 // body
+        g.add(partBox(0.7, 1.4, 0.1, mat(0x5a3f2c), ux, 0.72, fz + 0.02));                // front door
+        for (const fy of [1.05, 2.45]) for (const sx of [-0.6, 0.6])                       // windows, two floors
+          g.add(partBox(0.5, 0.6, 0.08, mat(0x3a5a6a), ux + sx, fy + 0.2, fz + 0.02));
+        const rh = 0.9, halfD = depth / 2 + 0.08, sl = Math.hypot(halfD, rh), an = Math.atan2(rh, halfD);
+        for (const s of [1, -1]) { const r = new THREE.Mesh(new THREE.BoxGeometry(uw - 0.02, 0.12, sl), mat(0xa6512f)); r.position.set(ux, body + rh / 2, s * halfD / 2); r.rotation.x = -s * an; r.castShadow = true; g.add(r); }
+      }
+    } else if (key === 'bungalow') {
+      // a detached single-storey house with a porch and garden
+      lawn(g, 9, 9, 0x73b35a);
+      g.add(partBox(4.6, 2.6, 4.0, mat(tint != null ? tint : 0xeae2cc), 0, 1.3, -0.3));   // body
+      const rf = new THREE.Mesh(new THREE.ConeGeometry(3.9, 1.5, 4), mat(0x9c4a36)); rf.rotation.y = Math.PI / 4; rf.position.set(0, 3.35, -0.3); rf.castShadow = true; g.add(rf); // hipped roof
+      g.add(partBox(0.8, 1.4, 0.1, mat(0x5a3f2c), 0, 0.7, 1.75));                          // door
+      for (const sx of [-1.5, 1.5]) g.add(partBox(0.9, 0.8, 0.08, mat(0x3a5a6a), sx, 1.4, 1.72)); // windows
+      g.add(partBox(2.6, 0.12, 1.2, mat(0xcfc6b0), 0, 0.06, 2.4));                          // porch slab
+      for (const sx of [-1.0, 1.0]) g.add(cyl(0.1, 0.1, 1.6, 0xd8cfb8, sx, 0.8, 2.4));      // porch posts
+      treeAt(g, -3.3, 2.8, 1.0); treeAt(g, 3.2, 2.6, 0.9);
+    } else if (key === 'walkup') {
+      // a four-storey SIT-style walk-up flat block — rows of windows + little balconies
+      lawn(g, 9, 9, 0x8aac63);
+      const Wd = 7.2, D = 3.6, Ht = 7.0;
+      g.add(partBox(Wd, Ht, D, mat(tint != null ? tint : 0xe3d3a6), 0, Ht / 2, 0));        // block
+      for (let fl = 0; fl < 4; fl++) for (let b2 = -2; b2 <= 2; b2++) {
+        g.add(partBox(0.7, 0.7, 0.08, mat(0x3c5663), b2 * 1.3, 1.1 + fl * 1.6, D / 2 + 0.02));        // window
+        g.add(partBox(0.9, 0.12, 0.5, mat(0xcfc6b0), b2 * 1.3, 0.78 + fl * 1.6, D / 2 + 0.28));       // balcony slab
+      }
+      g.add(partBox(Wd + 0.2, 0.3, D + 0.2, mat(0xcdbfa0), 0, Ht + 0.1, 0));               // roof parapet
+      g.add(partBox(1.2, 1.6, 0.1, mat(0x4a3a2a), -Wd / 2 + 0.9, 0.8, D / 2 + 0.02));       // stair entrance
     } else {
       lawn(g, 9, 9);
       const topt = tint != null ? { tint } : undefined;

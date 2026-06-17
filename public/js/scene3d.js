@@ -55,7 +55,7 @@ const SNAP_R = Math.max(8, Math.round(110 / TILE));
 const SEA_Y = -1.2;
 const SEA_COLOR = 0x3aa0d8;   // shared by the sea, river, reservoirs & coastal inlets
 const DAY_CYCLE = 1;          // one full day/night cycle per in-game day (locked to the calendar)
-const LIGHT_YEAR = 1970;      // traffic lights appear as the city modernises
+const LIGHT_YEAR = 1965;      // junction traffic lights are present from the start (SG had them since the 1930s)
 
 // Land mask for the grid. On fine grids (cell << 10) the 869-vertex coastline test
 // is far too slow per-cell, so compute it at a ~10-unit resolution and upsample —
@@ -3271,6 +3271,7 @@ export class Scene3D {
     });
     this.navNodes = nodes; this.navAdj = adj;
     this._buildLights();
+    this._buildStreetLamps();
     this._buildTurnArrows();
     this._reseatAgents();   // edge indices changed — keep live agents valid
   }
@@ -3353,6 +3354,77 @@ export class Scene3D {
       post.position.set(node.x, node.y, node.z); this.lightGroup.add(post);
       this.lights.push(light); this.lightByNode.set(n, light);
     }
+  }
+  // Merge many small indexed geometries (each already transformed) into one.
+  _mergeGeos(geos) {
+    let vc = 0, ic = 0;
+    for (const g of geos) { vc += g.attributes.position.count; ic += g.index ? g.index.count : 0; }
+    const pos = new Float32Array(vc * 3), nrm = new Float32Array(vc * 3);
+    const idx = vc > 65535 ? new Uint32Array(ic) : new Uint16Array(ic);
+    let vo = 0, io = 0;
+    for (const g of geos) {
+      pos.set(g.attributes.position.array, vo * 3);
+      nrm.set(g.attributes.normal.array, vo * 3);
+      const gi = g.index.array; for (let k = 0; k < gi.length; k++) idx[io + k] = gi[k] + vo;
+      vo += g.attributes.position.count; io += gi.length;
+    }
+    const out = new THREE.BufferGeometry();
+    out.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    out.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
+    out.setIndex(new THREE.BufferAttribute(idx, 1));
+    return out;
+  }
+  // Line the surface roads with street lamps: spaced along each road, alternating
+  // sides, the lamp head reaching over the carriageway and GLOWING after dark. Built
+  // from the live road network, so player roads get them automatically and they
+  // vanish when a road is demolished (the whole group is rebuilt each road change).
+  // Two merged meshes (dark posts, glowing heads) keep it to a couple of draw calls.
+  _buildStreetLamps() {
+    if (this._lampGroup) { this._lampGroup.traverse((o) => o.geometry && o.geometry.dispose()); this.scene.remove(this._lampGroup); }
+    this._lampGroup = new THREE.Group(); this.scene.add(this._lampGroup);
+    // cached lamp-part templates (built once, at origin: base on the ground, arm/head reaching +Z)
+    if (!this._lampTpl) {
+      const postG = new THREE.CylinderGeometry(0.09, 0.12, 4.2, 6).translate(0, 2.1, 0);
+      const armG = new THREE.BoxGeometry(0.1, 0.1, 0.9).translate(0, 4.05, 0.45);
+      const headG = new THREE.SphereGeometry(0.22, 8, 6).translate(0, 3.98, 0.86);
+      this._lampTpl = { struct: this._mergeGeos([postG, armG]), head: headG };
+    }
+    const STEP = 17, MAX = 480;
+    const structs = [], heads = [];
+    const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0), scl = new THREE.Vector3(1, 1, 1), pos = new THREE.Vector3();
+    let count = 0, sideFlip = 0;
+    for (let e = 0; e < this.edgePts.length && count < MAX; e++) {
+      const meta = this.edgeMeta[e]; if (!meta || !meta.walk || meta.elevated) continue;   // surface roads only
+      const pts = this.edgePts[e]; if (!pts || pts.length < 2) continue;
+      const T = ROAD_TYPES[meta.type] || ROAD_TYPES.road;
+      const off = (T.renderHW || T.width / 2 || 0.34) + 1.25;       // sit on the verge, just off the kerb
+      let acc = STEP * 0.5;                                          // first lamp a bit in from the end
+      for (let i = 0; i < pts.length - 1 && count < MAX; i++) {
+        const a = pts[i], b = pts[i + 1];
+        let dx = b.x - a.x, dz = b.z - a.z; const segL = Math.hypot(dx, dz); if (segL < 1e-3) continue;
+        dx /= segL; dz /= segL;
+        const perpx = -dz, perpz = dx;                              // unit normal to the road
+        while (acc <= segL && count < MAX) {
+          const side = (sideFlip++ & 1) ? 1 : -1;                   // alternate kerbs
+          const cx = a.x + dx * acc, cz = a.z + dz * acc;
+          const lx = cx + perpx * off * side, lz = cz + perpz * off * side;
+          const ly = this._roadY(lx, lz);
+          // face the head IN over the road: local +Z points toward the carriageway (−side·perp)
+          const ry = Math.atan2(-perpx * side, -perpz * side);
+          q.setFromAxisAngle(up, ry); pos.set(lx, ly, lz); m4.compose(pos, q, scl);
+          structs.push(this._lampTpl.struct.clone().applyMatrix4(m4));
+          heads.push(this._lampTpl.head.clone().applyMatrix4(m4));
+          count++; acc += STEP;
+        }
+        acc -= segL;
+      }
+    }
+    if (!count) return;
+    const postMat = mat(0x3e444b);                                  // dark pole (darkens at night, no glow)
+    const headMat = mat(0xfff0b8, {}, 1.9);                         // warm lamp — glows after dark (glowK ≥ 1)
+    this._lampGroup.add(new THREE.Mesh(this._mergeGeos(structs), postMat));
+    const headMesh = new THREE.Mesh(this._mergeGeos(heads), headMat); this._lampGroup.add(headMesh);
+    for (const g of structs) g.dispose(); for (const g of heads) g.dispose();
   }
   _updateLights(dt) {
     if (!this.lights) return;
@@ -4381,14 +4453,7 @@ function makeTrain(era, carCount = 3) {
 }
 
 // ---- street props & boats -------------------------------------------------
-function makeLamppost() {
-  const g = new THREE.Group();
-  g.add(cyl(0.09, 0.11, 4.4, mat(0x3e444b), 0, 2.2, 0));
-  g.add(partBox(0.1, 0.1, 0.9, mat(0x3e444b), 0, 4.3, 0.4));
-  const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.24, 10, 8), mat(0xfff0b8, {}, 1.9)); // glows at night
-  lamp.position.set(0, 4.22, 0.82); g.add(lamp);
-  return g;
-}
+// (street lamps are built in bulk from the road network — see _buildStreetLamps)
 function makeBench(rot) {
   const g = new THREE.Group();
   g.add(partBox(1.5, 0.12, 0.5, mat(0x9c7a4d), 0, 0.55, 0));        // seat

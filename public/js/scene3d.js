@@ -3348,9 +3348,9 @@ export class Scene3D {
       const light = { node: n, grpByEdge, period: 7 + Math.random() * 3, t: Math.random() * 5, phase: 0, head: null };
       // a little signal post with a coloured lamp
       const post = new THREE.Group();
-      post.add(cyl(0.18, 0.2, 3.4, 0x3a3f45, 0, 1.7, 0));
-      const head = new THREE.Mesh(new THREE.SphereGeometry(0.5, 10, 8), new THREE.MeshToonMaterial({ color: 0x2ecc71, emissive: 0x2ecc71, emissiveIntensity: 0.7, gradientMap: toonGradient() }));
-      head.position.set(0, 3.4, 0); post.add(head); light.head = head;
+      post.add(cyl(0.1, 0.12, 2.3, 0x3a3f45, 0, 1.15, 0));
+      const head = new THREE.Mesh(new THREE.SphereGeometry(0.26, 10, 8), new THREE.MeshToonMaterial({ color: 0x2ecc71, emissive: 0x2ecc71, emissiveIntensity: 0.7, gradientMap: toonGradient() }));
+      head.position.set(0, 2.3, 0); post.add(head); light.head = head;
       post.position.set(node.x, node.y, node.z); this.lightGroup.add(post);
       this.lights.push(light); this.lightByNode.set(n, light);
     }
@@ -3384,9 +3384,9 @@ export class Scene3D {
     this._lampGroup = new THREE.Group(); this.scene.add(this._lampGroup);
     // cached lamp-part templates (built once, at origin: base on the ground, arm/head reaching +Z)
     if (!this._lampTpl) {
-      const postG = new THREE.CylinderGeometry(0.09, 0.12, 4.2, 6).translate(0, 2.1, 0);
-      const armG = new THREE.BoxGeometry(0.1, 0.1, 0.9).translate(0, 4.05, 0.45);
-      const headG = new THREE.SphereGeometry(0.22, 8, 6).translate(0, 3.98, 0.86);
+      const postG = new THREE.CylinderGeometry(0.055, 0.075, 2.5, 6).translate(0, 1.25, 0);
+      const armG = new THREE.BoxGeometry(0.06, 0.06, 0.5).translate(0, 2.42, 0.25);
+      const headG = new THREE.SphereGeometry(0.12, 8, 6).translate(0, 2.38, 0.48);
       this._lampTpl = { struct: this._mergeGeos([postG, armG]), head: headG };
     }
     const STEP = 17, MAX = 480;
@@ -3397,7 +3397,7 @@ export class Scene3D {
       const meta = this.edgeMeta[e]; if (!meta || !meta.walk || meta.elevated) continue;   // surface roads only
       const pts = this.edgePts[e]; if (!pts || pts.length < 2) continue;
       const T = ROAD_TYPES[meta.type] || ROAD_TYPES.road;
-      const off = (T.renderHW || T.width / 2 || 0.34) + 1.25;       // sit on the verge, just off the kerb
+      const off = (T.renderHW || T.width / 2 || 0.34) + 0.85;       // sit on the verge, just off the kerb
       let acc = STEP * 0.5;                                          // first lamp a bit in from the end
       for (let i = 0; i < pts.length - 1 && count < MAX; i++) {
         const a = pts[i], b = pts[i + 1];

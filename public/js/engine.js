@@ -2,7 +2,7 @@
 // Pure-ish logic (no DOM) so it can be unit-tested in Node as well.
 import {
   BUILDINGS, POLICIES, START_DATE, GRID_SIZE, POP_SCALE,
-  HISTORICAL_EVENTS, RANDOM_EVENTS, SANDBOX,
+  HISTORICAL_EVENTS, RANDOM_EVENTS, SANDBOX, FLEET_TIMELINE,
 } from './data.js';
 import { onLand, inReservoir, inRiver } from './shape.js';
 import { ROAD_NODES_1966, ROAD_EDGES_1966 } from './roads1966.js';
@@ -809,6 +809,33 @@ function checkHistorical(state) {
   }
 }
 
+// World-technology timeline: when a building tech or fleet generation reaches
+// the historical year it was invented & used in the world, announce that it's
+// now available for the nation to ADOPT (build it if you can afford it). The
+// first sighting per item is recorded in state.techSeen so nothing repeats.
+// Tech already in use when the game (or a save) begins is recorded silently.
+function checkNewTech(state) {
+  const y = state.date.y;
+  if (!state.techSeen) state.techSeen = {};
+  const fresh = [];
+  for (const [key, b] of Object.entries(BUILDINGS)) {
+    if (!b.year || b.year > y || state.techSeen[key]) continue;
+    const isNew = b.year === y && (state.daysElapsed || 0) > 1;   // invented this very year, mid-game
+    state.techSeen[key] = 1;
+    if (isNew) fresh.push(`${b.icon || ''} ${b.name}`.trim());
+  }
+  for (const kind of ['car', 'train']) {
+    for (const g of (FLEET_TIMELINE[kind] || [])) {
+      const tk = `fleet:${kind}:${g.id}`;
+      if (g.year > y || state.techSeen[tk]) continue;
+      const isNew = g.year === y && (state.daysElapsed || 0) > 1;
+      state.techSeen[tk] = 1;
+      if (isNew) fresh.push(kind === 'car' ? '🚗 newer cars appear on the world’s roads' : '🚆 a newer generation of trains enters service');
+    }
+  }
+  if (fresh.length) (state.newTech || (state.newTech = [])).push(...fresh);
+}
+
 function maybeRandomEvent(state) {
   if (state.pendingEvent) return;
   // ~ roughly one random event every ~14 months
@@ -946,6 +973,7 @@ export function tickDay(state) {
   if (state.date.d === 1) {
     monthlyUpdate(state, derive(state));
     checkHistorical(state);
+    checkNewTech(state);      // announce world inventions that reached their historical year
     maybeRandomEvent(state);
   }
 

@@ -39,6 +39,17 @@ try {
   ok(render.every(r=>!r.err), `all 11 new buildings render a 3D model without error${render.find(r=>r.err)?': '+JSON.stringify(render.find(r=>r.err)):''}`);
   ok(render.every(r=>r.kids>0), `every new building has visible geometry (${render.map(r=>r.kids).join(',')})`);
 
+  // the later "world technology" builds (power & housing invented in the world,
+  // adoptable here when their year comes) also render real geometry.
+  const TECH = ['nuclear','gas_power','waste_energy','hdb_highrise'];
+  const techR = await p.evaluate((TECH)=>{
+    const v=window.__sgview, out=[]; const N=v.land.length; let cx=-1, cy=-1;
+    for(let y=4;y<N-4 && cx<0;y++) for(let x=4;x<N-4;x++){ if(v.isLand(x,y) && !v.buildings.has(`${x},${y}`) && !v.reserveMask?.[y]?.[x]){ cx=x; cy=y; break; } }
+    for(const key of TECH){ let err=null, kids=0; try { v._addMesh(cx,cy,key); const e=v.buildings.get(`${cx},${cy}`); kids=e&&e.group?e.group.children.length:0; v.removeBuilding&&v.removeBuilding(cx,cy,false);} catch(e){err=e.message;} out.push({key,err,kids}); }
+    return out;
+  }, TECH);
+  ok(techR.every(r=>!r.err && r.kids>0), `world-tech builds render (nuclear/gas/waste/highrise: ${techR.map(r=>r.kids).join(',')})${techR.find(r=>r.err)?' '+JSON.stringify(techR.find(r=>r.err)):''}`);
+
   // they show in the build menu (available at 1965)
   await p.click('.tool[data-panel="build"]'); await p.waitForSelector('.cat-tab');
   const names = ['Standpipe','Sewerage','Community Centre','Outpatient Clinic','Fire Station','Market & Hawkers','Technical Institute','Godown','Rubber & Tin','Cinema','Sports Stadium'];

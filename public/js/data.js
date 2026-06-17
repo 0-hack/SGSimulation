@@ -44,6 +44,51 @@ export const ROAD_TYPES = {
   airport: { name: 'Airport', icon: '✈️', lanes: 1, width: 9,   speed: 0,  cost: 80, asphalt: '#35383d', air: true },
 };
 
+// ---------------------------------------------------------------------------
+// World technology timeline for the AMBIENT FLEET (the cars & trains that fill
+// the streets and rails). Each generation is INVENTED in the world at `year`;
+// the country only runs it once two things are true: it exists yet (year), AND
+// the economy is developed enough to import it. A rich, educated, well-run
+// nation runs the newest stock the moment it appears; a struggling one lags a
+// generation behind for years — so the player's economic decisions visibly
+// steer how modern the country looks. Tiers are ordered oldest → newest.
+// ---------------------------------------------------------------------------
+export const FLEET_TIMELINE = {
+  car: [
+    { id: 'vintage', year: 1900 },        // 1950s/60s sedans, trishaws, old buses
+    { id: 'modern', year: 1980 },         // boxy modern cars & buses
+    { id: 'contemporary', year: 2008 },   // sleek hatchbacks / hybrids / EVs
+  ],
+  train: [
+    { id: 'steam', year: 1900 },          // steam locomotive + teak coaches
+    { id: 'diesel', year: 1972 },         // diesel locomotive
+    { id: 'modern', year: 2005 },         // modern multiple-unit
+  ],
+};
+const _clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
+// 0..1 — how close to the world's cutting edge the economy can afford to be,
+// from human capital (education), reserves (treasury) and political stability.
+export function economyAdoption(state) {
+  if (!state) return 0.3;
+  const edu = (state.education || 20) / 100;
+  const wealth = _clamp01((state.treasury || 0) / 1400);
+  const approval = (state.approval || 50) / 100;
+  return _clamp01(0.18 + edu * 0.5 + wealth * 0.27 + (approval - 0.5) * 0.2);
+}
+// Which fleet generation the country actually runs right now. A weak economy
+// delays adoption of each newer generation by up to ~12 years after invention.
+export function fleetEra(state) {
+  const y = (state.date && state.date.y) || 1965;
+  const adopt = economyAdoption(state);
+  const lag = Math.round((1 - adopt) * 12);
+  const pick = (list) => {
+    let chosen = list[0].id;
+    for (const g of list) if (y >= g.year + (g.year > 1900 ? lag : 0)) chosen = g.id;
+    return chosen;
+  };
+  return { car: pick(FLEET_TIMELINE.car), train: pick(FLEET_TIMELINE.train), adoption: adopt, lag };
+}
+
 // Colour themes players can pick to customise a building's look.
 export const THEMES = [
   { id: 'default', name: 'Classic', color: '#d8a25a' },
@@ -118,6 +163,12 @@ export const BUILDINGS = {
     power: -34, water: -44, pollution: 2, happiness: 12, income: 6,
     desc: 'A gated condominium estate: several towers around a pool and clubhouse. High land value.',
   },
+  hdb_highrise: {
+    name: 'HDB Point Block', cat: 'residential', icon: '🏯', color: '#cfa75e', customizable: true,
+    cost: 220, upkeep: 4.5, year: 2000, homes: 20000, jobs: 700,
+    power: -28, water: -34, pollution: 1, happiness: 8,
+    desc: 'A modern high-rise HDB point block — 40-storey towers with sky gardens, the public housing of the 2000s. Houses the most people per plot of any home.',
+  },
 
   // ---- Power ----
   diesel: {
@@ -137,6 +188,27 @@ export const BUILDINGS = {
     cost: 180, upkeep: 1.0, year: 2008, homes: 0, jobs: 30,
     power: 220, water: 0, pollution: 0, happiness: 4,
     desc: 'Clean solar energy. Expensive up front, but no pollution and tiny upkeep.',
+  },
+  // World power technologies, dated to when they were INVENTED & used in the
+  // world — buildable here the moment they exist (if you can afford them), even
+  // the ones Singapore never actually built. The player decides whether to adopt.
+  waste_energy: {
+    name: 'Waste-to-Energy Plant', cat: 'power', icon: '♻️', color: '#7d8a5c',
+    cost: 150, upkeep: 3.0, year: 1979, homes: 0, jobs: 110,
+    power: 180, water: -4, pollution: 6, happiness: -1, health: 2,
+    desc: 'An incineration plant that burns refuse to raise steam for electricity — Singapore opened its first at Ulu Pandan in 1979. Powers the city AND shrinks the rubbish mountain.',
+  },
+  nuclear: {
+    name: 'Nuclear Power Plant', cat: 'power', icon: '⚛️', color: '#8fd1c0',
+    cost: 600, upkeep: 9.0, year: 1968, homes: 0, jobs: 300,
+    power: 1200, water: -30, pollution: 1, happiness: -10,
+    desc: 'Enormous, near-zero-carbon baseload from nuclear fission — proven in the world from the 1950s, though Singapore (small and dense) never built one. Vast output, but huge cost, wary residents and a long shadow if it ever goes wrong.',
+  },
+  gas_power: {
+    name: 'Combined-Cycle Gas', cat: 'power', icon: '🔥', color: '#5a8aa8',
+    cost: 240, upkeep: 5.0, year: 1992, homes: 0, jobs: 140,
+    power: 620, water: -10, pollution: 7, happiness: -2,
+    desc: 'A high-efficiency natural-gas plant — the workhorse that took over Singapore’s grid once piped gas arrived in the 1990s. Cleaner than oil, far more output per dollar.',
   },
 
   // ---- Water ----

@@ -309,9 +309,16 @@ function updateShortages() {
 // Celebrate any national project the player just finished (engine flags them).
 function flushProjectToasts() {
   const done = G.state && G.state.justCompleted;
-  if (!done || !done.length) return;
-  for (const title of done) toast(`🎉 National project complete — ${title}! The nation reaps the reward.`);
-  G.state.justCompleted = [];
+  if (done && done.length) {
+    for (const title of done) toast(`🎉 National project complete — ${title}! The nation reaps the reward.`);
+    G.state.justCompleted = [];
+  }
+  // Announce world inventions that have just become available to adopt.
+  const tech = G.state && G.state.newTech;
+  if (tech && tech.length) {
+    for (const name of tech) toast(`🌍 New in the world: ${name} — build it when you can afford it.`);
+    G.state.newTech = [];
+  }
 }
 
 function setSpeed(s) {

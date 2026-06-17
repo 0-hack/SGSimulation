@@ -4,7 +4,7 @@
 // disasters (floods, haze, storms) are animated. Mirrors the small API that
 // main.js expects from the old 2D view.
 import * as THREE from './vendor/three.module.js';
-import { BUILDINGS, GRID_SIZE, WORLD_SIZE, ROAD_TYPES } from './data.js';
+import { BUILDINGS, GRID_SIZE, WORLD_SIZE, ROAD_TYPES, fleetEra } from './data.js';
 import { smoothRoute } from './engine.js';
 import { SG_OUTLINE, SG_ISLANDS, SG_FOREIGN, SG_SANDS, SG_RESERVOIRS, pointInPolygon, landMask, inReservoir, reservoirArea, inRiver, reservoirBranches, riverBranches } from './shape.js';
 import { CUSTOM_HOUSES, CUSTOM_RAILWAYS, CUSTOM_SANDS, CUSTOM_LANDMARKS, SEED_1965 } from './custom1966.js';
@@ -2337,13 +2337,16 @@ export class Scene3D {
   }
   _addVehicle() {
     if (!this.edgePts.length) return;
-    const year = this.state?.date?.y ?? 1965;
-    const vintage = year < 1980;             // trishaws, vintage cars & old buses in the early decades
+    // The on-road fleet's generation is set by the economy (fleetEra): a developed
+    // nation imports the newest cars the moment the world invents them, a poorer
+    // one keeps the old stock for years. Trishaws only roll in the vintage era.
+    const gen = (this._fleet && this._fleet.car) || fleetEra(this.state || {}).car;
+    const vintage = gen === 'vintage';
     const r = Math.random();
     const kind = vintage
       ? (r < 0.32 ? 'car' : r < 0.44 ? 'taxi' : r < 0.64 ? 'trishaw' : r < 0.8 ? 'bike' : r < 0.92 ? 'lorry' : 'bus')
       : (r < 0.46 ? 'car' : r < 0.6 ? 'taxi' : r < 0.76 ? 'bike' : r < 0.88 ? 'lorry' : 'bus');
-    const { mesh, len } = makeVehicle(kind, vintage);
+    const { mesh, len } = makeVehicle(kind, gen);
     const VS = 0.6; mesh.scale.setScalar(VS);   // smaller vehicles relative to roads/buildings
     this.scene.add(mesh);
     const speed = { car: 6, taxi: 6, bike: 7, trishaw: 3, lorry: 4.5, bus: 4 }[kind];
@@ -2884,11 +2887,12 @@ export class Scene3D {
     const g = new THREE.Group(); this.scene.add(g); this._trainGroup = g;
     this._trains = [];
     const tracks = [...(this._histTrainTracks || []), ...(this._playerTrainTracks || [])];
-    const year = this.state?.date?.y ?? 1965;
+    const fe = fleetEra(this.state || {});      // economy + invention-year decide the rolling stock
+    this._fleet = fe; this._trainEra = fe.train;
     for (const tk of tracks) {
       const total = this._polyLen(tk.pts);
       if (total < 14) continue;                 // too short to run a train
-      const era = tk.kind === 'mrt' ? 'mrt' : (year < 1972 ? 'steam' : year < 2005 ? 'diesel' : 'modern');
+      const era = tk.kind === 'mrt' ? 'mrt' : fe.train;
       const cars = era === 'mrt' ? 3 : era === 'steam' ? 3 : 4;
       const train = makeTrain(era, cars);
       for (const c of train.cars) g.add(c);
@@ -3446,6 +3450,15 @@ export class Scene3D {
       const wantLights = (this.state.date?.y || 1965) >= LIGHT_YEAR;
       if (wantLights !== this._lightsActive) this._buildLights();
       this._updateLights(dt);
+      // As the economy develops and the world invents newer stock, retire the old
+      // fleet so freshly-spawned cars/trains show the country's current generation.
+      const fe = fleetEra(this.state);
+      if (!this._fleet || fe.car !== this._fleet.car) {
+        this._fleet = fe;
+        for (const v of this.vehicles) this.scene.remove(v.mesh);
+        this.vehicles.length = 0;                // respawn at the new generation below
+      }
+      if (fe.train !== this._trainEra) this._buildTrains();
       this._ensureVehicles(target);
       this._advanceNet(this.vehicles, dt);
     }
@@ -3886,7 +3899,10 @@ export function makeBuilding(key, theme) {
     } else {
       lawn(g, 9, 9);
       const topt = tint != null ? { tint } : undefined;
-      const conf = key === 'condo_estate'
+      const conf = key === 'hdb_highrise'
+        // modern HDB point blocks: three slim 40-storey towers with sky decks
+        ? { slabs: [[-2.6, -1.6, 2.6, 34, 2.6], [2.6, -0.4, 2.6, 38, 2.6], [-0.2, 2.4, 2.6, 30, 2.6]], style: 'hdb' }
+        : key === 'condo_estate'
         ? { slabs: [[-2.7, -1.7, 2.7, 20, 2.7], [0.5, -2.6, 2.5, 16, 2.5], [2.7, 1.5, 2.7, 23, 2.7], [-1.6, 2.3, 2.6, 18, 2.6]], style: 'glass' }
         : key === 'hdb_newtown'
           // a real HDB estate: a long slab block + two perpendicular slab wings (the
@@ -3915,6 +3931,28 @@ export function makeBuilding(key, theme) {
         g.add(cyl(0.08, 0.08, 1, 0x555555, i * 2.7, 0.5, j * 2.4));
       }
       g.add(partBox(1.4, 1.4, 1, mat(0xcfcabb), 3.4, 0.7, 3.4));
+    } else if (key === 'nuclear') {
+      // a domed reactor containment + a big hyperboloid cooling tower venting steam
+      g.add(partBox(5.0, 3.0, 4.0, mat(0xd6dad6), -2.4, 1.5, -1.5));                       // reactor hall
+      const dome = new THREE.Mesh(new THREE.SphereGeometry(2.0, 18, 12, 0, Math.PI * 2, 0, Math.PI / 2), mat(0xc6ccc8, { metalness: 0.3 }));
+      dome.position.set(-2.4, 3.0, -1.5); g.add(dome);                                     // containment dome
+      const tower = new THREE.Mesh(new THREE.CylinderGeometry(2.3, 3.0, 8.0, 24, 1, true), toon(0xcfd3d2, { side: THREE.DoubleSide }));
+      tower.position.set(2.8, 4.0, 1.2); g.add(tower);                                     // cooling tower
+      const steam = new THREE.Mesh(new THREE.SphereGeometry(2.0, 12, 8), mat(0xffffff, { transparent: true, opacity: 0.5 }));
+      steam.position.set(2.8, 8.4, 1.2); g.add(steam);                                     // steam plume
+      g.add(partBox(1.2, 0.5, 0.1, mat(0xf6c945, {}, 1.2), -2.4, 0.7, 0.55));              // ⚠ trefoil-yellow sign
+    } else if (key === 'gas_power') {
+      // combined-cycle: a long turbine hall, a tall HRSG exhaust stack and gas tanks
+      g.add(partBox(8.5, 3.4, 4.0, mat(0xb9c2c8), -0.3, 1.7, -1.4));                        // turbine hall
+      g.add(partBox(8.6, 0.5, 4.1, mat(col), -0.3, 3.55, -1.4));                            // roofline band
+      g.add(cyl(0.7, 0.8, 12, 0xcfd2d4, 3.6, 6, 0.6)); g.add(cyl(0.8, 0.8, 0.7, 0xb24a2a, 3.6, 12.2, 0.6)); // stack
+      for (const dx of [-2.0, 0.4]) { const t = new THREE.Mesh(new THREE.SphereGeometry(1.3, 14, 10), mat(0xeef0f1, { metalness: 0.3 })); t.position.set(dx, 1.3, 3.0); g.add(t); } // spherical gas tanks
+    } else if (key === 'waste_energy') {
+      // incineration plant: a bulky refuse bunker + boiler block with one tall chimney
+      g.add(partBox(6.5, 5.0, 5.0, mat(0x9aa67e), -1.0, 2.5, -1.0));                        // boiler/bunker block
+      g.add(partBox(3.2, 3.0, 3.4, mat(0xb7bf9a), 3.0, 1.5, 1.4));                          // tipping hall
+      g.add(cyl(0.7, 0.85, 14, 0xd8d2c2, -2.6, 7, -2.4)); g.add(cyl(0.85, 0.85, 0.7, 0x9a3f2a, -2.6, 14.2, -2.4)); // chimney
+      g.add(partBox(0.9, 0.9, 0.1, mat(0x7d8a5c), 3.0, 1.6, 3.15));                          // ♻ panel
     } else {
       g.add(partBox(8, 4.5, 6, mat(col), 0, 2.25, -0.5));
       const stacks = key === 'power_station' ? 2 : 1;
@@ -4178,7 +4216,11 @@ export function makeBuilding(key, theme) {
 // ===========================================================================
 // Vehicles — distinct, recognisable types (car, taxi, motorbike, lorry, bus).
 // ===========================================================================
-function makeVehicle(kind, vintage = false) {
+function makeVehicle(kind, gen = 'modern') {
+  // gen: 'vintage' (1950s/60s), 'modern' (boxy), 'contemporary' (sleek/EV)
+  if (gen === true) gen = 'vintage'; else if (gen === false) gen = 'modern';   // legacy boolean callers
+  const vintage = gen === 'vintage';
+  const contemporary = gen === 'contemporary';
   const g = new THREE.Group();
   const pick = (a) => a[Math.floor(Math.random() * a.length)];
   const glass = 0x2b3b48, dark = 0x15171c;
@@ -4255,14 +4297,25 @@ function makeVehicle(kind, vintage = false) {
     if (kind === 'taxi') g.add(partBox(0.4, 0.22, 0.28, mat(0x1d2733), 0, 1.5, -0.15));  // roof sign
     return { mesh: g, len: 3.3 };
   }
-  const col = kind === 'taxi' ? 0xf4c20a : pick([0xd94f4f, 0xffffff, 0x3f7fd8, 0x2e8b57, 0x6b7280, 0x8e44ad]);
-  g.add(partBox(1.55, 0.55, 3.2, mat(col), 0, 0.55, 0));
-  g.add(partBox(1.4, 0.5, 1.7, mat(col), 0, 1.0, -0.1));
-  g.add(partBox(1.43, 0.42, 1.5, mat(glass), 0, 1.02, -0.1));
-  g.add(partBox(0.24, 0.16, 0.08, mat(0xfff6cf, {}, 1.8), 0.52, 0.5, 1.62));   // headlights (glow at night)
-  g.add(partBox(0.24, 0.16, 0.08, mat(0xfff6cf, {}, 1.8), -0.52, 0.5, 1.62));
-  g.add(partBox(0.24, 0.14, 0.08, mat(0xe23b2e, {}, 1.6), 0.52, 0.5, -1.62));  // taillights
-  g.add(partBox(0.24, 0.14, 0.08, mat(0xe23b2e, {}, 1.6), -0.52, 0.5, -1.62));
+  // contemporary cars are sleeker and brighter (hatchbacks / hybrids / EVs)
+  const col = kind === 'taxi' ? 0xf4c20a
+    : contemporary ? pick([0xffffff, 0xeef1f4, 0x2c3742, 0x3aa0d6, 0xc0392b, 0x4a4f57])
+    : pick([0xd94f4f, 0xffffff, 0x3f7fd8, 0x2e8b57, 0x6b7280, 0x8e44ad]);
+  if (contemporary) {
+    g.add(partBox(1.5, 0.62, 3.25, mat(col), 0, 0.5, 0));                       // low one-box body
+    g.add(partBox(1.42, 0.6, 2.5, mat(col), 0, 1.0, -0.05));                    // rounded cabin (long glasshouse)
+    g.add(partBox(1.45, 0.5, 2.3, mat(glass, {}, 0.6), 0, 1.0, -0.05));          // wraparound glazing
+    g.add(partBox(0.5, 0.1, 0.06, mat(0xeaf2ff, {}, 1.6), 0.0, 0.62, 1.62));     // LED light bar
+    g.add(partBox(0.7, 0.08, 0.05, mat(0xe23b2e, {}, 1.5), 0, 0.62, -1.6));      // full-width tail bar
+  } else {
+    g.add(partBox(1.55, 0.55, 3.2, mat(col), 0, 0.55, 0));
+    g.add(partBox(1.4, 0.5, 1.7, mat(col), 0, 1.0, -0.1));
+    g.add(partBox(1.43, 0.42, 1.5, mat(glass), 0, 1.02, -0.1));
+    g.add(partBox(0.24, 0.16, 0.08, mat(0xfff6cf, {}, 1.8), 0.52, 0.5, 1.62));   // headlights (glow at night)
+    g.add(partBox(0.24, 0.16, 0.08, mat(0xfff6cf, {}, 1.8), -0.52, 0.5, 1.62));
+    g.add(partBox(0.24, 0.14, 0.08, mat(0xe23b2e, {}, 1.6), 0.52, 0.5, -1.62));  // taillights
+    g.add(partBox(0.24, 0.14, 0.08, mat(0xe23b2e, {}, 1.6), -0.52, 0.5, -1.62));
+  }
   for (const z of [1.05, -1.05]) { g.add(wheel(-0.78, z)); g.add(wheel(0.78, z)); }
   if (kind === 'taxi') g.add(partBox(0.5, 0.26, 0.32, mat(0x1d2733), 0, 1.4, -0.1)); // roof sign
   return { mesh: g, len: 3.2 };

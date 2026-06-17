@@ -1,6 +1,7 @@
 // Smoke tests: exercise the engine for decades and the REST API end-to-end.
 import assert from 'node:assert';
 import { newGame, tickDay, build, snapshot, resolveEvent } from '../../public/js/engine.js';
+import { fleetEra, economyAdoption } from '../../public/js/data.js';
 import { app } from '../server.js';
 
 let passed = 0;
@@ -37,6 +38,32 @@ console.log('Engine simulation:');
   ok(s.summary && s.summary.population >= 0, 'summary is populated for the server');
   console.log(`    → ${s.date.y}: pop ${snap.population.toLocaleString()}, ` +
     `treasury $${Math.round(snap.treasury)}M, approval ${Math.round(snap.approval)}%`);
+}
+
+console.log('World-technology timeline:');
+{
+  // A generation only runs once it is invented AND the economy can import it.
+  const poor1965 = fleetEra({ date: { y: 1965 }, education: 20, treasury: 120, approval: 55 });
+  ok(poor1965.car === 'vintage' && poor1965.train === 'steam', 'a poor 1965 nation runs vintage cars & steam trains');
+
+  const richState = { date: { y: 2015 }, education: 85, treasury: 2000, approval: 72 };
+  const poorState = { date: { y: 2015 }, education: 25, treasury: 40, approval: 38 };
+  const rich2015 = fleetEra(richState), poor2015 = fleetEra(poorState);
+  ok(rich2015.car === 'contemporary' && rich2015.train === 'modern', 'a wealthy 2015 nation imports the newest fleet');
+  ok(poor2015.car === 'modern', 'a struggling 2015 nation lags a generation behind (still modern, not contemporary)');
+  ok(economyAdoption(richState) > economyAdoption(poorState), 'a stronger economy has a higher technology-adoption index');
+
+  // The engine announces world inventions as their historical year arrives.
+  const s = newGame({ name: 'Techtopia', owner: 'Tester' });
+  let sawNuclear = false, sawSolar = false;
+  for (let i = 0; i < 60 * 360; i++) {        // run to ~2025
+    if (s.pendingEvent) resolveEvent(s, 0);
+    tickDay(s);
+    for (const t of (s.newTech || [])) { if (/Nuclear/.test(t)) sawNuclear = true; if (/Solar/.test(t)) sawSolar = true; }
+    s.newTech = [];
+  }
+  ok(sawNuclear, 'nuclear power is announced to the world when its year (1968) arrives');
+  ok(sawSolar, 'the solar farm is announced when its year (2008) arrives');
 }
 
 console.log('REST API:');

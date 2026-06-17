@@ -4251,6 +4251,23 @@ export function makeBuilding(key, theme) {
       g.add(partBox(7.6, 1.7, 1.5, mat(0x2c5aa0), 1.2, 1.55, -2.4));            // coaches
       g.add(partBox(7.65, 0.55, 1.1, mat(0xf2e6c8, {}, 0.9), 1.2, 1.75, -2.4)); // cream window band
       g.add(partBox(7.6, 0.18, 1.55, mat(0xe8e2d2), 1.2, 2.45, -2.4));          // roof
+    } else if (key === 'street_lamp') {
+      // a single street lamp (sized so ×MODEL_SCALE matches the auto road lamps) —
+      // a slim post with an arm and a warm head that GLOWS after dark.
+      g.add(cyl(0.22, 0.3, 9.2, mat(0x3e444b), 0, 4.6, 0));                      // post
+      g.add(partBox(0.24, 0.24, 2.0, mat(0x3e444b), 0, 8.9, 1.0));              // arm reaching out
+      const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.52, 10, 8), mat(0xfff0b8, {}, 1.9));
+      lamp.position.set(0, 8.8, 1.95); g.add(lamp);                            // glowing head
+    } else if (key === 'traffic_light') {
+      // a three-aspect signal on a post; the green aspect glows after dark
+      g.add(cyl(0.3, 0.38, 8.6, mat(0x33373d), 0, 4.3, 0));                      // post
+      g.add(partBox(0.5, 0.5, 1.4, mat(0x2a2e34), 0, 8.1, 0.55));               // arm bracket
+      g.add(partBox(1.2, 3.3, 1.0, mat(0x20232a), 0, 8.1, 1.2));                // signal housing
+      const aspects = [[0xe23b2e, 9.3, 0.3], [0xf3c41a, 8.1, 0.3], [0x2ecc71, 6.9, 1.4]]; // red, amber, green(lit)
+      for (const [c, y, gk] of aspects) {
+        const lens = new THREE.Mesh(new THREE.SphereGeometry(0.42, 10, 8), mat(c, {}, gk));
+        lens.position.set(0, y, 1.72); g.add(lens);
+      }
     } else if (key === 'school') {
       lawn(g, 9, 9, 0x6fb15a);
       g.add(partBox(7, 3.6, 3, mat(col), 0, 1.8, -2.2));

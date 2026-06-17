@@ -306,6 +306,18 @@ export const BUILDINGS = {
     power: -4, water: -2, pollution: 1, happiness: 4,
     desc: 'An old-school 1965 railway station in the colonial style — a long platform canopy, a clock-towered booking hall and a steam/diesel train at the platform. Put it on the railway line so trains stop in town.',
   },
+  street_lamp: {
+    name: 'Street Lamp', cat: 'roads', icon: '💡', color: '#d8c27a',
+    cost: 1, upkeep: 0.05, year: 1965, homes: 0, jobs: 0,
+    power: -1, water: 0, pollution: 0, happiness: 1, safety: 2,
+    desc: 'A single street lamp that glows after dark — place your own along roads and paths. (Roads already get lit automatically; use this to light squares, parks and corners.) Safer streets at night.',
+  },
+  traffic_light: {
+    name: 'Traffic Light', cat: 'roads', icon: '🚦', color: '#cf6f5a',
+    cost: 3, upkeep: 0.1, year: 1965, homes: 0, jobs: 0,
+    power: -1, water: 0, pollution: 0, happiness: 1, safety: 4,
+    desc: 'A three-aspect traffic signal you can drop at a junction or crossing. (Cross junctions get them automatically; use this to control any spot you like.) Smoother, safer traffic.',
+  },
 
   mall: {
     name: 'Shopping Mall', cat: 'industry', icon: '🛍️', color: '#d98fc0', customizable: true,

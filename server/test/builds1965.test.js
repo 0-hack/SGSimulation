@@ -41,7 +41,7 @@ try {
 
   // the later "world technology" builds (power & housing invented in the world,
   // adoptable here when their year comes) also render real geometry.
-  const TECH = ['nuclear','gas_power','waste_energy','hdb_highrise'];
+  const TECH = ['nuclear','gas_power','waste_energy','hdb_highrise','street_lamp','traffic_light'];
   const techR = await p.evaluate((TECH)=>{
     const v=window.__sgview, out=[]; const N=v.land.length; let cx=-1, cy=-1;
     for(let y=4;y<N-4 && cx<0;y++) for(let x=4;x<N-4;x++){ if(v.isLand(x,y) && !v.buildings.has(`${x},${y}`) && !v.reserveMask?.[y]?.[x]){ cx=x; cy=y; break; } }

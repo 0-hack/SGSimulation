@@ -82,8 +82,8 @@ try {
     const mid = pts[Math.floor(pts.length/2)];
     return [mid.x, mid.z];
   });
-  await frame('p4-lamps-night', demo, -0.5, 0.62, 11, false);
-  await frame('p4-lamps-day',   demo, -0.5, 0.62, 11, true);
+  await frame('p4-lamps-night', demo, -0.5, 0.56, 34, false);
+  await frame('p4-lamps-day',   demo, -0.5, 0.56, 34, true);
   if (town) { await frame('p4-town-night', town, -0.7, 0.46, 42, false);
               await frame('p4-town-day',   town, -0.7, 0.46, 42, true); }
 } catch (e) { console.error('shots failed:', e); }

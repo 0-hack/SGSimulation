@@ -49,8 +49,8 @@ try {
   ok(r.named >= 18, `landmarks carry names for inspection (${r.named} named)`);
   ok(r.inGrid === r.placed, `every landmark is a real grid cell (${r.inGrid}/${r.placed})`);
   ok(r.dup === 0, 'heritage is drawn once — not duplicated by the grid mesh pass');
-  ok(r.fill >= 200, `the central districts are filled with real, demolishable shophouses (${r.fill})`);
-  ok(r.demolished, 'a town shophouse can be demolished (its cell is freed)');
+  ok(r.fill >= 40, `the central districts are lined with real, demolishable shophouse terraces (${r.fill})`);
+  ok(r.demolished, 'a town shophouse terrace can be demolished (its cells are freed)');
   ok(r.homes > 0 && r.jobs > 0, `the city functions: houses & employs people (homes ${r.homes}, jobs ${r.jobs})`);
   ok(r.powerRatio >= 1 && r.waterRatio >= 1, `the city is powered & watered from day one (power ${r.powerRatio}×, water ${r.waterRatio}×)`);
   ok(r.pressure <= 1.1, `the starting population is housed (pressure ${r.pressure}, pop ${r.pop})`);

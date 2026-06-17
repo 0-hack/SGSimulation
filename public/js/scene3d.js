@@ -922,6 +922,22 @@ export class Scene3D {
   _heritageFree(gx, gy) {
     return this.isLand(gx, gy) && !(this.heritageMask && this.heritageMask[gy][gx]) && !(this._roadMask && this._roadMask[gy][gx]);
   }
+  // Angle so a building's facade (local +Z) turns to FACE the nearest road cell.
+  // Returns null if no road is within reach (caller falls back to a default bearing).
+  _faceRoadAngle(gx, gy) {
+    if (!this._roadMask) return null;
+    for (let r = 1; r <= 7; r++) {
+      let bx = 0, by = 0, bd = 1e9, found = false;
+      for (let oy = -r; oy <= r; oy++) for (let ox = -r; ox <= r; ox++) {
+        if (Math.max(Math.abs(ox), Math.abs(oy)) !== r) continue;     // ring at radius r
+        const x = gx + ox, y = gy + oy;
+        if (x < 0 || y < 0 || x >= N || y >= N || !this._roadMask[y][x]) continue;
+        const d = ox * ox + oy * oy; if (d < bd) { bd = d; bx = ox; by = oy; found = true; }
+      }
+      if (found) return Math.atan2(bx, -by);   // +gx → +worldX, +gy → −worldZ
+    }
+    return null;
+  }
   _buildHeritage1965(list) {
     if (this.heritageGroup) this.scene.remove(this.heritageGroup);
     const g = new THREE.Group(); this.scene.add(g); this.heritageGroup = g;
@@ -945,7 +961,11 @@ export class Scene3D {
       m.scale.setScalar(sc);
       const rd = this._roadDir && this._roadDir[gy][gx];
       m.position.set(c.x, this.terrainHeight(gx, gy), c.z);
-      m.rotation.y = (rd == null || Number.isNaN(rd)) ? Math.floor(Math.random() * 4) * Math.PI / 2 : rd; // face the street
+      // shophouses front the street: their facade (+Z) turns to FACE the nearest road,
+      // not run alongside it; other works keep the along-street bearing.
+      const faceRoad = key === 'shophouse' ? this._faceRoadAngle(gx, gy) : null;
+      m.rotation.y = faceRoad != null ? faceRoad
+        : (rd == null || Number.isNaN(rd)) ? Math.floor(Math.random() * 4) * Math.PI / 2 : rd;
       g.add(m);
       this.heritageMask[gy][gx] = true;
       if (name) this.heritageInfo.set(`${gx},${gy}`, name);
@@ -983,73 +1003,78 @@ export class Scene3D {
   // body with a window band that GLOWS at night, a clay roof and a street door.
   // Shares materials so hundreds of them stay cheap, and is an individual mesh so the
   // player can DEMOLISH each one. (Built via the heritage system; not in the economy.)
-  _makeFillShophouse(wallMat, h) {
-    const g = new THREE.Group();
-    // Built at world scale (~one grid cell wide) so neighbouring cells abut into a
-    // continuous shophouse terrace — the side-by-side rows of the 1965 town centre.
-    const w = 2.3, d = 2.0;
-    g.add(partBox(w, h, d, wallMat, 0, h / 2, 0));                                 // body
-    g.add(partBox(w + 0.04, 0.66, d + 0.04, this._fillWinMat, 0, h * 0.64, 0));    // upper window band (glows at night)
-    g.add(partBox(w + 0.14, 0.32, d + 0.16, this._fillRoofMat, 0, h + 0.14, 0));   // clay roof slab
-    g.add(partBox(w * 0.5, 0.5, 0.08, this._fillWinMat, 0, h * 0.18, d / 2 + 0.03)); // lit shopfront
-    g.add(partBox(0.46, h * 0.34, 0.06, this._fillDoorMat, w * 0.28, h * 0.17, d / 2 + 0.05)); // street door
-    return g;
-  }
   _fillUrbanDensity() {
-    // [cx, cy, normalised radius, fill probability] — the dense built-up areas
+    // [cx, cy, normalised radius] — the dense built-up areas of the 1966 town.
     const districts = [
-      [0.444, 0.354, 0.034, 0.92], // Chinatown / Raffles Place / the CBD river mouth
-      [0.463, 0.352, 0.020, 0.92], // Collyer Quay waterfront
-      [0.476, 0.398, 0.030, 0.94], // Beach Road & Bugis
-      [0.491, 0.420, 0.028, 0.92], // Kampong Glam / Rochor / Jalan Besar
-      [0.518, 0.434, 0.030, 0.9],  // Kallang
-      [0.547, 0.444, 0.032, 0.9],  // Geylang
-      [0.583, 0.453, 0.026, 0.86], // Katong / Joo Chiat
-      [0.412, 0.400, 0.022, 0.82], // Tiong Bahru / Bukit Ho Swee
-      [0.345, 0.423, 0.026, 0.66], // Queenstown surrounds
+      [0.444, 0.354, 0.034], // Chinatown / Raffles Place / the CBD river mouth
+      [0.463, 0.352, 0.020], // Collyer Quay waterfront
+      [0.476, 0.398, 0.030], // Beach Road & Bugis
+      [0.491, 0.420, 0.028], // Kampong Glam / Rochor / Jalan Besar
+      [0.518, 0.434, 0.030], // Kallang
+      [0.547, 0.444, 0.032], // Geylang
+      [0.583, 0.453, 0.026], // Katong / Joo Chiat
+      [0.412, 0.400, 0.022], // Tiong Bahru / Bukit Ho Swee
+      [0.345, 0.423, 0.026], // Queenstown surrounds
     ];
-    // Fill each district SOLID (every eligible cell) so the shophouses form continuous
-    // terraces — packed rows, not a scatter. Real demolishable buildings are heavier than
-    // instanced blocks, so spend a fixed budget district-by-district: the inner town
-    // centres come out fully dense, outer fringes thin out once the budget is gone.
-    const MAX = 600;
-    const seen = new Set();
-    let cells = [];
-    for (const [dcx, dcy, rad] of districts) {
-      if (cells.length >= MAX) break;
-      const rC = Math.max(1, Math.round(rad * N)), ccx = Math.round(dcx * N), ccy = Math.round(dcy * N);
-      for (let y = ccy - rC; y <= ccy + rC; y++) for (let x = ccx - rC; x <= ccx + rC; x++) {
-        if (x < 0 || y < 0 || x >= N || y >= N) continue;
-        const nx = (x - ccx) / rC, ny = (y - ccy) / rC; if (nx * nx + ny * ny > 1) continue;
-        const key = y * N + x; if (seen.has(key)) continue;
-        if (this.reserveMask?.[y]?.[x] || this.riverMask?.[y]?.[x]) continue;
-        if (this.heritageMask[y][x]) continue;                          // already taken by a landmark
-        if (!this._solidLand(x, y)) continue;                           // strictly inland — never on the shore
-        if (this._roadMask && this._roadMask[y][x]) continue;           // off the carriageway (blocks front the street)
-        seen.add(key); cells.push([x, y]);
+    // Lamp/heritage placement needs to know where the shophouse town is.
+    this._shopMask = Array.from({ length: N }, () => new Uint8Array(N));
+    const inDistrict = (wx, wz) => {
+      for (const [dcx, dcy, rad] of districts) {
+        if (Math.hypot(wx - (dcx - 0.5) * WORLD, wz - (0.5 - dcy) * WORLD) <= rad * WORLD) return true;
+      }
+      return false;
+    };
+    // Real shophouses LINE the street in neat terraces: the shopfront + door + the
+    // upper louvered windows all face the carriageway, set back behind a five-foot-way
+    // gap where people walk and cars pass. We march along each town street and tile
+    // terraces end-to-end on both kerbs, fronts to the road. Each terrace reuses the
+    // proper `makeBuilding('shophouse')` model, collapsed per-material so it stays a
+    // single, individually-demolishable object without a swarm of meshes.
+    const SC = 0.5, TW = 4 * 2.05 * SC, DEP = 4.6 * SC;   // terrace world width / depth
+    const STEP = TW + 0.3, SETBACK = 2.25, MAX = 150;
+    const w2c = (wx, wz) => [Math.round(wx / TILE + N / 2), Math.round(N / 2 - wz / TILE)];
+    const okCell = (gx, gy) => gx >= 2 && gy >= 2 && gx < N - 2 && gy < N - 2 &&
+      this._solidLand(gx, gy) && !this.heritageMask[gy][gx] && !(this._roadMask && this._roadMask[gy][gx]) &&
+      !this.reserveMask?.[gy]?.[gx] && !this.riverMask?.[gy]?.[gx];
+    let count = 0;
+    const placeTerrace = (wx, wz, faceAng) => {
+      const lenx = Math.cos(faceAng), lenz = -Math.sin(faceAng);   // local +X (terrace length) in world
+      const depx = Math.sin(faceAng), depz = Math.cos(faceAng);    // local +Z (facade normal → road)
+      const cells = [];
+      for (let a = -TW / 2; a <= TW / 2 + 1e-3; a += TILE * 0.7) for (let b = -DEP / 2; b <= DEP / 2 + 1e-3; b += TILE * 0.7) {
+        const gc = w2c(wx + lenx * a + depx * b, wz + lenz * a + depz * b);
+        if (!okCell(gc[0], gc[1])) return false;
+        cells.push(gc);
+      }
+      const ctr = w2c(wx, wz);
+      const built = makeBuilding('shophouse', null);
+      const m = this._mergeGroupByMaterial(built);          // ~15 meshes instead of ~60
+      m.scale.setScalar(SC);
+      m.position.set(wx, this.terrainHeight(ctr[0], ctr[1]), wz);
+      m.rotation.y = faceAng;                                // facade (+Z) faces the road
+      this.heritageGroup.add(m);
+      for (const [gx, gy] of cells) { this.heritageMask[gy][gx] = true; this._shopMask[gy][gx] = 1; }
+      this.heritagePlacements.push({ key: 'shophouse', gx: ctr[0], gy: ctr[1], name: null, mesh: m, decor: true, cells });
+      count++;
+      return true;
+    };
+    for (const e of (ROAD_EDGES_1966 || [])) {
+      if (count >= MAX) break;
+      const a = ROAD_NODES_1966[e[0]], b = ROAD_NODES_1966[e[1]]; if (!a || !b) continue;
+      const ax = a[0], az = a[1], bx = b[0], bz = b[1];
+      if (!inDistrict((ax + bx) / 2, (az + bz) / 2)) continue;
+      const L = Math.hypot(bx - ax, bz - az); if (L < STEP) continue;
+      const dx = (bx - ax) / L, dz = (bz - az) / L, perpx = -dz, perpz = dx;
+      for (let s = STEP * 0.5; s <= L - STEP * 0.4 && count < MAX; s += STEP) {
+        const cx = ax + dx * s, cz = az + dz * s;
+        for (const side of [1, -1]) {
+          if (count >= MAX) break;
+          const wx = cx + perpx * side * SETBACK, wz = cz + perpz * side * SETBACK;
+          placeTerrace(wx, wz, Math.atan2(-perpx * side, -perpz * side));   // facade back toward the road
+        }
       }
     }
-    if (!cells.length) return;
-    const pastels = [0xe8b04b, 0xd9694f, 0x6fae9e, 0xe2cd7a, 0xc97f9c, 0x7fa8c9, 0xcf8f5a, 0xb86b4a, 0xe7e0cf, 0xd6c08a];
-    this._fillWallMats = this._fillWallMats || pastels.map((c) => mat(c));         // shared, so hundreds stay cheap
-    this._fillWinMat = this._fillWinMat || reg(mat(0x2a3a48), 1.5);                // shared window band that lights up at night
-    this._fillRoofMat = this._fillRoofMat || mat(0xa85a3a);
-    this._fillDoorMat = this._fillDoorMat || mat(0x3a2c20);
-    const rnd = (s) => { s = Math.sin(s) * 43758.5453; return s - Math.floor(s); };
-    for (const [x, y] of cells) {
-      const c = cellToWorld(x, y), hT = this.terrainHeight(x, y);
-      const h = 2.4 + rnd(x * 6.1 + y * 1.3) * 1.4;                                // 2–3 storeys, varied
-      const m = this._makeFillShophouse(this._fillWallMats[(x * 5 + y * 3) % this._fillWallMats.length], h);
-      // Front the nearest street so neighbours line up into a terrace; tiny jitter only.
-      const d = this._roadDir && this._roadDir[y][x];
-      const base = (Number.isNaN(d) || d == null) ? (Math.abs((x + y) % 2) ? 0 : Math.PI / 2) : d;
-      const ang = base + (rnd(x * 3.1 + y * 7.7) - 0.5) * 0.06;
-      m.position.set(c.x, hT, c.z); m.rotation.y = ang;
-      this.heritageGroup.add(m);
-      this.heritageMask[y][x] = true;
-      this.heritagePlacements.push({ key: 'shophouse', gx: x, gy: y, name: null, mesh: m, decor: true }); // demolishable, no economy
-    }
-    this._urbanFillCount = cells.length;
+    this._urbanFillCount = count;
   }
   // Nearest land cell that's free for heritage AND clear of the rendered roads.
   _nearestNonRoad(gx, gy, rad) {
@@ -1067,6 +1092,7 @@ export class Scene3D {
   _relocateHeritageOffRoads() {
     if (this._heritageRoadFixed || !this.heritagePlacements) return;
     for (const p of this.heritagePlacements) {
+      if (p.decor) continue;                       // town terraces are already set back off the road
       if (!this.isRoadAt(p.gx, p.gy)) continue;
       const s = this._nearestNonRoad(p.gx, p.gy, SNAP_R); if (!s) continue;
       if (this.heritageMask) { this.heritageMask[p.gy][p.gx] = false; this.heritageMask[s.y][s.x] = true; }
@@ -1094,14 +1120,20 @@ export class Scene3D {
   // its model, free its cell (so the player can build there), and clear the name.
   removeHeritageVisual(x, y) {
     if (!this.heritagePlacements) return false;
-    const i = this.heritagePlacements.findIndex((p) => p.gx === x && p.gy === y);
+    // match the single cell OR any cell of a multi-cell terrace
+    const i = this.heritagePlacements.findIndex((p) => (p.gx === x && p.gy === y) ||
+      (p.cells && p.cells.some(([cx, cy]) => cx === x && cy === y)));
     if (i < 0) return false;
     const p = this.heritagePlacements[i];
     if (p.mesh && this.heritageGroup) this.heritageGroup.remove(p.mesh);
-    if (this.heritageMask && this.heritageMask[y]) this.heritageMask[y][x] = false;
-    if (this.heritageInfo) this.heritageInfo.delete(`${x},${y}`);
+    const free = p.cells && p.cells.length ? p.cells : [[p.gx, p.gy]];
+    for (const [cx, cy] of free) {
+      if (this.heritageMask && this.heritageMask[cy]) this.heritageMask[cy][cx] = false;
+      if (this._shopMask && this._shopMask[cy]) this._shopMask[cy][cx] = 0;
+      if (this.heritageInfo) this.heritageInfo.delete(`${cx},${cy}`);
+    }
     this.heritagePlacements.splice(i, 1);
-    const c = cellToWorld(x, y); this._spawnDust(c.x, c.z, 0xbfb09a, 22);
+    const c = cellToWorld(p.gx, p.gy); this._spawnDust(c.x, c.z, 0xbfb09a, 26);
     return true;
   }
   _placeStructures(list, prop) {
@@ -3324,8 +3356,9 @@ export class Scene3D {
     this.scene.add(this.arrowMesh);
   }
 
-  // Traffic lights at real junctions (3+ roads): incident roads are split into
-  // two phases that alternate; vehicles stop on red at the stop line.
+  // Traffic lights go where they belong: at CROSS junctions (4+ roads meeting), plus
+  // some 3-way junctions inside the shophouse town. Incident roads are split into two
+  // phases that alternate; vehicles stop on red at the stop line.
   _buildLights() {
     if (this.lightGroup) this.scene.remove(this.lightGroup);
     this.lightGroup = new THREE.Group(); this.scene.add(this.lightGroup);
@@ -3336,6 +3369,14 @@ export class Scene3D {
       const links = this.navAdj[n];
       if (links.length < 3) continue;
       const node = this.navNodes[n];
+      // cross junctions everywhere; T-junctions only where they front the shophouses
+      const ngx = Math.round(node.x / TILE + N / 2), ngy = Math.round(N / 2 - node.z / TILE);
+      let nearShops = false;
+      if (this._shopMask) for (let oy = -3; oy <= 3 && !nearShops; oy++) for (let ox = -3; ox <= 3; ox++) {
+        const gx = ngx + ox, gy = ngy + oy;
+        if (gx >= 0 && gy >= 0 && gx < N && gy < N && this._shopMask[gy][gx]) { nearShops = true; break; }
+      }
+      if (links.length < 4 && !nearShops) continue;
       // bearing of each incident road leaving the node
       const bear = (l) => {
         const pts = this.edgePts[l.edge];
@@ -3374,6 +3415,31 @@ export class Scene3D {
     out.setIndex(new THREE.BufferAttribute(idx, 1));
     return out;
   }
+  // Collapse a built model (a Group of many small meshes, e.g. makeBuilding output)
+  // into ONE Group with a single merged mesh per material — keeping the detailed look
+  // but cutting dozens of meshes down to a handful, while staying a single removable
+  // object. Source meshes' local transforms are baked in (group left at identity).
+  _mergeGroupByMaterial(src) {
+    src.position.set(0, 0, 0); src.rotation.set(0, 0, 0); src.scale.set(1, 1, 1);
+    src.updateMatrixWorld(true);
+    const buckets = new Map();
+    src.traverse((o) => {
+      if (!o.isMesh) return;
+      const g = o.geometry.clone();
+      if (!g.attributes.normal) g.computeVertexNormals();
+      if (!g.index) { const n = g.attributes.position.count, a = n > 65535 ? new Uint32Array(n) : new Uint16Array(n); for (let k = 0; k < n; k++) a[k] = k; g.setIndex(new THREE.BufferAttribute(a, 1)); }
+      g.applyMatrix4(o.matrixWorld);
+      const mat = Array.isArray(o.material) ? o.material[0] : o.material;
+      if (!buckets.has(mat)) buckets.set(mat, []);
+      buckets.get(mat).push(g);
+    });
+    const out = new THREE.Group();
+    for (const [mat, geos] of buckets) {
+      const m = new THREE.Mesh(this._mergeGeos(geos), mat); m.castShadow = true; m.receiveShadow = true;
+      out.add(m); for (const g of geos) g.dispose();
+    }
+    return out;
+  }
   // Line the surface roads with street lamps: spaced along each road, alternating
   // sides, the lamp head reaching over the carriageway and GLOWING after dark. Built
   // from the live road network, so player roads get them automatically and they
@@ -3389,32 +3455,34 @@ export class Scene3D {
       const headG = new THREE.SphereGeometry(0.12, 8, 6).translate(0, 2.38, 0.48);
       this._lampTpl = { struct: this._mergeGeos([postG, armG]), head: headG };
     }
-    const STEP = 17, MAX = 480;
+    const STEP = 20, MAX = 520;                                     // fixed distance between lamps along a road
     const structs = [], heads = [];
     const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0), scl = new THREE.Vector3(1, 1, 1), pos = new THREE.Vector3();
-    let count = 0, sideFlip = 0;
+    let count = 0;
+    const addLamp = (cx, cz, perpx, perpz, side, off) => {
+      const lx = cx + perpx * off * side, lz = cz + perpz * off * side;
+      const ry = Math.atan2(-perpx * side, -perpz * side);          // head reaches IN over the carriageway
+      q.setFromAxisAngle(up, ry); pos.set(lx, this._roadY(lx, lz), lz); m4.compose(pos, q, scl);
+      structs.push(this._lampTpl.struct.clone().applyMatrix4(m4));
+      heads.push(this._lampTpl.head.clone().applyMatrix4(m4));
+      count++;
+    };
     for (let e = 0; e < this.edgePts.length && count < MAX; e++) {
       const meta = this.edgeMeta[e]; if (!meta || !meta.walk || meta.elevated) continue;   // surface roads only
       const pts = this.edgePts[e]; if (!pts || pts.length < 2) continue;
       const T = ROAD_TYPES[meta.type] || ROAD_TYPES.road;
       const off = (T.renderHW || T.width / 2 || 0.34) + 0.85;       // sit on the verge, just off the kerb
-      let acc = STEP * 0.5;                                          // first lamp a bit in from the end
+      let acc = STEP * 0.5;                                          // first pair a fixed offset in from the end
       for (let i = 0; i < pts.length - 1 && count < MAX; i++) {
         const a = pts[i], b = pts[i + 1];
         let dx = b.x - a.x, dz = b.z - a.z; const segL = Math.hypot(dx, dz); if (segL < 1e-3) continue;
         dx /= segL; dz /= segL;
         const perpx = -dz, perpz = dx;                              // unit normal to the road
         while (acc <= segL && count < MAX) {
-          const side = (sideFlip++ & 1) ? 1 : -1;                   // alternate kerbs
           const cx = a.x + dx * acc, cz = a.z + dz * acc;
-          const lx = cx + perpx * off * side, lz = cz + perpz * off * side;
-          const ly = this._roadY(lx, lz);
-          // face the head IN over the road: local +Z points toward the carriageway (−side·perp)
-          const ry = Math.atan2(-perpx * side, -perpz * side);
-          q.setFromAxisAngle(up, ry); pos.set(lx, ly, lz); m4.compose(pos, q, scl);
-          structs.push(this._lampTpl.struct.clone().applyMatrix4(m4));
-          heads.push(this._lampTpl.head.clone().applyMatrix4(m4));
-          count++; acc += STEP;
+          addLamp(cx, cz, perpx, perpz, 1, off);                    // a matched PAIR, one on each kerb,
+          if (count < MAX) addLamp(cx, cz, perpx, perpz, -1, off);  // so the spacing reads as a regular ladder
+          acc += STEP;
         }
         acc -= segL;
       }
@@ -3913,9 +3981,9 @@ export function makeBuilding(key, theme) {
         g.add(partBox(uw - 0.06, 0.16, 1.0, mat(i % 2 ? 0xb5402f : 0x35613f), ux, 1.92, fz + 0.46)); // flat awning
         for (const sx of [-1, 1])
           g.add(cyl(0.1, 0.1, 1.9, 0xe8e2d2, ux + sx * (uw / 2 - 0.16), 0.95, fz + 0.92));    // verandah columns
-        // upper-floor pair of louvered, shuttered windows
+        // upper-floor pair of louvered, shuttered windows — the panes glow warm after dark
         for (const sx of [-0.44, 0.44]) {
-          g.add(partBox(0.42, 1.0, 0.06, mat(0x32584a), ux + sx, 3.0, fz + 0.02));            // window
+          g.add(partBox(0.42, 1.0, 0.06, mat(0xd7ad5e, {}, 1.4), ux + sx, 3.0, fz + 0.02));   // window (lights up at night)
           g.add(partBox(0.13, 1.0, 0.08, mat(0xece4cf), ux + sx - 0.27, 3.0, fz + 0.05));     // shutter
           g.add(partBox(0.13, 1.0, 0.08, mat(0xece4cf), ux + sx + 0.27, 3.0, fz + 0.05));
         }

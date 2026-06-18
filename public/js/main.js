@@ -64,6 +64,7 @@ const G = {
   lastFrame: 0,
   hudTimer: 0,
   build: { cat: 'residential', selected: null, bulldoze: false, theme: null, rot: 0 },
+  pieceRot: 0,                  // running orientation of the road piece being aimed (for the dial)
   road: { tool: null, type: 'road', elevated: false, pending: [] },
   reclaim: { active: false },  // land-reclamation tool: tap sea to fill land
   editPause: false,            // true while a build/road/reclaim tool is active — freezes time & the world
@@ -98,7 +99,7 @@ function boot() {
   // exit "place mode": the ✕ Done button or the Esc key
   $('tool-banner-stop').onclick = cancelTools;
   $('tool-banner-rotate').onclick = () => {
-    if (G.view && G.view.pieceMode) G.view.rotatePiece(Math.PI / 4);
+    if (G.view && G.view.pieceMode) rotatePieceBy(Math.PI / 4);
     else if (G.build.selected) rotateBuild(Math.PI / 12); // 15° per tap
   };
   // commit bar for a drawn route / reclaim area
@@ -110,7 +111,7 @@ function boot() {
     if (e.key === 'Escape' && G._pendingCommit) { closeCommit(true); toast('Discarded.'); e.preventDefault(); return; }
     if (e.key === 'Escape' && activeTool()) { cancelTools(); toast('Stopped placing.'); e.preventDefault(); }
     if (e.key === 'r' || e.key === 'R') {
-      if (G.view && G.view.pieceMode) { G.view.rotatePiece(Math.PI / 4); e.preventDefault(); }
+      if (G.view && G.view.pieceMode) { rotatePieceBy(Math.PI / 4); e.preventDefault(); }
       else if (G.build.selected) { rotateBuild(Math.PI / 12); e.preventDefault(); }
     }
   });
@@ -451,15 +452,41 @@ function updateToolBanner() {
   const piece = G.road.tool === 'straight' || G.road.tool === 'curveL' || G.road.tool === 'curveR';
   // rotate is available for free road pieces AND for any building being placed
   $('tool-banner-rotate').classList.toggle('hidden', !(piece || G.build.selected));
+  updateRotDial();   // show the live-facing dial alongside the rotate button
   el.classList.remove('hidden');
 }
 // Spin the building (and its ghost preview) before it's placed. Steps of 15° give
 // effectively any-angle control; the chosen angle rides along onto the placed cell.
+// The banner dial shows the live orientation so you can SEE the facing while the
+// ghost itself sits under your finger on the rotate button.
 function rotateBuild(delta) {
   G.build.rot = ((G.build.rot || 0) + delta) % (Math.PI * 2);
   if (G.view) G.view.setBuildRotation(G.build.rot);
-  const deg = ((Math.round(G.build.rot * 180 / Math.PI) % 360) + 360) % 360;
-  toast(`Rotated to ${deg}°`);
+  updateRotDial();
+}
+function rotatePieceBy(delta) {
+  G.pieceRot = ((G.pieceRot || 0) + delta) % (Math.PI * 2);
+  if (G.view) G.view.rotatePiece(delta);
+  updateRotDial();
+}
+// Live "current facing" dial in the tool banner: a top-down footprint whose front
+// marker spins to the chosen angle, plus the degrees. Sits at the far left of the
+// banner, clear of the rotate button, so it's never hidden by the cursor.
+function rotDialState() {
+  if (G.build.selected) return { rad: G.build.rot || 0, show: true };
+  const piece = G.road.tool === 'straight' || G.road.tool === 'curveL' || G.road.tool === 'curveR';
+  if (piece && G.view && G.view.pieceMode) return { rad: G.pieceRot || 0, show: true };
+  return { rad: 0, show: false };
+}
+function updateRotDial() {
+  const dial = $('tool-banner-dial'); if (!dial) return;
+  const st = rotDialState();
+  dial.classList.toggle('hidden', !st.show);
+  if (!st.show) return;
+  const deg = ((Math.round(st.rad * 180 / Math.PI) % 360) + 360) % 360;
+  const face = dial.querySelector('.tb-dial-face');
+  if (face) face.style.transform = `rotate(${deg}deg)`;   // top-down footprint turns with the building
+  const d = $('tool-banner-deg'); if (d) d.textContent = deg + '°';
 }
 // Enter/leave edit mode: pause time (the loop checks G.editPause), freeze the
 // world animation, and flag the UI so it's obvious editing is on.
@@ -645,6 +672,7 @@ function onPieceChain(mergedPts) {
 function selectRoadTool(tool) {
   G.road.tool = G.road.tool === tool ? null : tool;
   G.road.pending = [];
+  G.pieceRot = 0;             // fresh orientation for a newly-picked piece tool
   G.build.selected = null; G.build.bulldoze = false; G.reclaim.active = false;
   G.view.setPreview(null); G.view.setBulldoze(false); G.view.setPaintMode(false);
   applyRoadToolMode();

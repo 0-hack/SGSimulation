@@ -120,6 +120,10 @@
   <!-- Active placement tool indicator — shows while building/reclaiming so you
        always know you're in "place mode", with a clear way to stop. -->
   <div id="tool-banner" class="tool-banner hidden">
+    <span id="tool-banner-dial" class="tb-dial hidden" title="Current facing">
+      <span class="tb-dial-face"><span class="tb-dial-front"></span></span>
+      <span id="tool-banner-deg" class="tb-deg">0°</span>
+    </span>
     <span id="tool-banner-text"></span>
     <button id="tool-banner-rotate" class="hidden">↻ Rotate</button>
     <button id="tool-banner-stop">✕ Done</button>

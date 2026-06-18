@@ -402,7 +402,7 @@ function onTileTap(x, y) {
   // While positioning a placed object, a tap MOVES it to the new spot (shift).
   if (G.adjust) {
     let tx = x, ty = y;
-    if (G.adjust.key === 'mrt') { const s = G.view._nearestTrackCell(x, y, 3, true); if (s && placementOk(s.x, s.y)) { tx = s.x; ty = s.y; } }
+    if (G.adjust.key === 'mrt') { const s = G.view._nearestTrackCell(x, y, 4, true); if (s && placementOk(s.x, s.y)) { tx = s.x; ty = s.y; } }
     if (!placementOk(tx, ty)) { toast('Can\'t put it there.'); return; }
     G.adjust.x = tx; G.adjust.y = ty; G.view.moveAdjust(tx, ty);
     return;
@@ -411,7 +411,7 @@ function onTileTap(x, y) {
   if (b.selected) {
     // MRT stations snap onto the MRT line you've drawn, so the two link up.
     let tx = x, ty = y;
-    if (b.selected === 'mrt') { const s = G.view._nearestTrackCell(x, y, 3, true); if (s && placementOk(s.x, s.y)) { tx = s.x; ty = s.y; } }
+    if (b.selected === 'mrt') { const s = G.view._nearestTrackCell(x, y, 4, true); if (s && placementOk(s.x, s.y)) { tx = s.x; ty = s.y; } }
     if (!placementOk(tx, ty)) {
       if (G.view.heritageAt && G.view.heritageAt(tx, ty)) toast(`🏛 ${G.view.heritageAt(tx, ty)} — a 1965 landmark already stands here.`);
       else if (!G.view.isLand(tx, ty)) toast('You can only build on land. 🏝️');

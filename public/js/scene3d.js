@@ -2817,23 +2817,25 @@ export class Scene3D {
       this._addPillars(g, pts, 0.55);
       tracks.push({ pts, kind: 'train' });
     }
-    for (const dense of mrtways) {           // MRT: a clean concrete guideway on slim piers (no ballast/sleepers)
-      const n = dense.length, deckY = this._elevatedDeckY(dense, 2);
-      const pts = dense.map((q, i) => { const gy = this._roadY(q.x, q.z), t = i / (n - 1), ramp = Math.min(1, Math.min(t, 1 - t) / 0.18); return new THREE.Vector3(q.x, gy + ramp * (deckY - gy), q.z); });
+    for (const dense of mrtways) {           // MRT: a slim concrete guideway sized to meet the station
+      // A low, level deck (just above the station's platform height) that stays
+      // elevated end-to-end — so the ends meet a station instead of ramping to the dirt.
+      const deckY = this._corridorTopY(dense, 1.2) + 1.9;
+      const pts = dense.map((q) => new THREE.Vector3(q.x, deckY, q.z));
       this._mrtGuideway(g, pts);
       tracks.push({ pts, kind: 'mrt' });
     }
     this._playerTrainTracks = tracks;
     this._buildTrains();
   }
-  // A sleek MRT viaduct: a pale box-girder deck on slim round piers, with a thin
-  // running rail down the middle — distinct from the ballasted heavy-rail track.
+  // A sleek MRT viaduct: a slim pale box-girder deck on thin round piers, with a thin
+  // running rail down the middle. Kept narrow + low so it matches the MRT station.
   _mrtGuideway(g, pts) {
     if (!pts || pts.length < 2) return;
-    this._addRibbon(g, pts, 1.25, 0xc7ccd1, 0.0);        // box-girder deck (pale concrete)
-    this._addRibbon(g, pts, 1.45, 0x9aa2a9, -0.55);      // deck underside / parapet shadow
-    this._addRibbon(g, pts, 0.18, 0x6a7178, 0.12);       // centre running beam
-    this._addPillars(g, pts, 0.5);
+    this._addRibbon(g, pts, 0.95, 0xc7ccd1, 0.0);       // box-girder deck (pale concrete) — slimmer
+    this._addRibbon(g, pts, 1.08, 0x9aa2a9, -0.4);      // shallow underside / parapet shadow
+    this._addRibbon(g, pts, 0.14, 0x6a7178, 0.1);       // centre running beam
+    this._addPillars(g, pts, 0.34);                      // thin piers
   }
   // A fill embankment under the track wherever the graded line sits above the (now
   // cut) ground — a skirt from the ballast edge down to the terrain on each side.
@@ -2994,7 +2996,7 @@ export class Scene3D {
         track: tk, cars: train.cars, total, carU,
         u: Math.random() * 0.6, dir: 1,
         speed: era === 'mrt' ? 13 : era === 'steam' ? 6 : 9,
-        rideY: tk.kind === 'mrt' ? 0.5 : 0.34,
+        rideY: tk.kind === 'mrt' ? 0.4 : 0.34,
       });
     }
   }

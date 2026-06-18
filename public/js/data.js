@@ -292,13 +292,7 @@ export const BUILDINGS = {
     name: 'MRT Station', cat: 'roads', icon: '🚇', color: '#5db85d',
     cost: 100, upkeep: 2.0, year: 1987, homes: 0, jobs: 200,
     power: -20, water: -4, pollution: -3, happiness: 8, education: 0,
-    desc: 'Mass Rapid Transit station. Drop it on (or beside) an MRT viaduct line so trains call here. Cuts congestion and pollution, and boosts happiness citywide.',
-  },
-  mrt_line: {
-    name: 'Elevated MRT Viaduct', cat: 'roads', icon: '🚝', color: '#aab6c0',
-    cost: 70, upkeep: 1.5, year: 1987, homes: 0, jobs: 120,
-    power: -10, water: -2, pollution: -5, happiness: 6,
-    desc: 'A single span of elevated guideway. (Tip: pick the 🚇 MRT mode in the Transport toolkit to DRAW a whole viaduct line — straight, curved or freeform — instead of placing spans one by one.)',
+    desc: 'Mass Rapid Transit station. Draw the elevated line with the 🚇 MRT mode in the Transport toolkit, then drop a station on the line — the track links up to it. Cuts congestion and pollution, and boosts happiness citywide.',
   },
   rail_station: {
     name: 'Train Station', cat: 'roads', icon: '🚉', color: '#c7a05a',
@@ -624,10 +618,10 @@ export const HISTORICAL_EVENTS = [
     choice: {
       prompt: 'Approve the MRT?',
       options: [
-        { label: 'Approve the MRT — build the network', fx: { treasury: -30, approval: 2, unlockMany: ['mrt', 'mrt_line'],
+        { label: 'Approve the MRT — build the network', fx: { treasury: -30, approval: 2, unlockMany: ['mrt'],
           project: { id: 'mrt', title: 'Build the MRT network',
-            hint: 'Place 3 MRT Stations and 2 Elevated Viaducts — now in Build › Services',
-            need: [{ key: 'mrt', count: 3 }, { key: 'mrt_line', count: 2 }], reward: { approval: 8, growth: 0.03 } } } },
+            hint: 'Pick 🚇 MRT in Build › Transport to draw the elevated line, then place MRT Stations along it',
+            need: [{ key: 'mrt', count: 4 }], reward: { approval: 8, growth: 0.03 } } } },
         { label: 'Buses are enough', fx: { approval: -3 } },
       ],
     },

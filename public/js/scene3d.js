@@ -1829,7 +1829,13 @@ export class Scene3D {
   _drawSnap(x, z) {
     if (this._drawArea) return null;
     const maxD = Math.min(10, Math.max(3.5, this.cam.radius * 0.05));
-    if (this._drawRail) return this._nearestPolyEnd((this.state && this.state.railways) || [], x, z, maxD);
+    if (this._drawRail) {
+      // snap to an existing track end OR to a station, so an MRT line LINKS up to its
+      // MRT stations (and a railway to its train stations) as you draw.
+      const end = this._nearestPolyEnd((this.state && this.state.railways) || [], x, z, maxD);
+      const st = this._nearestStation(x, z, maxD, this._drawType === 'mrt' ? ['mrt'] : ['rail_station']);
+      return (st && (!end || st.d < end.d)) ? st : end;
+    }
     if (this._drawAir) return this._nearestPolyEnd((this.state && this.state.airstrips) || [], x, z, maxD);
     let best = null;
     for (const n of (this.navNodes || [])) { const d = Math.hypot(n.x - x, n.z - z); if (d < (best ? best.d : maxD)) best = { x: n.x, z: n.z, d, kind: 'node' }; }
@@ -1844,6 +1850,17 @@ export class Scene3D {
     for (const entry of list) {
       const poly = Array.isArray(entry) ? entry : (entry && entry.pts); if (!poly || poly.length < 2) continue;
       for (const idx of [0, poly.length - 1]) { const px = poly[idx][0], pz = poly[idx][1], d = Math.hypot(px - x, pz - z); if (d < (best ? best.d : maxD)) best = { x: px, z: pz, d, kind: 'end' }; }
+    }
+    return best;
+  }
+  // Nearest placed station building (by world position) of the given keys — lets a
+  // drawn track snap its endpoint onto a station so the two link up.
+  _nearestStation(x, z, maxD, keys) {
+    let best = null;
+    for (const [, e] of (this.buildings || [])) {
+      if (!e || !keys.includes(e.key) || !e.group) continue;
+      const p = e.group.position, d = Math.hypot(p.x - x, p.z - z);
+      if (d < (best ? best.d : maxD)) best = { x: p.x, z: p.z, d, kind: 'station' };
     }
     return best;
   }
@@ -4216,21 +4233,6 @@ export function makeBuilding(key, theme) {
       g.add(partBox(9.0, 0.5, 0.5, mat(col), 0, hy + 3.3, -1));                        // coloured roof ridge cap
       g.add(partBox(3.0, 1.7, 2.3, mat(0xd8dde1), 5.7, hy + 1.0, -1));                 // a train at the platform end
       g.add(partBox(2.8, 0.95, 0.16, mat(0xe23744), 0, hy + 0.5, 1.25));              // red "MRT" signboard
-    } else if (key === 'mrt_line') {
-      // a length of ELEVATED MRT guideway — just slim piers + deck + a train running
-      // along it (NO station building, so it reads clearly as track, not a station).
-      lawn(g, 9, 9, 0x8fa98a);
-      const deckY = 4.8;
-      for (const px of [-3.5, 0, 3.5]) {                                         // slim piers + caps
-        g.add(cyl(0.45, 0.6, deckY, 0xb9bfc4, px, deckY / 2, 0));
-        g.add(partBox(1.4, 0.45, 1.9, mat(0xa9b0b6), px, deckY + 0.22, 0));
-      }
-      g.add(partBox(9.4, 0.45, 1.9, mat(0xc7ccd1), 0, deckY + 0.5, 0));          // slim guideway deck
-      // a full-length train running along the deck (the obvious feature)
-      g.add(partBox(8.8, 1.8, 1.7, mat(0xe2e6e9), 0, deckY + 1.6, 0));           // train body
-      g.add(partBox(8.85, 0.62, 1.3, mat(0x29435c), 0, deckY + 1.9, 0));         // continuous window strip
-      g.add(partBox(8.8, 0.2, 1.75, mat(col), 0, deckY + 2.5, 0));               // coloured roof band
-      g.add(partBox(0.5, 1.5, 1.45, mat(0xcdd2d6), 4.5, deckY + 1.55, 0));       // tapered nose at the front
     } else if (key === 'rail_station') {
       // an old-school 1965 railway station: a cream colonial booking hall with a
       // clock tower, a long platform under a pitched canopy, and a train waiting.

@@ -64,6 +64,7 @@ const G = {
   lastFrame: 0,
   hudTimer: 0,
   build: { cat: 'residential', selected: null, bulldoze: false, theme: null, rot: 0 },
+  adjust: null,                 // { x, y, key, theme, rot } — a placed-but-not-yet-committed object being positioned
   pieceRot: 0,                  // running orientation of the road piece being aimed (for the dial)
   road: { tool: null, type: 'road', elevated: false, pending: [] },
   reclaim: { active: false },  // land-reclamation tool: tap sea to fill land
@@ -96,11 +97,14 @@ function boot() {
   $('sheet-close').onclick = closeSheet;
   document.querySelector('#sheet .sheet-backdrop').onclick = closeSheet;
 
-  // exit "place mode": the ✕ Done button or the Esc key
-  $('tool-banner-stop').onclick = cancelTools;
+  // ✓ Done: confirm the object you're positioning, else exit place mode.
+  $('tool-banner-stop').onclick = () => { if (G.adjust) commitAdjust(); else cancelTools(); };
+  // 🗑 Remove: discard the object you're positioning (nothing was charged yet).
+  $('tool-banner-remove').onclick = () => { if (G.adjust) cancelAdjust('Removed.'); };
   $('tool-banner-rotate').onclick = () => {
-    if (G.view && G.view.pieceMode) rotatePieceBy(Math.PI / 4);
-    else if (G.build.selected) rotateBuild(Math.PI / 12); // 15° per tap
+    if (G.adjust) rotateAdjust(Math.PI / 12);
+    else if (G.view && G.view.pieceMode) rotatePieceBy(Math.PI / 4);
+    else if (G.build.selected) rotateBuild(Math.PI / 12); // 15° per tap (pre-aims the ghost)
   };
   // commit bar for a drawn route / reclaim area
   $('dc-build').onclick = () => { const fn = G._pendingCommit; closeCommit(false); if (fn) fn(); };
@@ -109,9 +113,11 @@ function boot() {
     const t = e.target;
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
     if (e.key === 'Escape' && G._pendingCommit) { closeCommit(true); toast('Discarded.'); e.preventDefault(); return; }
+    if (e.key === 'Escape' && G.adjust) { cancelAdjust('Cancelled.'); e.preventDefault(); return; }
     if (e.key === 'Escape' && activeTool()) { cancelTools(); toast('Stopped placing.'); e.preventDefault(); }
     if (e.key === 'r' || e.key === 'R') {
-      if (G.view && G.view.pieceMode) { rotatePieceBy(Math.PI / 4); e.preventDefault(); }
+      if (G.adjust) { rotateAdjust(Math.PI / 12); e.preventDefault(); }
+      else if (G.view && G.view.pieceMode) { rotatePieceBy(Math.PI / 4); e.preventDefault(); }
       else if (G.build.selected) { rotateBuild(Math.PI / 12); e.preventDefault(); }
     }
   });
@@ -393,24 +399,33 @@ function onTileTap(x, y) {
     if (G.view.removeHeritageVisual && G.view.removeHeritageVisual(x, y)) { afterEdit(); toast('Demolished.'); return; } // decorative town shophouse (not in the economy)
     return;
   }
+  // While positioning a placed object, a tap MOVES it to the new spot (shift).
+  if (G.adjust) {
+    let tx = x, ty = y;
+    if (G.adjust.key === 'mrt') { const s = G.view._nearestTrackCell(x, y, 3, true); if (s && placementOk(s.x, s.y)) { tx = s.x; ty = s.y; } }
+    if (!placementOk(tx, ty)) { toast('Can\'t put it there.'); return; }
+    G.adjust.x = tx; G.adjust.y = ty; G.view.moveAdjust(tx, ty);
+    return;
+  }
   const heritage = G.view.heritageAt && G.view.heritageAt(x, y);
   if (b.selected) {
-    if (heritage) { toast(`🏛 ${heritage} — a 1965 landmark already stands here.`); return; }
-    if (!G.view.isLand(x, y)) { toast('You can only build on land. 🏝️'); return; }
-    if (G.view.isRoadAt(x, y)) { toast('There is a road here — you can\'t build on the road. 🛣️'); return; }
-    if (canPlace(G.state, x, y, b.selected)) {
-      const theme = BUILDINGS[b.selected].customizable ? b.theme : null;
-      build(G.state, x, y, b.selected, theme);
-      if (G.state.grid[y][x]) G.state.grid[y][x].r = b.rot || 0; // remember the chosen orientation
-      G.view.syncConstruction(G.state); // shows the construction site (it tops out over time)
-      afterEdit();
-      toast(`${BUILDINGS[b.selected].name} — construction started.`);
-    } else {
-      const bd = BUILDINGS[b.selected];
-      if (G.state.grid[y][x]) toast('Tile occupied.');
-      else if (G.state.treasury < buildingCost(G.state, b.selected)) toast(`Need ${money(buildingCost(G.state, b.selected))} to build ${bd.name}.`);
-      else toast('Cannot build here.');
+    // MRT stations snap onto the MRT line you've drawn, so the two link up.
+    let tx = x, ty = y;
+    if (b.selected === 'mrt') { const s = G.view._nearestTrackCell(x, y, 3, true); if (s && placementOk(s.x, s.y)) { tx = s.x; ty = s.y; } }
+    if (!placementOk(tx, ty)) {
+      if (G.view.heritageAt && G.view.heritageAt(tx, ty)) toast(`🏛 ${G.view.heritageAt(tx, ty)} — a 1965 landmark already stands here.`);
+      else if (!G.view.isLand(tx, ty)) toast('You can only build on land. 🏝️');
+      else if (G.view.isRoadAt(tx, ty)) toast('There is a road here — you can\'t build on the road. 🛣️');
+      else toast('Tile occupied.');
+      return;
     }
+    // Don't build yet: place a PENDING object you can rotate / move / remove first.
+    const theme = BUILDINGS[b.selected].customizable ? b.theme : null;
+    G.adjust = { x: tx, y: ty, key: b.selected, theme, rot: b.rot || 0 };
+    G.view.enterAdjust(tx, ty, b.selected, theme, G.adjust.rot);
+    updateToolBanner();
+    const linked = b.selected === 'mrt' && (tx !== x || ty !== y) ? ' Linked to the MRT line.' : '';
+    toast(`Positioning ${BUILDINGS[b.selected].name}.${linked} ↻ Rotate · tap to move · ✓ Done.`);
   } else {
     // inspect
     const cell = G.state.grid[y][x];
@@ -418,6 +433,45 @@ function onTileTap(x, y) {
     else if (cell) toast(`${BUILDINGS[cell.k].icon} ${BUILDINGS[cell.k].name}`);
     else if (heritage) toast(`🏛 ${heritage} (here since 1965)`);
   }
+}
+// Can a building stand on this cell? (land, off-road, not a landmark, not occupied.)
+function placementOk(x, y) {
+  if (!G.view.isLand(x, y)) return false;
+  if (G.view.isRoadAt(x, y)) return false;
+  if (G.view.heritageAt && G.view.heritageAt(x, y)) return false;
+  return !(G.state.grid[y] && G.state.grid[y][x]);
+}
+// Rotate the object being positioned — it turns on the ground so you can SEE it.
+function rotateAdjust(delta) {
+  if (!G.adjust) return;
+  G.adjust.rot = ((G.adjust.rot || 0) + delta) % (Math.PI * 2);
+  G.view.setAdjustRotation(G.adjust.rot);
+  updateRotDial();
+}
+// ✓ Done — commit the positioned object: charge for it and start construction.
+function commitAdjust() {
+  const a = G.adjust; if (!a) return;
+  if (!canPlace(G.state, a.x, a.y, a.key)) {
+    if (G.state.treasury < buildingCost(G.state, a.key)) toast(`Need ${money(buildingCost(G.state, a.key))} to build ${BUILDINGS[a.key].name}.`);
+    else toast('Cannot build here.');
+    return;
+  }
+  const theme = BUILDINGS[a.key].customizable ? a.theme : null;
+  build(G.state, a.x, a.y, a.key, theme);
+  if (G.state.grid[a.y][a.x]) G.state.grid[a.y][a.x].r = a.rot || 0;   // keep the chosen orientation
+  G.view.clearAdjust();
+  G.view.syncConstruction(G.state);   // it now tops out over time
+  G.adjust = null;
+  afterEdit();
+  toast(`${BUILDINGS[a.key].name} — construction started.`);
+  updateToolBanner();                 // back to place-mode (ready for the next one)
+}
+// Discard the object being positioned (it was never charged).
+function cancelAdjust(msg) {
+  if (!G.adjust) return;
+  G.view.clearAdjust(); G.adjust = null;
+  updateToolBanner();
+  if (msg) toast(msg);
 }
 
 function afterEdit() {
@@ -442,16 +496,22 @@ function activeTool() {
   return null;
 }
 function updateToolBanner() {
-  const t = activeTool(), el = $('tool-banner');
+  const t = activeTool(), el = $('tool-banner'), adjusting = !!G.adjust;
   // Editing a tool freezes the clock and the living map so you can build calmly.
-  setEditPause(!!t);
+  setEditPause(!!t || adjusting);
   if (!el) return;
-  if (!t) { el.classList.add('hidden'); return; }
-  const rotHint = G.build.selected ? ' · ⟳ / R rotates 15°' : '';
-  $('tool-banner-text').innerHTML = `<b>⏸ Edit mode · ${t.label}</b><br><span class="tb-sub">Time paused — tap the map to ${t.verb}${rotHint}</span>`;
+  if (!t && !adjusting) { el.classList.add('hidden'); return; }
   const piece = G.road.tool === 'straight' || G.road.tool === 'curveL' || G.road.tool === 'curveR';
-  // rotate is available for free road pieces AND for any building being placed
-  $('tool-banner-rotate').classList.toggle('hidden', !(piece || G.build.selected));
+  if (adjusting) {
+    const name = BUILDINGS[G.adjust.key]?.name || 'object';
+    $('tool-banner-text').innerHTML = `<b>⏸ Positioning · ${name}</b><br><span class="tb-sub">↻ Rotate · tap a new spot to move · 🗑 Remove · ✓ Done to confirm</span>`;
+  } else {
+    const rotHint = G.build.selected ? ' · ⟳ / R rotates 15°, then tap to place' : '';
+    $('tool-banner-text').innerHTML = `<b>⏸ Edit mode · ${t.label}</b><br><span class="tb-sub">Time paused — tap the map to ${t.verb}${rotHint}</span>`;
+  }
+  $('tool-banner-rotate').classList.toggle('hidden', !(adjusting || piece || G.build.selected));
+  $('tool-banner-remove').classList.toggle('hidden', !adjusting);
+  const stop = $('tool-banner-stop'); if (stop) stop.textContent = adjusting ? '✓ Done' : '✕ Done';
   updateRotDial();   // show the live-facing dial alongside the rotate button
   el.classList.remove('hidden');
 }
@@ -473,11 +533,14 @@ function rotatePieceBy(delta) {
 // marker spins to the chosen angle, plus the degrees. Sits at the far left of the
 // banner, clear of the rotate button, so it's never hidden by the cursor.
 function rotDialState() {
+  if (G.adjust) return { rad: G.adjust.rot || 0, show: true };
   if (G.build.selected) return { rad: G.build.rot || 0, show: true };
   const piece = G.road.tool === 'straight' || G.road.tool === 'curveL' || G.road.tool === 'curveR';
   if (piece && G.view && G.view.pieceMode) return { rad: G.pieceRot || 0, show: true };
   return { rad: 0, show: false };
 }
+// Drop the pending object without UI/toast — used when the tool/selection changes.
+function clearAdjustSilently() { if (G.adjust) { if (G.view) G.view.clearAdjust(); G.adjust = null; } }
 function updateRotDial() {
   const dial = $('tool-banner-dial'); if (!dial) return;
   const st = rotDialState();
@@ -497,6 +560,7 @@ function setEditPause(on) {
   if (G.view) G.view.setFrozen(on);
 }
 function cancelTools() {
+  clearAdjustSilently();
   G.build.selected = null; G.build.bulldoze = false; G.reclaim.active = false;
   G.road.tool = null; G.road.pending = [];
   closeCommit(true);
@@ -670,6 +734,7 @@ function onPieceChain(mergedPts) {
   onRouteDrawn(mergedPts, { raw: true });
 }
 function selectRoadTool(tool) {
+  clearAdjustSilently();
   G.road.tool = G.road.tool === tool ? null : tool;
   G.road.pending = [];
   G.pieceRot = 0;             // fresh orientation for a newly-picked piece tool
@@ -739,9 +804,10 @@ function refreshPanel() {
       road: G.road, reclaim: G.reclaim, toggleReclaim,
       selectRoadTool, setRoadType: (t) => { G.road.type = t; applyRoadToolMode(); refreshPanel(); },
       toggleBridge: () => { G.road.elevated = !G.road.elevated; refreshPanel(); },
-      setCat: (c) => { G.build.cat = c; if (c !== 'roads') { G.road.tool = null; G.view.setRoadMode(false); } if (c !== 'land') { G.reclaim.active = false; G.view.setPaintMode(false); } refreshPanel(); updateToolBanner(); },
-      setTheme: (t) => { G.build.theme = t; if (G.build.selected) G.view.setPreview(G.build.selected, t); refreshPanel(); },
+      setCat: (c) => { clearAdjustSilently(); G.build.cat = c; if (c !== 'roads') { G.road.tool = null; G.view.setRoadMode(false); } if (c !== 'land') { G.reclaim.active = false; G.view.setPaintMode(false); } refreshPanel(); updateToolBanner(); },
+      setTheme: (t) => { G.build.theme = t; if (G.adjust) { G.adjust.theme = t; G.view.enterAdjust(G.adjust.x, G.adjust.y, G.adjust.key, t, G.adjust.rot); } else if (G.build.selected) G.view.setPreview(G.build.selected, t); refreshPanel(); },
       selectBuilding: (k) => {
+        clearAdjustSilently();
         G.build.selected = G.build.selected === k ? null : k;
         G.build.bulldoze = false; G.reclaim.active = false; G.view.setPaintMode(false);
         G.road.tool = null; G.view.setRoadMode(false); G.view.setDrawMode(false); G.view.setPieceMode(false); G.view.showRoadPreview([]);
@@ -755,6 +821,7 @@ function refreshPanel() {
         updateToolBanner();
       },
       toggleBulldoze: () => {
+        clearAdjustSilently();
         G.build.bulldoze = !G.build.bulldoze;
         G.build.selected = null; G.reclaim.active = false; G.view.setPaintMode(false);
         G.road.tool = null; G.view.setRoadMode(false); G.view.showRoadPreview([]);
@@ -1038,5 +1105,13 @@ setInterval(() => { if (G.state && !G.readOnly) saveLocal(); }, 15000);
 setInterval(maybeAnnounce, 1200);
 
 window.addEventListener('beforeunload', () => { if (!G.readOnly) saveLocal(); });
+
+// Minimal hook for automated tests to drive the place-then-adjust flow directly.
+window.__sg = {
+  onTileTap, rotateAdjust, commitAdjust,
+  cancelAdjust: (m) => cancelAdjust(m),
+  selectBuilding: (k) => { clearAdjustSilently(); G.build.selected = k; G.build.bulldoze = false; if (G.view) G.view.setPreview(k, G.build.theme); updateToolBanner(); },
+  get adjust() { return G.adjust; },
+};
 
 boot();

@@ -2097,7 +2097,51 @@ export class Scene3D {
     this.ghost = g; this.ghost.visible = false;
     this.scene.add(g);
   }
+  // ---- place-then-adjust: a PENDING object sits on the ground (not yet committed)
+  // so the player can rotate / move / remove it and SEE it before confirming -------
+  enterAdjust(x, y, key, theme, rot) {
+    this.clearAdjust();
+    const g = makeBuilding(key, theme); g.scale.setScalar(MODEL_SCALE);
+    const c = cellToWorld(x, y), hy = this.terrainHeight(x, y);
+    g.position.set(c.x, hy, c.z); g.rotation.y = rot || 0; this.scene.add(g);
+    const ring = new THREE.Mesh(new THREE.RingGeometry(TILE * 0.55, TILE * 0.82, 28),
+      new THREE.MeshBasicMaterial({ color: 0x8fe05a, transparent: true, opacity: 0.9, side: THREE.DoubleSide }));
+    ring.rotation.x = -Math.PI / 2; ring.position.set(c.x, hy + 0.14, c.z); this.scene.add(ring);
+    this._adjust = { x, y, key, theme, rot: rot || 0, mesh: g, ring };
+    if (this.ghost) this.ghost.visible = false;
+  }
+  setAdjustRotation(rot) { if (this._adjust) { this._adjust.rot = rot; this._adjust.mesh.rotation.y = rot; } }
+  moveAdjust(x, y) {
+    if (!this._adjust) return;
+    const c = cellToWorld(x, y), hy = this.terrainHeight(x, y);
+    this._adjust.mesh.position.set(c.x, hy, c.z); this._adjust.ring.position.set(c.x, hy + 0.14, c.z);
+    this._adjust.x = x; this._adjust.y = y;
+  }
+  clearAdjust() {
+    if (!this._adjust) return;
+    this.scene.remove(this._adjust.mesh); this.scene.remove(this._adjust.ring);
+    if (this._adjust.ring.geometry) this._adjust.ring.geometry.dispose();
+    this._adjust = null;
+  }
+  adjustActive() { return !!this._adjust; }
+  // Nearest grid cell that sits on a drawn track (MRT only when mrtOnly), within
+  // maxCells — used to SNAP a station onto the line the player has drawn.
+  _nearestTrackCell(x, y, maxCells, mrtOnly) {
+    const rails = (this.state && this.state.railways) || [];
+    const c = cellToWorld(x, y); let best = null;
+    for (const entry of rails) {
+      if (mrtOnly && !(entry && entry.mrt)) continue;
+      const poly = Array.isArray(entry) ? entry : (entry && entry.pts); if (!poly || poly.length < 2) continue;
+      for (let i = 0; i < poly.length - 1; i++) {
+        const pr = this._projOnSeg(c.x, c.z, { x: poly[i][0], z: poly[i][1] }, { x: poly[i + 1][0], z: poly[i + 1][1] });
+        if (!best || pr.d < best.d) best = { x: pr.x, z: pr.z, d: pr.d };
+      }
+    }
+    if (!best || best.d > maxCells * TILE) return null;
+    return { x: Math.round(best.x / TILE + N / 2), y: Math.round(N / 2 - best.z / TILE) };
+  }
   _updateGhost() {
+    if (this._adjust) { if (this.ghost) this.ghost.visible = false; return; }  // pending object shown instead
     if (!this.ghost || !this.hoverCell) { if (this.ghost) this.ghost.visible = false; return; }
     const { x, y } = this.hoverCell;
     const c = cellToWorld(x, y);

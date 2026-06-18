@@ -82,10 +82,14 @@ try {
     }
     return null;
   });
-  await page.mouse.click(spot.sx, spot.sy);
+  await page.mouse.click(spot.sx, spot.sy);   // tap to position the object (pending — not charged yet)
+  await new Promise((r) => setTimeout(r, 150));
+  const pending = await page.evaluate(() => window.__sgview.adjustActive());
+  ok(pending, 'tapping the map places a pending object you can position first');
+  await page.evaluate(() => document.getElementById('tool-banner-stop').click()); // ✓ Done — confirm & charge for it
   await new Promise((r) => setTimeout(r, 200));
   const treasuryAfter = await page.$eval('#hud-treasury', (e) => e.textContent);
-  ok(treasuryBefore !== treasuryAfter, `building placed (treasury ${treasuryBefore} → ${treasuryAfter})`);
+  ok(treasuryBefore !== treasuryAfter, `building committed on Done (treasury ${treasuryBefore} → ${treasuryAfter})`);
 
   // The placed building appears in the 3D scene — first as a construction site
   // (buildings now take time to build), later as a finished mesh.

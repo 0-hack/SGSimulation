@@ -2787,6 +2787,43 @@ export class Scene3D {
     const last = pts[pts.length - 1]; if (Math.hypot(last.x - out[out.length - 1].x, last.z - out[out.length - 1].z) > 0.3) out.push({ x: last.x, z: last.z });
     return out;
   }
+  // Join railway/viaduct segments that share an endpoint into continuous CHAINS
+  // (same kind only), so two viaducts drawn end-to-end render as ONE unbroken deck —
+  // no gap at the join — and a single train runs the whole connected line.
+  _chainRailEntries(entries) {
+    const segs = [];
+    for (const e of (entries || [])) {
+      const poly = Array.isArray(e) ? e : (e && e.pts);
+      if (!poly || poly.length < 2) continue;
+      segs.push({ pts: poly.map((p) => [p[0], p[1]]), elevated: !Array.isArray(e) && !!e.elevated, mrt: !Array.isArray(e) && !!e.mrt });
+    }
+    const tol = TILE * 1.4, used = new Array(segs.length).fill(false);
+    const near = (a, b) => Math.abs(a[0] - b[0]) <= tol && Math.abs(a[1] - b[1]) <= tol;
+    const key = (s) => (s.mrt ? 'm' : s.elevated ? 'e' : 'g');
+    const chains = [];
+    for (let i = 0; i < segs.length; i++) {
+      if (used[i]) continue;
+      used[i] = true;
+      let chain = segs[i].pts.slice(); const k = key(segs[i]);
+      let grew = true;
+      while (grew) {
+        grew = false;
+        const head = chain[0], tail = chain[chain.length - 1];
+        for (let j = 0; j < segs.length; j++) {
+          if (used[j] || key(segs[j]) !== k) continue;
+          const a = segs[j].pts[0], b = segs[j].pts[segs[j].pts.length - 1];
+          if (near(tail, a)) { chain = chain.concat(segs[j].pts.slice(1)); }
+          else if (near(tail, b)) { chain = chain.concat(segs[j].pts.slice(0, -1).reverse()); }
+          else if (near(head, b)) { chain = segs[j].pts.slice(0, -1).concat(chain); }
+          else if (near(head, a)) { chain = segs[j].pts.slice(1).reverse().concat(chain); }
+          else continue;
+          used[j] = true; grew = true; break;
+        }
+      }
+      chains.push({ pts: chain, elevated: segs[i].elevated, mrt: segs[i].mrt });
+    }
+    return chains;
+  }
   _buildPlayerRailways(state) {
     if (this._pRailGroup) this.scene.remove(this._pRailGroup);
     const g = new THREE.Group(); this.scene.add(g); this._pRailGroup = g;
@@ -2797,13 +2834,12 @@ export class Scene3D {
     // ground first (bypass existing carves), then carve the corridor to the grade.
     this._carves = null;
     const rails = [], viaducts = [], mrtways = [];
-    for (const entry of ((state && state.railways) || [])) {
-      const poly = Array.isArray(entry) ? entry : (entry && entry.pts);   // legacy arrays or { pts, … }
-      if (!poly || poly.length < 2) continue;
+    for (const entry of this._chainRailEntries((state && state.railways) || [])) {  // joined into continuous chains
+      const poly = entry.pts;
       const dense = this._resamplePoly(poly.map(([x, z]) => ({ x, z })), 1.4);
       if (dense.length < 2) continue;
-      if (!Array.isArray(entry) && entry.mrt) mrtways.push(dense);            // MRT guideway (always elevated)
-      else if (!Array.isArray(entry) && entry.elevated) viaducts.push(dense); // heavy-rail elevated viaduct
+      if (entry.mrt) mrtways.push(dense);              // MRT guideway (always elevated)
+      else if (entry.elevated) viaducts.push(dense);   // heavy-rail elevated viaduct
       else rails.push(this._railProfile(poly.map(([x, z]) => ({ x, z })), 1.4)); // graded, cut hills
     }
     // full-cut half-width must exceed a terrain-mesh cell (~6.7 m) so the coarse mesh
@@ -2861,7 +2897,7 @@ export class Scene3D {
     for (const pts of (this._mrtProfiles || [])) {
       for (let i = 0; i < pts.length; i++) {
         const p = pts[i], d = (p.x - x) * (p.x - x) + (p.z - z) * (p.z - z);
-        if (d < bd) { const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)]; bd = d; best = { y: p.y, bearing: Math.atan2(-(b.z - a.z), b.x - a.x) }; }
+        if (d < bd) { const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)]; bd = d; best = { x: p.x, y: p.y, z: p.z, bearing: Math.atan2(-(b.z - a.z), b.x - a.x) }; }
       }
     }
     return best;
@@ -2875,13 +2911,13 @@ export class Scene3D {
     for (const [, e] of this.buildings) {
       if (!e || e.key !== 'mrt' || !e.group) continue;
       if (e._mrtLegs) { e.group.remove(e._mrtLegs); e._mrtLegs = null; }
-      if (e._groundY == null) e._groundY = e.group.position.y;   // remember the ground height once
-      const info = this._viaductInfoAt(e.group.position.x, e.group.position.z, TILE * 2.2);
-      if (info == null) { e.group.position.y = e._groundY; if (e._baseRot != null) e.group.rotation.y = e._baseRot; continue; } // off the line → ground + own rotation
-      if (e._baseRot == null) e._baseRot = e.group.rotation.y;   // remember the player's rotation
+      const p = e.group.position;
+      if (e._baseX == null) { e._baseX = p.x; e._baseZ = p.z; e._groundY = p.y; e._baseRot = e.group.rotation.y; } // remember placed spot once
+      const info = this._viaductInfoAt(e._baseX, e._baseZ, TILE * 2.6);
+      if (info == null) { p.set(e._baseX, e._groundY, e._baseZ); e.group.rotation.y = e._baseRot; continue; } // off the line → as placed
       e.group.rotation.y = info.bearing;        // line the platform up with the track so the deck runs THROUGH it
-      const targetY = info.y - FLOOR;           // so the concourse floor sits exactly at the deck
-      e.group.position.y = targetY;
+      const targetY = info.y - FLOOR;           // concourse floor sits exactly at the deck
+      p.set(info.x, targetY, info.z);           // and pull the station right ONTO the deck (no side gap)
       const lift = targetY - e._groundY;        // raised this far above the ground
       if (lift > 0.4) {                         // bridge the gap with support columns down to the dirt
         const legs = new THREE.Group(); legs.scale.setScalar(MODEL_SCALE);
@@ -3015,6 +3051,18 @@ export class Scene3D {
     }
   }
   _polyLen(pts) { let L = 0; for (let i = 1; i < pts.length; i++) L += pts[i].distanceTo(pts[i - 1]); return L; }
+  // Arc-fraction [0,1] of the point on a polyline closest to (x,z), plus that distance.
+  _nearestU(pts, x, z) {
+    const total = this._polyLen(pts) || 1; let acc = 0, bestU = 0, bestD = Infinity;
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1], b = pts[i], dx = b.x - a.x, dz = b.z - a.z, l2 = dx * dx + dz * dz || 1;
+      let t = ((x - a.x) * dx + (z - a.z) * dz) / l2; t = Math.max(0, Math.min(1, t));
+      const px = a.x + dx * t, pz = a.z + dz * t, d = (px - x) * (px - x) + (pz - z) * (pz - z), segLen = Math.hypot(dx, dz);
+      if (d < bestD) { bestD = d; bestU = (acc + segLen * t) / total; }
+      acc += segLen;
+    }
+    return { u: bestU, d: Math.sqrt(bestD) };
+  }
   // Point at arc-fraction u in [0,1] along a {Vector3} polyline.
   _alongPoly(pts, u) {
     const total = this._polyLen(pts); let target = Math.max(0, Math.min(1, u)) * total, acc = 0;
@@ -3055,9 +3103,17 @@ export class Scene3D {
       const train = makeTrain(era, cars);
       for (const c of train.cars) g.add(c);
       const carU = (train.carLen * 1.06) / total;   // arc-fraction gap between coupled cars
+      // stations sitting on this line become STOPS — the train pauses at each one
+      const stops = [];
+      for (const [, e] of (this.buildings || [])) {
+        if (!e || (e.key !== 'mrt' && e.key !== 'rail_station') || !e.group) continue;
+        const nu = this._nearestU(tk.pts, e.group.position.x, e.group.position.z);
+        if (nu.d < TILE * 1.6) stops.push(nu.u);
+      }
+      stops.sort((a, b) => a - b);
       this._trains.push({
         track: tk, cars: train.cars, total, carU,
-        u: Math.random() * 0.6, dir: 1,
+        u: Math.random() * 0.6, dir: 1, stops, dwell: 0,
         speed: era === 'mrt' ? 13 : era === 'steam' ? 6 : 9,
         rideY: tk.kind === 'mrt' ? 0.4 : 0.34,
       });
@@ -3065,10 +3121,17 @@ export class Scene3D {
   }
   _updateTrains(dt) {
     for (const tr of (this._trains || [])) {
-      tr.u += tr.dir * dt * tr.speed / tr.total;
-      // shuttle: when the head reaches an end, reverse (and flip which way the cars trail)
-      if (tr.u > 1) { tr.u = 1; tr.dir = -1; }
-      else if (tr.u < 0) { tr.u = 0; tr.dir = 1; }
+      if (tr.dwell > 0) { tr.dwell -= dt; }   // halted at a station — hold position
+      else {
+        const prev = tr.u;
+        tr.u += tr.dir * dt * tr.speed / tr.total;
+        for (const su of (tr.stops || [])) {  // pull up at a station as we reach it
+          if ((prev < su && tr.u >= su) || (prev > su && tr.u <= su)) { tr.u = su; tr.dwell = 2.4; break; }
+        }
+        // shuttle: when the head reaches an end, reverse (and flip which way the cars trail)
+        if (tr.u > 1) { tr.u = 1; tr.dir = -1; }
+        else if (tr.u < 0) { tr.u = 0; tr.dir = 1; }
+      }
       const pts = tr.track.pts, eps = 0.012;
       for (let i = 0; i < tr.cars.length; i++) {
         const cu = tr.u - tr.dir * i * tr.carU;        // each car trails the one ahead

@@ -64,6 +64,29 @@ try {
   });
   ok(c.aligned, 'a station on a viaduct turns to line up with the track (no gap)');
   ok(c.onDeck, 'that station sits exactly at the deck height (meets the viaduct)');
+
+  // Two viaducts drawn end-to-end JOIN into one continuous line (no gap), a single
+  // train runs the whole thing, and it stops at stations on the line.
+  const j = await p.evaluate(() => {
+    const v = window.__sgview, S = window.__sg, N = v.land.length, W = 1600;
+    const w = (gx,gy)=>[(gx/N-0.5)*W,(0.5-gy/N)*W];
+    const clear=(x,y)=>v.isLand(x,y)&&!v.isRoadAt(x,y)&&!(v.heritageMask&&v.heritageMask[y][x])&&!v.state.grid[y][x];
+    let row=-1,x0=0,len=0; for(let y=20;y<N-20&&row<0;y++){let run=0,sx=0;for(let x=20;x<N-20;x++){if(clear(x,y)){if(run===0)sx=x;run++;if(run>=30){row=y;x0=sx;len=run;break;}}else run=0;}}
+    const mid=x0+15, x1=x0+30;
+    const A=[]; for(let gx=x0;gx<=mid;gx++) A.push(w(gx,row));
+    const B=[]; for(let gx=mid;gx<=x1;gx++) B.push(w(gx,row));
+    v.state.railways=[{pts:A,elevated:true,mrt:true},{pts:B,elevated:true,mrt:true}];   // two separate, connected
+    const chains = v._chainRailEntries(v.state.railways);
+    v._buildPlayerRailways(v.state);
+    v.state.treasury = 99999;
+    S.selectBuilding('mrt'); S.onTileTap(mid, row+3); const sx=S.adjust.x, sy=S.adjust.y; S.commitAdjust();
+    if (!v.state.grid[sy][sx]) return { chains: chains.length, mrtTracks:(v._playerTrainTracks||[]).filter(t=>t.kind==='mrt').length, stops:0 };
+    v.state.grid[sy][sx].build=null; v.syncAll(); v._buildPlayerRailways(v.state);
+    const tr=(v._trains||[]).find(t=>t.track.kind==='mrt');
+    return { chains: chains.length, mrtTracks: (v._playerTrainTracks||[]).filter(t=>t.kind==='mrt').length, stops: tr?tr.stops.length:0 };
+  });
+  ok(j.chains===1 && j.mrtTracks===1, `two connected viaducts merge into one continuous line (${j.chains} chain, ${j.mrtTracks} track)`);
+  ok(j.stops>=1, `the train stops at stations on the line (${j.stops} stop)`);
   ok(errs.length===0, 'no console/page errors'+(errs.length?': '+errs[0]:''));
 } catch(e){ fail++; console.error('  ✗ threw:', e.message, e.stack); }
 finally { await browser.close(); server.close(); }

@@ -1741,6 +1741,7 @@ export class Scene3D {
     return !!(this.riverMask && this.riverMask[gy] && this.riverMask[gy][gx]);
   }
   // Is grid cell (gx,gy) covered by a freeform road? (blocks building on roads)
+  worldOfCell(gx, gy) { return cellToWorld(gx, gy); }   // cell centre → world {x,z}
   isRoadAt(gx, gy) {
     const c = cellToWorld(gx, gy);
     for (let e = 0; e < this.edgePts.length; e++) {
@@ -1969,6 +1970,9 @@ export class Scene3D {
           const d = Math.hypot(e[0] - x, e[1] - z); if (d < (best ? best.d : maxD)) best = { x: e[0], z: e[1], d, heading: Math.atan2(e[1] - q[1], e[0] - q[0]) };
         }
       }
+      // also chain a viaduct/railway onto a station, heading outward toward the cursor
+      const st = this._nearestStation(x, z, maxD, kind === 'rail' ? ['mrt', 'rail_station'] : []);
+      if (st && (!best || st.d < best.d)) best = { x: st.x, z: st.z, d: st.d, heading: Math.atan2(z - st.z, x - st.x) };
       return best;
     }
     let best = null, bi = -1;
@@ -2849,10 +2853,16 @@ export class Scene3D {
     return h;
   }
   // Deck height of the nearest MRT viaduct to (x,z) within maxD world units, or null.
-  _viaductDeckAt(x, z, maxD) {
+  _viaductDeckAt(x, z, maxD) { const i = this._viaductInfoAt(x, z, maxD); return i ? i.y : null; }
+  // Nearest viaduct: its deck height AND the track BEARING there (so a station can be
+  // turned to line up with the track and the deck runs through it). Null if too far.
+  _viaductInfoAt(x, z, maxD) {
     let best = null, bd = maxD * maxD;
     for (const pts of (this._mrtProfiles || [])) {
-      for (const p of pts) { const d = (p.x - x) * (p.x - x) + (p.z - z) * (p.z - z); if (d < bd) { bd = d; best = p.y; } }
+      for (let i = 0; i < pts.length; i++) {
+        const p = pts[i], d = (p.x - x) * (p.x - x) + (p.z - z) * (p.z - z);
+        if (d < bd) { const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)]; bd = d; best = { y: p.y, bearing: Math.atan2(-(b.z - a.z), b.x - a.x) }; }
+      }
     }
     return best;
   }
@@ -2866,9 +2876,11 @@ export class Scene3D {
       if (!e || e.key !== 'mrt' || !e.group) continue;
       if (e._mrtLegs) { e.group.remove(e._mrtLegs); e._mrtLegs = null; }
       if (e._groundY == null) e._groundY = e.group.position.y;   // remember the ground height once
-      const deckY = this._viaductDeckAt(e.group.position.x, e.group.position.z, TILE * 2.2);
-      if (deckY == null) { e.group.position.y = e._groundY; continue; }   // off the line → on the ground
-      const targetY = deckY - FLOOR;            // so the concourse floor sits exactly at the deck
+      const info = this._viaductInfoAt(e.group.position.x, e.group.position.z, TILE * 2.2);
+      if (info == null) { e.group.position.y = e._groundY; if (e._baseRot != null) e.group.rotation.y = e._baseRot; continue; } // off the line → ground + own rotation
+      if (e._baseRot == null) e._baseRot = e.group.rotation.y;   // remember the player's rotation
+      e.group.rotation.y = info.bearing;        // line the platform up with the track so the deck runs THROUGH it
+      const targetY = info.y - FLOOR;           // so the concourse floor sits exactly at the deck
       e.group.position.y = targetY;
       const lift = targetY - e._groundY;        // raised this far above the ground
       if (lift > 0.4) {                         // bridge the gap with support columns down to the dirt

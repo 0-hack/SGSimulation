@@ -19,7 +19,7 @@ try {
     await p.evaluate(()=>[...document.querySelectorAll('.cat-tab')].find(t=>/Transport/.test(t.textContent)).click()); await p.waitForSelector('.road-tool'); };
   await openRoads();
   const labels = await p.evaluate(()=>[...document.querySelectorAll('.road-tool span:last-child')].map(s=>s.textContent.trim()));
-  ok(labels.some(l=>/Straight/.test(l)) && labels.filter(l=>/Curve/.test(l)).length===2, `piece tools shown (Straight + two Curves): ${JSON.stringify(labels)}`);
+  ok(labels.some(l=>/Straight/.test(l)) && labels.filter(l=>/Curve/.test(l)).length===1 && !labels.some(l=>/Demolish/.test(l)), `piece tools shown (Straight + one Curve, no in-tool Demolish): ${JSON.stringify(labels)}`);
   await p.evaluate(()=>[...document.querySelectorAll('.road-types .opt')].find(b=>/Road/.test(b.textContent))?.click());
   await p.evaluate(()=>[...document.querySelectorAll('.road-tool')].find(b=>/Straight/.test(b.textContent))?.click());
   await new Promise(r=>setTimeout(r,150));

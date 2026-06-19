@@ -153,13 +153,13 @@ function renderRoads(ctx) {
     wrap.append(bridge);
   }
 
-  // tools — ✏️ Draw (freehand) leads
+  // tools — ✏️ Draw (freehand) leads. (Demolish lives on the standard top button.)
   wrap.append(el('div', 'section-title', 'Tool'));
   const tools = el('div', 'road-tools');
   const onLand = !ROAD_TYPES[r.type]?.rail && !ROAD_TYPES[r.type]?.air;   // roundabout is road-only
   const defs = [
-    ['draw', '✏️ Draw'], ['straight', '▭ Straight'], ['curveL', '↰ Curve'], ['curveR', '↱ Curve'],
-    ...(onLand ? [['roundabout', 'Roundabout']] : []), ['erase', '🚜 Demolish'],
+    ['draw', '✏️ Draw'], ['straight', '▭ Straight'], ['curveL', '↰ Curve'],
+    ...(onLand ? [['roundabout', 'Roundabout']] : []),
   ];
   for (const [id, label] of defs) {
     const ico = ICONS[id] || (id.startsWith('curve') ? ICONS.curve : '');

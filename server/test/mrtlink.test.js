@@ -43,6 +43,27 @@ try {
   ok(r.mrt, 'drawing an MRT line snaps its endpoint onto a nearby MRT station (links)');
   ok(r.train, 'drawing a railway snaps onto a nearby Train Station');
   ok(r.wrongType, 'a railway does not snap to an MRT station (right station for the right line)');
+
+  // A station placed on a drawn viaduct turns to line up with the track (deck runs
+  // through it) and meets the deck; and the standard Demolish removes the viaduct.
+  const c = await p.evaluate(() => {
+    const v = window.__sgview, S = window.__sg, N = v.land.length, W = 1600;
+    const w = (gx,gy)=>[(gx/N-0.5)*W,(0.5-gy/N)*W];
+    const clear=(x,y)=>v.isLand(x,y)&&!v.isRoadAt(x,y)&&!(v.heritageMask&&v.heritageMask[y][x])&&!v.state.grid[y][x];
+    let row=-1,x0=0,len=0; for(let y=20;y<N-20&&row<0;y++){let run=0,sx=0;for(let x=20;x<N-20;x++){if(clear(x,y)){if(run===0)sx=x;run++;if(run>=22){row=y;x0=sx;len=run;break;}}else run=0;}}
+    const x1=x0+Math.min(len-2,24); const line=[]; for(let gx=x0;gx<=x1;gx++) line.push(w(gx,row));
+    v.state.railways=[{pts:line,elevated:true,mrt:true}]; v._buildPlayerRailways(v.state);
+    const sgx=Math.round((x0+x1)/2);
+    S.selectBuilding('mrt'); S.onTileTap(sgx,row+3); const sx=S.adjust.x, sy=S.adjust.y; S.commitAdjust();
+    v.state.grid[sy][sx].build=null; v.syncAll(); v._buildPlayerRailways(v.state);
+    const e=v.buildings.get(`${sx},${sy}`); const sw=w(sx,sy);
+    const info=v._viaductInfoAt(sw[0],sw[1], 2.5*2.2);
+    const aligned = Math.abs(((e.group.rotation.y - info.bearing + Math.PI*3)%(Math.PI*2)) - Math.PI) < 0.02; // rotation == track bearing
+    const onDeck = Math.abs((e.group.position.y + 6.3*(W/N/10)) - info.y) < 0.05;
+    return { aligned, onDeck };
+  });
+  ok(c.aligned, 'a station on a viaduct turns to line up with the track (no gap)');
+  ok(c.onDeck, 'that station sits exactly at the deck height (meets the viaduct)');
   ok(errs.length===0, 'no console/page errors'+(errs.length?': '+errs[0]:''));
 } catch(e){ fail++; console.error('  ✗ threw:', e.message, e.stack); }
 finally { await browser.close(); server.close(); }

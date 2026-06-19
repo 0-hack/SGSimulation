@@ -397,12 +397,16 @@ function onTileTap(x, y) {
       return;
     }
     if (G.view.removeHeritageVisual && G.view.removeHeritageVisual(x, y)) { afterEdit(); toast('Demolished.'); return; } // decorative town shophouse (not in the economy)
+    // no building here — try transport infrastructure (road / railway / MRT viaduct / runway)
+    const w = G.view.worldOfCell(x, y);
+    if (w && demolishInfraAt(w.x, w.z)) return;
+    toast('Nothing to demolish here.');
     return;
   }
   // While positioning a placed object, a tap MOVES it to the new spot (shift).
   if (G.adjust) {
     let tx = x, ty = y;
-    if (G.adjust.key === 'mrt') { const s = G.view._nearestTrackCell(x, y, 4, true); if (s && placementOk(s.x, s.y)) { tx = s.x; ty = s.y; } }
+    if (G.adjust.key === 'mrt') { const s = G.view._nearestTrackCell(x, y, 4, true); if (s && placementOk(s.x, s.y)) { tx = s.x; ty = s.y; alignAdjustToViaduct(tx, ty); } }
     if (!placementOk(tx, ty)) { toast('Can\'t put it there.'); return; }
     G.adjust.x = tx; G.adjust.y = ty; G.view.moveAdjust(tx, ty);
     return;
@@ -421,7 +425,9 @@ function onTileTap(x, y) {
     }
     // Don't build yet: place a PENDING object you can rotate / move / remove first.
     const theme = BUILDINGS[b.selected].customizable ? b.theme : null;
-    G.adjust = { x: tx, y: ty, key: b.selected, theme, rot: b.rot || 0 };
+    let rot = b.rot || 0;
+    if (b.selected === 'mrt') { const w = G.view.worldOfCell(tx, ty); const info = G.view._viaductInfoAt(w.x, w.z, 2.5 * 2.2); if (info) rot = info.bearing; } // face along the track
+    G.adjust = { x: tx, y: ty, key: b.selected, theme, rot };
     G.view.enterAdjust(tx, ty, b.selected, theme, G.adjust.rot);
     updateToolBanner();
     const linked = b.selected === 'mrt' && (tx !== x || ty !== y) ? ' Linked to the MRT line.' : '';
@@ -447,6 +453,13 @@ function rotateAdjust(delta) {
   G.adjust.rot = ((G.adjust.rot || 0) + delta) % (Math.PI * 2);
   G.view.setAdjustRotation(G.adjust.rot);
   updateRotDial();
+}
+// Turn the pending station to line up with the MRT track it just snapped onto.
+function alignAdjustToViaduct(gx, gy) {
+  if (!G.adjust) return;
+  const w = G.view.worldOfCell(gx, gy);
+  const info = G.view._viaductInfoAt(w.x, w.z, 2.5 * 2.2);
+  if (info) { G.adjust.rot = info.bearing; G.view.setAdjustRotation(info.bearing); updateRotDial(); }
 }
 // ✓ Done — commit the positioned object: charge for it and start construction.
 function commitAdjust() {
@@ -591,31 +604,37 @@ function placeRoundabout(x, z) {
   afterEdit();
   toast('Roundabout built.');
 }
-function eraseRoadAt(x, z) {
+// Demolish the nearest piece of transport infrastructure to a world point: a road,
+// a railway/MRT viaduct, or an airport runway. Used by the standard Demolish tool.
+function demolishInfraAt(x, z) {
+  const polyMin = (pts) => { let m = 1e9; for (let i = 0; i < pts.length - 1; i++) m = Math.min(m, segPointDistW(x, z, pts[i], pts[i + 1])); return m; };
+  let best = null, bestD = 6;
   const roads = G.state.roads;
-  let best = -1, bestD = 6;
   roads.edges.forEach((e, i) => {
-    // drawn roads carry a full polyline — test every point along it so the whole
-    // curve is erasable, not just its endpoints
-    if (e.poly && e.poly.length) {
-      for (const p of e.poly) { const d = Math.hypot(p.x - x, p.z - z); if (d < bestD) { bestD = d; best = i; } }
-      return;
-    }
-    const a = roads.nodes[e.a], b = roads.nodes[e.b];
-    if (!a || !b) return;
-    const mx = e.ctrl ? e.ctrl.x : (a.x + b.x) / 2, mz = e.ctrl ? e.ctrl.z : (a.z + b.z) / 2;
-    for (const [px, pz] of [[a.x, a.z], [mx, mz], [b.x, b.z]]) {
-      const d = Math.hypot(px - x, pz - z); if (d < bestD) { bestD = d; best = i; }
-    }
+    let d = 1e9;
+    if (e.poly && e.poly.length) { for (const p of e.poly) d = Math.min(d, Math.hypot(p.x - x, p.z - z)); }
+    else { const a = roads.nodes[e.a], b = roads.nodes[e.b]; if (a && b) { const mx = e.ctrl ? e.ctrl.x : (a.x + b.x) / 2, mz = e.ctrl ? e.ctrl.z : (a.z + b.z) / 2; for (const [px, pz] of [[a.x, a.z], [mx, mz], [b.x, b.z]]) d = Math.min(d, Math.hypot(px - x, pz - z)); } }
+    if (d < bestD) { bestD = d; best = { kind: 'road', i }; }
   });
-  if (best >= 0) { roads.edges.splice(best, 1); G.view.rebuildRoadNet(); afterEdit(); toast('Road removed.'); }
-  else toast('No road here to erase.');
+  (G.state.railways || []).forEach((e, i) => { const pts = (e.pts || e).map((p) => ({ x: p[0], z: p[1] })); if (pts.length >= 2) { const d = polyMin(pts); if (d < bestD) { bestD = d; best = { kind: 'rail', i, mrt: !!e.mrt }; } } });
+  (G.state.airstrips || []).forEach((e, i) => { const pts = (e.pts || e).map((p) => ({ x: p[0], z: p[1] })); if (pts.length >= 2) { const d = polyMin(pts); if (d < bestD) { bestD = d; best = { kind: 'air', i }; } } });
+  if (!best) return false;
+  if (best.kind === 'road') { roads.edges.splice(best.i, 1); G.view.rebuildRoadNet(); toast('Road removed.'); }
+  else if (best.kind === 'rail') { G.state.railways.splice(best.i, 1); G.view._buildPlayerRailways(G.state); toast(best.mrt ? 'MRT viaduct removed.' : 'Railway removed.'); }
+  else { G.state.airstrips.splice(best.i, 1); G.view._buildPlayerAirstrips(G.state); toast('Runway removed.'); }
+  afterEdit();
+  return true;
+}
+// Distance from point (x,z) to segment a-b ({x,z}).
+function segPointDistW(x, z, a, b) {
+  const dx = b.x - a.x, dz = b.z - a.z, l2 = dx * dx + dz * dz || 1;
+  let t = ((x - a.x) * dx + (z - a.z) * dz) / l2; t = Math.max(0, Math.min(1, t));
+  return Math.hypot(x - (a.x + dx * t), z - (a.z + dz * t));
 }
 
 function onGroundTap(x, z) {
   if (G.readOnly) { toast('Read-only while visiting.'); return; }
   const R = G.road;
-  if (R.tool === 'erase') { eraseRoadAt(x, z); return; }
   if (G.view.isReserveAt(x, z)) { toast('Protected Central Catchment — no roads on the reservoir.'); return; }
   if (G.view.isRiverAt(x, z)) { toast('That\'s the Singapore River — roads can\'t cross open water.'); return; }
   if (R.tool === 'roundabout') { placeRoundabout(x, z); return; }
@@ -747,9 +766,8 @@ function selectRoadTool(tool) {
     closeSheet();
     const msg = { draw: 'Draw freely by dragging. Hover an existing road end to continue from it. Release to see the cost, then Build.',
       straight: 'Tap to add straight pieces end-to-end (switch piece to turn). Build them up, then ✔ Build to start construction. R / ↻ aims the first piece.',
-      curveL: 'Tap to add left-curve pieces. Chain them up, then ✔ Build to start construction. R / ↻ aims the first piece.',
-      curveR: 'Tap to add right-curve pieces. Chain them up, then ✔ Build to start construction. R / ↻ aims the first piece.',
-      roundabout: 'Tap to place a roundabout.', erase: 'Tap a road to remove it.' }[G.road.tool];
+      curveL: 'Tap to add curve pieces (↻ / R turns them the other way). Chain them up, then ✔ Build to start construction.',
+      roundabout: 'Tap to place a roundabout.' }[G.road.tool];
     toast(msg + ' ✕ Done / Esc to stop.');
   }
   updateToolBanner();

@@ -4438,7 +4438,6 @@ export function makeBuilding(key, theme) {
       g.add(partBox(9.7, 0.7, 4.2, mat(0x35586a), 0, hy + 1.25, -1));                  // window band
       g.add(partBox(10.2, 0.45, 5.0, mat(0x9fb6c4, { metalness: 0.3 }), 0, hy + 2.95, -1)); // flat metal station roof (overhangs)
       g.add(partBox(9.0, 0.5, 0.5, mat(col), 0, hy + 3.3, -1));                        // coloured roof ridge cap
-      g.add(partBox(3.0, 1.7, 2.3, mat(0xd8dde1), 5.7, hy + 1.0, -1));                 // a train at the platform end
       g.add(partBox(2.8, 0.95, 0.16, mat(0xe23744), 0, hy + 0.5, 1.25));              // red "MRT" signboard
     } else if (key === 'rail_station') {
       // an old-school 1965 railway station: a cream colonial booking hall with a

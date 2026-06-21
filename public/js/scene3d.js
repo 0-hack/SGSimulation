@@ -58,6 +58,7 @@ const DAY_CYCLE = 1;          // one full day/night cycle per in-game day (locke
 const LIGHT_YEAR = 1965;      // junction traffic lights are present from the start (SG had them since the 1930s)
 const MRT_DECK_CLEAR = 6.3 * MODEL_SCALE;            // deck clearance = the station's concourse-floor height, so the two meet
 const MRT_MAX_SLOPE = Math.tan(20 * Math.PI / 180);  // viaduct never climbs/falls steeper than 20°
+const MRT_TRACK_GAUGE = 0.32;                        // half-spacing of the two tracks: a train sits this far off the deck centre, so up- and down-trains pass
 
 // Land mask for the grid. On fine grids (cell << 10) the 869-vertex coastline test
 // is far too slow per-cell, so compute it at a ~10-unit resolution and upsample —
@@ -2198,7 +2199,11 @@ export class Scene3D {
       const [x, y] = id.split(',').map(Number);
       const cell = state.grid[y] && state.grid[y][x];
       this._removeSite(id);
-      if (cell && cell.k && !cell.build) { this._addMesh(x, y, cell.k, true, cell.c); if (cell.k === 'mrt') this._alignMrtStations(); } // pop the completed building (align MRT stations to the deck)
+      if (cell && cell.k && !cell.build) {                  // pop the completed building
+        this._addMesh(x, y, cell.k, true, cell.c);
+        if (cell.k === 'mrt') this._alignMrtStations();     // lift an MRT station onto the deck
+        if (cell.k === 'mrt' || cell.k === 'rail_station') this._refreshTrainStops(); // it becomes a new STOP for the line's trains
+      }
     }
   }
   _startSite(x, y, key, theme, total) {
@@ -2276,6 +2281,8 @@ export class Scene3D {
   // called by main.js after a successful build
   onBuilt(x, y, key, theme) {
     this._addMesh(x, y, key, true, theme);
+    if (key === 'mrt') this._alignMrtStations();
+    if (key === 'mrt' || key === 'rail_station') this._refreshTrainStops();   // a new station becomes a stop
     const g = this.natureCells?.get(x + ',' + y); if (g) g.visible = false;  // clear trees under it
   }
 
@@ -2294,6 +2301,7 @@ export class Scene3D {
     const c = cellToWorld(x, y);
     this._spawnDust(c.x, c.z, 0xbfb09a, 26);
     const g = this.natureCells?.get(x + ',' + y); if (g) g.visible = true;   // greenery returns
+    if (entry.key === 'mrt' || entry.key === 'rail_station') this._refreshTrainStops(); // a demolished station is no longer a stop
   }
   removeBuilding(x, y) {
     const id = `${x},${y}`;
@@ -2931,10 +2939,19 @@ export class Scene3D {
   // running rail down the middle. Kept narrow + low so it matches the MRT station.
   _mrtGuideway(g, pts) {
     if (!pts || pts.length < 2) return;
-    this._addRibbon(g, pts, 0.95, 0xc7ccd1, 0.0);       // box-girder deck (pale concrete) — slimmer
-    this._addRibbon(g, pts, 1.08, 0x9aa2a9, -0.4);      // shallow underside / parapet shadow
-    this._addRibbon(g, pts, 0.14, 0x6a7178, 0.1);       // centre running beam
-    this._addPillars(g, pts, 0.34);                      // thin piers
+    this._addRibbon(g, pts, 0.62, 0xc7ccd1, 0.0);       // box-girder deck (pale concrete) — sized to the station's width, two tracks wide
+    this._addRibbon(g, pts, 0.7, 0x9aa2a9, -0.4);       // shallow underside / parapet shadow
+    this._addRibbon(g, pts, 0.04, 0x8a9199, 0.06);      // faint centre divider between the up/down tracks
+    for (const s of [-1, 1]) this._addRibbon(g, this._offsetPoly(pts, s * MRT_TRACK_GAUGE), 0.12, 0x6a7178, 0.1); // a running beam under each track
+    this._addPillars(g, pts, 0.4);                       // piers
+  }
+  // Shift a {Vector3} polyline sideways by `off` world units along its local normal.
+  _offsetPoly(pts, off) {
+    return pts.map((p, i) => {
+      const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)];
+      let tx = b.x - a.x, tz = b.z - a.z; const l = Math.hypot(tx, tz) || 1; tx /= l; tz /= l;
+      return new THREE.Vector3(p.x - tz * off, p.y, p.z + tx * off);
+    });
   }
   // A fill embankment under the track wherever the graded line sits above the (now
   // cut) ground — a skirt from the ballast edge down to the terrain on each side.
@@ -3085,9 +3102,10 @@ export class Scene3D {
     }
   }
   // ---- trains: living rolling stock on every railway & MRT line ---------------
-  // Spawn one articulated train per track (historic KTM lines, player heavy-rail,
-  // and MRT viaducts). The train kind/vintage follows the year, so the fleet
-  // visibly modernises — steam → diesel → modern — as the country develops.
+  // Spawn rolling stock on every track: a single train on the historic KTM lines and
+  // player heavy-rail, and a two-way PAIR on each MRT viaduct (one per direction, so
+  // they pass on the deck). The kind/vintage follows the year, so the fleet visibly
+  // modernises — steam → diesel → modern — as the country develops.
   _buildTrains() {
     if (this._trainGroup) this.scene.remove(this._trainGroup);
     const g = new THREE.Group(); this.scene.add(g); this._trainGroup = g;
@@ -3098,26 +3116,40 @@ export class Scene3D {
     for (const tk of tracks) {
       const total = this._polyLen(tk.pts);
       if (total < 14) continue;                 // too short to run a train
-      const era = tk.kind === 'mrt' ? 'mrt' : fe.train;
-      const cars = era === 'mrt' ? 3 : era === 'steam' ? 3 : 4;
-      const train = makeTrain(era, cars);
-      for (const c of train.cars) g.add(c);
-      const carU = (train.carLen * 1.06) / total;   // arc-fraction gap between coupled cars
-      // stations sitting on this line become STOPS — the train pauses at each one
-      const stops = [];
-      for (const [, e] of (this.buildings || [])) {
-        if (!e || (e.key !== 'mrt' && e.key !== 'rail_station') || !e.group) continue;
-        const nu = this._nearestU(tk.pts, e.group.position.x, e.group.position.z);
-        if (nu.d < TILE * 1.6) stops.push(nu.u);
-      }
-      stops.sort((a, b) => a - b);
-      this._trains.push({
-        track: tk, cars: train.cars, total, carU,
-        u: Math.random() * 0.6, dir: 1, stops, dwell: 0,
-        speed: era === 'mrt' ? 13 : era === 'steam' ? 6 : 9,
-        rideY: tk.kind === 'mrt' ? 0.4 : 0.34,
-      });
+      const mrt = tk.kind === 'mrt';
+      const era = mrt ? 'mrt' : fe.train;
+      const cars = mrt ? 2 : era === 'steam' ? 3 : 4;
+      const stops = this._stopsForTrack(tk);        // stations on this line are stops
+      const speed = mrt ? 13 : era === 'steam' ? 6 : 9;
+      const rideY = mrt ? 0.12 : 0.34;
+      // Put rolling stock on the line. An MRT viaduct is two-way: a train sits on
+      // each track (offset to its own side) running the opposite way, so the two
+      // pass each other on the deck. Ground railways stay single-track.
+      const spawn = (u, dir, lateral) => {
+        const train = makeTrain(era, cars);
+        for (const c of train.cars) g.add(c);
+        this._trains.push({ track: tk, cars: train.cars, total, carU: (train.carLen * 1.06) / total, u, dir, lateral, stops, dwell: 0, speed, rideY });
+      };
+      if (mrt) { spawn(Math.random() * 0.25, 1, MRT_TRACK_GAUGE); spawn(1 - Math.random() * 0.25, -1, -MRT_TRACK_GAUGE); }
+      else spawn(Math.random() * 0.6, 1, 0);
     }
+  }
+  // Arc-fractions [0,1] where stations sit on a track — a train halts at each.
+  _stopsForTrack(tk) {
+    const stops = [];
+    for (const [, e] of (this.buildings || [])) {
+      if (!e || (e.key !== 'mrt' && e.key !== 'rail_station') || !e.group) continue;
+      const nu = this._nearestU(tk.pts, e.group.position.x, e.group.position.z);
+      if (nu.d < TILE * 1.6) stops.push(nu.u);
+    }
+    return stops.sort((a, b) => a - b);
+  }
+  // Re-scan the stations on each running train's line WITHOUT respawning the train
+  // (so it keeps moving). Called whenever a station is built or removed, so every
+  // train stops at ALL the line's stations — not just the ones that existed when it
+  // first spawned.
+  _refreshTrainStops() {
+    for (const tr of (this._trains || [])) tr.stops = this._stopsForTrack(tr.track);
   }
   _updateTrains(dt) {
     for (const tr of (this._trains || [])) {
@@ -3132,16 +3164,19 @@ export class Scene3D {
         if (tr.u > 1) { tr.u = 1; tr.dir = -1; }
         else if (tr.u < 0) { tr.u = 0; tr.dir = 1; }
       }
-      const pts = tr.track.pts, eps = 0.012;
+      const pts = tr.track.pts, eps = 0.012, lat = tr.lateral || 0;
       for (let i = 0; i < tr.cars.length; i++) {
         const cu = tr.u - tr.dir * i * tr.carU;        // each car trails the one ahead
         const car = tr.cars[i];
         if (cu < 0 || cu > 1) { car.visible = false; continue; }
         car.visible = true;
         const pos = this._alongPoly(pts, cu);
-        const ahead = this._alongPoly(pts, Math.min(1, Math.max(0, cu + tr.dir * eps)));
-        car.position.set(pos.x, pos.y + tr.rideY, pos.z);
-        car.rotation.y = Math.atan2((ahead.x - pos.x) * tr.dir, (ahead.z - pos.z) * tr.dir);
+        // tangent from the track's OWN sense (not the travel sense) so a train keeps
+        // to its own side of the deck whichever way it's heading
+        const a = this._alongPoly(pts, Math.max(0, cu - eps)), b = this._alongPoly(pts, Math.min(1, cu + eps));
+        let tx = b.x - a.x, tz = b.z - a.z; const tl = Math.hypot(tx, tz) || 1; tx /= tl; tz /= tl;
+        car.position.set(pos.x - tz * lat, pos.y + tr.rideY, pos.z + tx * lat);  // shifted onto its track
+        car.rotation.y = Math.atan2(tx * tr.dir, tz * tr.dir);   // nose points the way it travels
       }
     }
   }
@@ -4663,9 +4698,12 @@ function makeTrain(era, carCount = 3) {
   const cars = [];
   const VS = 0.6;                          // match the road-vehicle scale
   const glass = 0x2b3b48;
-  const add = (build) => { const c = new THREE.Group(); build(c); c.traverse((m) => { if (m.isMesh) m.castShadow = true; }); c.scale.setScalar(VS); cars.push(c); };
+  const add = (build, s = VS) => { const c = new THREE.Group(); build(c); c.traverse((m) => { if (m.isMesh) m.castShadow = true; }); c.scale.setScalar(s); cars.push(c); };
   let rawLen = 4.4;
   if (era === 'mrt') {
+    // A short, slim metro: cars are scaled well below the road-vehicle size so a
+    // 2-car set ≈ one station platform in length, and two trains pass on the deck.
+    const MS = 0.28;
     rawLen = 4.5;
     for (let i = 0; i < carCount; i++) add((c) => {
       c.add(partBox(1.7, 1.55, 4.3, mat(0xdfe4e8), 0, 0.9, 0));                  // brushed-silver body
@@ -4673,8 +4711,8 @@ function makeTrain(era, carCount = 3) {
       c.add(partBox(1.66, 0.24, 4.3, mat(0x2c6fa0), 0, 1.74, 0));                // roof band
       const nose = (i === 0) ? 1 : (i === carCount - 1) ? -1 : 0;
       if (nose) { c.add(partBox(1.5, 0.7, 0.5, mat(0x20242b), 0, 0.95, 2.15 * nose)); c.add(partBox(0.5, 0.22, 0.1, mat(0xfff2c2, {}, 1.7), 0, 0.7, 2.3 * nose)); }
-    });
-    return { cars, carLen: rawLen * VS };
+    }, MS);
+    return { cars, carLen: rawLen * MS };
   }
   if (era === 'steam') {
     rawLen = 4.2;

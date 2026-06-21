@@ -2926,11 +2926,18 @@ export class Scene3D {
       e.group.rotation.y = info.bearing;        // line the platform up with the track so the deck runs THROUGH it
       const targetY = info.y - FLOOR;           // concourse floor sits exactly at the deck
       p.set(info.x, targetY, info.z);           // and pull the station right ONTO the deck (no side gap)
-      const lift = targetY - e._groundY;        // raised this far above the ground
-      if (lift > 0.4) {                         // bridge the gap with support columns down to the dirt
-        const legs = new THREE.Group(); legs.scale.setScalar(MODEL_SCALE);
-        const len = lift / MODEL_SCALE;         // model units (the group is MODEL_SCALE-scaled)
-        for (const lx of [-3.6, 0, 3.6]) legs.add(cyl(0.55, 0.7, len, 0xb6bcc1, lx, -len / 2, -1));
+      e.group.updateMatrixWorld(true);          // refresh the transform so we can read where each column lands
+      // Bridge the deck down to the ground with support columns — one under each station
+      // pier, each run to the TERRAIN beneath its OWN foot. However high the viaduct
+      // stands (or however the land falls away under it), the columns always reach the
+      // dirt instead of floating.
+      if (targetY - this._roadY(info.x, info.z) > 0.4) {
+        const legs = new THREE.Group();         // a child of e.group → already MODEL_SCALE-scaled (do NOT scale it again)
+        for (const lx of [-3.6, 0, 3.6]) {
+          const foot = e.group.localToWorld(new THREE.Vector3(lx, 0, -1));   // world spot under this column (foot.y = deck-base level)
+          const len = (foot.y - this._roadY(foot.x, foot.z)) / MODEL_SCALE;  // model units straight down to the ground
+          if (len > 0.1) legs.add(cyl(1.1, 1.4, len, 0xb6bcc1, lx, -len / 2, -1));
+        }
         e.group.add(legs); e._mrtLegs = legs;
       }
     }

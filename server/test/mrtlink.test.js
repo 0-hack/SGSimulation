@@ -87,6 +87,34 @@ try {
   });
   ok(j.chains===1 && j.mrtTracks===1, `two connected viaducts merge into one continuous line (${j.chains} chain, ${j.mrtTracks} track)`);
   ok(j.stops>=1, `the train stops at stations on the line (${j.stops} stop)`);
+
+  // A station on an ELEVATED span (deck standing well off the ground over a hill)
+  // drops support columns ALL THE WAY to the terrain — not floating stubs.
+  const ev = await p.evaluate(() => {
+    const v = window.__sgview, N = v.land.length, W = 1600;
+    const strip=(X,Z,d)=>{const pts=[];for(let i=-7;i<=7;i++)pts.push([X+d[0]*i*5,Z+d[1]*i*5]);return pts;};
+    const dirs=[[1,0],[0,1],[0.7,0.7]]; let best=null;
+    for(let X=-120;X<=120;X+=8)for(let Z=-120;Z<=120;Z+=8)for(const d of dirs){const sp=strip(X,Z,d);let mx=-1e9,lo=1e9;for(const q of sp){const y=v._roadY(q[0],q[1]);mx=Math.max(mx,y);lo=Math.min(lo,y);}if(!best||(mx-lo)>best.range)best={range:mx-lo,pts:sp};}
+    v.state.railways=[{pts:best.pts,elevated:true,mrt:true}]; v._buildPlayerRailways(v.state);
+    const prof=v._mrtProfiles[0]; let hi=null; for(const pt of prof){const g=pt.y-v._roadY(pt.x,pt.z); if(!hi||g>hi.gap)hi={x:pt.x,z:pt.z,gap:g};}
+    const gx=Math.round((hi.x/W+0.5)*N), gy=Math.round((0.5-hi.z/W)*N);
+    v.state.grid[gy][gx]={k:'mrt'}; v.syncAll(); v._buildPlayerRailways(v.state);
+    const e=v.buildings.get(`${gx},${gy}`); const MS=(W/N)/10;
+    let lift=0, legs=0, maxGap=0;
+    if(e){
+      lift = e.group.position.y - v._roadY(e.group.position.x, e.group.position.z);
+      if(e._mrtLegs) for(const m of e._mrtLegs.children){
+        legs++;
+        const h = m.geometry.parameters.height * MS;                                    // world height of this column
+        const f = e.group.localToWorld(new (m.position.constructor)(m.position.x, 0, m.position.z));
+        maxGap = Math.max(maxGap, Math.abs((e.group.position.y - h) - v._roadY(f.x, f.z)));  // foot vs ground beneath it
+      }
+    }
+    return { range: best.range, lift, legs, maxGap };
+  });
+  ok(ev.lift > 3, `station auto-fits the elevated deck, standing high above the ground (${ev.lift.toFixed(1)} units up, ${ev.range.toFixed(0)}m relief)`);
+  ok(ev.legs >= 1 && ev.maxGap < 0.3, `its ${ev.legs} support columns reach the ground — not floating stubs (worst foot gap ${ev.maxGap.toFixed(2)})`);
+
   ok(errs.length===0, 'no console/page errors'+(errs.length?': '+errs[0]:''));
 } catch(e){ fail++; console.error('  ✗ threw:', e.message, e.stack); }
 finally { await browser.close(); server.close(); }

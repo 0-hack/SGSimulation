@@ -2206,8 +2206,8 @@ export class Scene3D {
       this._removeSite(id);
       if (cell && cell.k && !cell.build) {                  // pop the completed building
         this._addMesh(x, y, cell.k, true, cell.c);
-        if (cell.k === 'mrt') this._alignMrtStations();     // lift an MRT station onto the deck
-        if (cell.k === 'mrt' || cell.k === 'rail_station') this._refreshTrainStops(); // it becomes a new STOP for the line's trains
+        if (cell.k === 'mrt') this._buildPlayerRailways(state);   // re-level the deck across the new platform, lift the station onto it, retrain
+        else if (cell.k === 'rail_station') this._refreshTrainStops(); // it becomes a new STOP for the line's trains
       }
     }
   }
@@ -2286,8 +2286,8 @@ export class Scene3D {
   // called by main.js after a successful build
   onBuilt(x, y, key, theme) {
     this._addMesh(x, y, key, true, theme);
-    if (key === 'mrt') this._alignMrtStations();
-    if (key === 'mrt' || key === 'rail_station') this._refreshTrainStops();   // a new station becomes a stop
+    if (key === 'mrt' && this.state) this._buildPlayerRailways(this.state);   // re-level the deck across the new platform + realign + retrain
+    else if (key === 'rail_station') this._refreshTrainStops();               // a new station becomes a stop
     const g = this.natureCells?.get(x + ',' + y); if (g) g.visible = false;  // clear trees under it
   }
 
@@ -2306,8 +2306,8 @@ export class Scene3D {
     const c = cellToWorld(x, y);
     this._spawnDust(c.x, c.z, 0xbfb09a, 26);
     const g = this.natureCells?.get(x + ',' + y); if (g) g.visible = true;   // greenery returns
-    if (entry.key === 'mrt') this._alignMrtStations();                       // rebuild the shared support columns without this station's
-    if (entry.key === 'mrt' || entry.key === 'rail_station') this._refreshTrainStops(); // a demolished station is no longer a stop
+    if (entry.key === 'mrt' && this.state) this._buildPlayerRailways(this.state);  // re-level the deck (the removed platform no longer flattens it) + realign + retrain
+    else if (entry.key === 'rail_station') this._refreshTrainStops();        // a demolished station is no longer a stop
   }
   removeBuilding(x, y) {
     const id = `${x},${y}`;
@@ -2879,8 +2879,8 @@ export class Scene3D {
       // Process the route's terrain and give the deck a smooth profile: it stays a
       // fixed clearance above the ground (so it meets the stations), but is slope-
       // limited to ≤20° and smoothed so it never jumps or roller-coasters — it climbs
-      // and dips GENTLY to follow the land.
-      const prof = this._viaductProfile(dense, MRT_DECK_CLEAR, MRT_MAX_SLOPE);
+      // and dips GENTLY to follow the land, and runs LEVEL across each station platform.
+      const prof = this._viaductProfile(dense, MRT_DECK_CLEAR, MRT_MAX_SLOPE, this._mrtStationAnchors(dense));
       const pts = dense.map((q, i) => new THREE.Vector3(q.x, prof[i], q.z));
       this._mrtGuideway(g, pts);
       tracks.push({ pts, kind: 'mrt' });
@@ -2891,16 +2891,40 @@ export class Scene3D {
     this._buildTrains();
   }
   // A smooth, near-horizontal height profile for an elevated guideway: it sits
-  // `clearance` above the ground, but the slope between deck points is capped at
-  // `maxSlope` (rise/run) — so over rolling terrain the deck climbs and falls GENTLY
-  // and continuously instead of stepping or roller-coastering. The slope-limited
-  // upper envelope is the lowest such profile that still clears the land.
-  _viaductProfile(pts, clearance, maxSlope) {
-    const n = pts.length, h = new Array(n);
+  // `clearance` above the ground, slope-limited to ≤`maxSlope`, so over rolling terrain
+  // the deck climbs and falls GENTLY. Where stations sit (anchor indices), the deck is
+  // LEVELLED across a short platform run — real elevated stations have a flat platform,
+  // and the station stays upright (the deck follows the station, not the other way) —
+  // with the approaches ramped up to meet those level platforms.
+  _viaductProfile(pts, clearance, maxSlope, anchors = []) {
+    const n = pts.length, h = new Array(n), pinned = new Array(n).fill(false);
     for (let i = 0; i < n; i++) h[i] = this._roadY(pts[i].x, pts[i].z) + clearance;
-    for (let i = 1; i < n; i++) { const d = Math.hypot(pts[i].x - pts[i - 1].x, pts[i].z - pts[i - 1].z); if (h[i] < h[i - 1] - maxSlope * d) h[i] = h[i - 1] - maxSlope * d; }
-    for (let i = n - 2; i >= 0; i--) { const d = Math.hypot(pts[i + 1].x - pts[i].x, pts[i + 1].z - pts[i].z); if (h[i] < h[i + 1] - maxSlope * d) h[i] = h[i + 1] - maxSlope * d; }
+    const limit = () => {
+      for (let i = 1; i < n; i++) { if (pinned[i]) continue; const d = Math.hypot(pts[i].x - pts[i - 1].x, pts[i].z - pts[i - 1].z); if (h[i] < h[i - 1] - maxSlope * d) h[i] = h[i - 1] - maxSlope * d; }
+      for (let i = n - 2; i >= 0; i--) { if (pinned[i]) continue; const d = Math.hypot(pts[i + 1].x - pts[i].x, pts[i + 1].z - pts[i].z); if (h[i] < h[i + 1] - maxSlope * d) h[i] = h[i + 1] - maxSlope * d; }
+    };
+    limit();                                    // lowest slope-limited profile clearing the land
+    for (const a of anchors) {                  // flatten a level platform run at each station
+      const lo = Math.max(0, a - 1), hi = Math.min(n - 1, a + 1);
+      let H = -Infinity; for (let i = lo; i <= hi; i++) H = Math.max(H, h[i]);   // sit it at the local high point (clears ground + feasible)
+      for (let i = lo; i <= hi; i++) { h[i] = H; pinned[i] = true; }
+    }
+    if (anchors.length) limit();                // ramp the approaches up to the pinned level platforms
     return h;
+  }
+  // Indices on a dense MRT polyline nearest to each MRT station (within snap range), so
+  // the deck can be levelled across the platform there.
+  _mrtStationAnchors(dense) {
+    const out = []; if (!this.buildings) return out;
+    const maxD2 = (TILE * 2.6) * (TILE * 2.6);
+    for (const [, e] of this.buildings) {
+      if (!e || e.key !== 'mrt' || !e.group) continue;
+      const bx = e._baseX != null ? e._baseX : e.group.position.x, bz = e._baseZ != null ? e._baseZ : e.group.position.z;
+      let bi = -1, bd = maxD2;
+      for (let i = 0; i < dense.length; i++) { const dx = dense[i].x - bx, dz = dense[i].z - bz, d = dx * dx + dz * dz; if (d < bd) { bd = d; bi = i; } }
+      if (bi >= 0) out.push(bi);
+    }
+    return out;
   }
   // Deck height of the nearest MRT viaduct to (x,z) within maxD world units, or null.
   _viaductDeckAt(x, z, maxD) { const i = this._viaductInfoAt(x, z, maxD); return i ? i.y : null; }
@@ -2917,15 +2941,16 @@ export class Scene3D {
     }
     return best;
   }
-  // Make on-line MRT stations meet the deck: lift each station onto the viaduct so its
-  // concourse floor lands at the deck height, TURN it to the track's bearing AND PITCH
-  // it to the deck's slope (so a station on a gradient leans with the deck instead of
-  // sitting square to it), then drop plumb support columns to the ground. Stations off
-  // the line stay level at ground height.
+  // Make on-line MRT stations meet the deck: the deck is levelled across the platform
+  // (see _viaductProfile), so the station stays UPRIGHT (180° straight) — just turned to
+  // the track and lifted so its concourse floor lands on the deck. Then drop plumb
+  // support columns to the ground and, when the platform stands high, build a vertical
+  // access core (lift + stairs) so commuters reach it from the ground. Stations off the
+  // line stay level at ground height.
   _alignMrtStations() {
     if (!this.buildings) return;
     if (!this._mrtLegsGroup) { this._mrtLegsGroup = new THREE.Group(); this.scene.add(this._mrtLegsGroup); }
-    for (const m of this._mrtLegsGroup.children) m.geometry?.dispose?.();   // rebuilt below for every station, each pass
+    for (const m of this._mrtLegsGroup.children) m.traverse((o) => o.geometry?.dispose?.());   // rebuilt below, each pass
     this._mrtLegsGroup.clear();
     const FLOOR = 6.3 * MODEL_SCALE;            // concourse-floor height above the station base
     for (const [, e] of this.buildings) {
@@ -2934,26 +2959,34 @@ export class Scene3D {
       if (e._baseX == null) { e._baseX = p.x; e._baseZ = p.z; e._groundY = p.y; e._baseRot = e.group.rotation.y; } // remember placed spot once
       const info = this._viaductInfoAt(e._baseX, e._baseZ, TILE * 2.6);
       if (info == null) { p.set(e._baseX, e._groundY, e._baseZ); e.group.rotation.set(0, e._baseRot, 0); continue; } // off the line → level, as placed
-      // Orient the station to the deck: the platform (local +X) runs ALONG the track and
-      // tilts with its slope; the depth axis (local +Z) stays horizontal (no sideways roll).
-      const cb = Math.cos(info.bearing), sb = Math.sin(info.bearing);
-      _AX.set(cb, info.slope, -sb).normalize();   // platform forward, climbing the grade
-      _AZ.set(sb, 0, cb);                          // station depth, kept horizontal
-      _AY.crossVectors(_AZ, _AX).normalize();      // station up (perpendicular)
-      _BASIS.makeBasis(_AX, _AY, _AZ);
-      e.group.quaternion.setFromRotationMatrix(_BASIS);
-      const targetY = info.y - FLOOR;             // concourse floor sits exactly on the deck
+      e.group.rotation.set(0, info.bearing, 0);   // level + square to the track; the deck is flat across the platform
+      const targetY = info.y - FLOOR;             // concourse floor sits exactly on the (levelled) deck
       p.set(info.x, targetY, info.z);             // pull the station right ONTO the deck (no side gap)
-      // Plumb support columns down to the ground — spaced ALONG the (now tilted) platform,
-      // each rising to the deck-base level at its own offset and run to the terrain beneath
-      // its own foot, so they always reach the dirt however high the deck stands.
-      for (const d of [-0.9, 0, 0.9]) {           // world offsets along the track (under the station's own piers)
-        const fx = info.x + d * cb, fz = info.z - d * sb;       // foot position (on the deck centreline)
-        const topY = targetY + d * info.slope;                  // station underside rises with the deck here
-        const groundY = this._roadY(fx, fz), h = topY - groundY;
-        if (h > 0.4) this._mrtLegsGroup.add(cyl(0.34, 0.42, h, 0x9098a0, fx, (topY + groundY) / 2, fz)); // vertical pier
+      const cb = Math.cos(info.bearing), sb = Math.sin(info.bearing);
+      // plumb support piers under the level platform, each run to the ground beneath it
+      for (const d of [-0.9, 0, 0.9]) {
+        const fx = info.x + d * cb, fz = info.z - d * sb, gy = this._roadY(fx, fz), h = targetY - gy;
+        if (h > 0.4) this._mrtLegsGroup.add(cyl(0.34, 0.42, h, 0x9098a0, fx, (gy + targetY) / 2, fz));
       }
+      if (targetY - this._roadY(info.x, info.z) > 2) this._mrtAccessCore(info, FLOOR, cb, sb); // ground→platform access
     }
+  }
+  // A vertical access core on the station's entrance side: a lift/stair shaft from the
+  // ground up to the concourse, a glazed ground entrance, and a covered link bridge into
+  // the platform — so passengers travel from the ground floor up before boarding.
+  _mrtAccessCore(info, FLOOR, cb, sb) {
+    const dx = sb, dz = cb;                                   // depth direction (toward the entrance side), horizontal
+    const tx = info.x + dx * 1.9, tz = info.z + dz * 1.9;     // core sits beside the deck, clear of the tracks
+    const floorY = info.y, gT = this._roadY(tx, tz), th = floorY - gT;
+    if (th <= 1) return;
+    const core = new THREE.Group(); core.position.set(tx, 0, tz); core.rotation.y = info.bearing;  // local +z = depth (outward)
+    core.add(partBox(2.8, th, 2.2, mat(0xd2d6da), 0, (gT + floorY) / 2, 0));            // lift/stair shaft to platform level
+    core.add(partBox(1.4, 2.2, 0.2, mat(0x2b3b48, {}, 0.8), 0, gT + 1.1, 1.12));        // glazed ground entrance (faces out)
+    for (let y = gT + 2.6; y < floorY - 0.8; y += 2.6) core.add(partBox(2.86, 0.16, 2.26, mat(0x9aa6ad), 0, y, 0)); // storey bands
+    core.add(partBox(1.8, 0.7, 0.5, mat(0xe5ecf0), 0, floorY + 0.35, -1.0));            // short covered link to the concourse (clear of the tracks)
+    core.add(partBox(1.9, 0.16, 0.6, mat(0x9fb6c4, { metalness: 0.3 }), 0, floorY + 0.78, -1.0)); // its roof
+    core.traverse((o) => { if (o.isMesh) o.castShadow = true; });
+    this._mrtLegsGroup.add(core);
   }
   // A sleek MRT viaduct: a slim pale box-girder deck on thin round piers, with a thin
   // running rail down the middle. Kept narrow + low so it matches the MRT station.

@@ -60,6 +60,11 @@ const MRT_DECK_CLEAR = 6.3 * MODEL_SCALE;            // deck clearance = the sta
 const MRT_MAX_SLOPE = Math.tan(20 * Math.PI / 180);  // viaduct never climbs/falls steeper than 20°
 const MRT_TRACK_GAUGE = 0.32;                        // half-spacing of the two tracks: a train sits this far off the deck centre, so up- and down-trains pass
 
+// reusable scratch objects for per-frame orientation maths (so trains & stations can
+// be PITCHED onto the grade without allocating vectors every frame)
+const _AX = new THREE.Vector3(), _AY = new THREE.Vector3(), _AZ = new THREE.Vector3();
+const _BASIS = new THREE.Matrix4(), _WORLD_UP = new THREE.Vector3(0, 1, 0);
+
 // Land mask for the grid. On fine grids (cell << 10) the 869-vertex coastline test
 // is far too slow per-cell, so compute it at a ~10-unit resolution and upsample —
 // the coastline detail is unchanged from the old grid, only placement gets finer.
@@ -2301,6 +2306,7 @@ export class Scene3D {
     const c = cellToWorld(x, y);
     this._spawnDust(c.x, c.z, 0xbfb09a, 26);
     const g = this.natureCells?.get(x + ',' + y); if (g) g.visible = true;   // greenery returns
+    if (entry.key === 'mrt') this._alignMrtStations();                       // rebuild the shared support columns without this station's
     if (entry.key === 'mrt' || entry.key === 'rail_station') this._refreshTrainStops(); // a demolished station is no longer a stop
   }
   removeBuilding(x, y) {
@@ -2898,47 +2904,54 @@ export class Scene3D {
   }
   // Deck height of the nearest MRT viaduct to (x,z) within maxD world units, or null.
   _viaductDeckAt(x, z, maxD) { const i = this._viaductInfoAt(x, z, maxD); return i ? i.y : null; }
-  // Nearest viaduct: its deck height AND the track BEARING there (so a station can be
-  // turned to line up with the track and the deck runs through it). Null if too far.
+  // Nearest viaduct: its deck height, the track BEARING there, and the longitudinal
+  // SLOPE (rise per unit horizontal, in the +bearing direction) — so a station can be
+  // turned AND pitched to line up with the deck, and the deck runs through it. Null if too far.
   _viaductInfoAt(x, z, maxD) {
     let best = null, bd = maxD * maxD;
     for (const pts of (this._mrtProfiles || [])) {
       for (let i = 0; i < pts.length; i++) {
         const p = pts[i], d = (p.x - x) * (p.x - x) + (p.z - z) * (p.z - z);
-        if (d < bd) { const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)]; bd = d; best = { x: p.x, y: p.y, z: p.z, bearing: Math.atan2(-(b.z - a.z), b.x - a.x) }; }
+        if (d < bd) { const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)]; bd = d; const run = Math.hypot(b.x - a.x, b.z - a.z) || 1; best = { x: p.x, y: p.y, z: p.z, bearing: Math.atan2(-(b.z - a.z), b.x - a.x), slope: (b.y - a.y) / run }; }
       }
     }
     return best;
   }
-  // Make on-line MRT stations meet the deck: lift each station that sits on a viaduct
-  // so its concourse floor lands at the deck height there, and drop support columns to
-  // the ground. Stations off the line stay at ground level.
+  // Make on-line MRT stations meet the deck: lift each station onto the viaduct so its
+  // concourse floor lands at the deck height, TURN it to the track's bearing AND PITCH
+  // it to the deck's slope (so a station on a gradient leans with the deck instead of
+  // sitting square to it), then drop plumb support columns to the ground. Stations off
+  // the line stay level at ground height.
   _alignMrtStations() {
     if (!this.buildings) return;
+    if (!this._mrtLegsGroup) { this._mrtLegsGroup = new THREE.Group(); this.scene.add(this._mrtLegsGroup); }
+    for (const m of this._mrtLegsGroup.children) m.geometry?.dispose?.();   // rebuilt below for every station, each pass
+    this._mrtLegsGroup.clear();
     const FLOOR = 6.3 * MODEL_SCALE;            // concourse-floor height above the station base
     for (const [, e] of this.buildings) {
       if (!e || e.key !== 'mrt' || !e.group) continue;
-      if (e._mrtLegs) { e.group.remove(e._mrtLegs); e._mrtLegs = null; }
       const p = e.group.position;
       if (e._baseX == null) { e._baseX = p.x; e._baseZ = p.z; e._groundY = p.y; e._baseRot = e.group.rotation.y; } // remember placed spot once
       const info = this._viaductInfoAt(e._baseX, e._baseZ, TILE * 2.6);
-      if (info == null) { p.set(e._baseX, e._groundY, e._baseZ); e.group.rotation.y = e._baseRot; continue; } // off the line → as placed
-      e.group.rotation.y = info.bearing;        // line the platform up with the track so the deck runs THROUGH it
-      const targetY = info.y - FLOOR;           // concourse floor sits exactly at the deck
-      p.set(info.x, targetY, info.z);           // and pull the station right ONTO the deck (no side gap)
-      e.group.updateMatrixWorld(true);          // refresh the transform so we can read where each column lands
-      // Bridge the deck down to the ground with support columns — one under each station
-      // pier, each run to the TERRAIN beneath its OWN foot. However high the viaduct
-      // stands (or however the land falls away under it), the columns always reach the
-      // dirt instead of floating.
-      if (targetY - this._roadY(info.x, info.z) > 0.4) {
-        const legs = new THREE.Group();         // a child of e.group → already MODEL_SCALE-scaled (do NOT scale it again)
-        for (const lx of [-3.6, 0, 3.6]) {
-          const foot = e.group.localToWorld(new THREE.Vector3(lx, 0, -1));   // world spot under this column (foot.y = deck-base level)
-          const len = (foot.y - this._roadY(foot.x, foot.z)) / MODEL_SCALE;  // model units straight down to the ground
-          if (len > 0.1) legs.add(cyl(1.1, 1.4, len, 0xb6bcc1, lx, -len / 2, -1));
-        }
-        e.group.add(legs); e._mrtLegs = legs;
+      if (info == null) { p.set(e._baseX, e._groundY, e._baseZ); e.group.rotation.set(0, e._baseRot, 0); continue; } // off the line → level, as placed
+      // Orient the station to the deck: the platform (local +X) runs ALONG the track and
+      // tilts with its slope; the depth axis (local +Z) stays horizontal (no sideways roll).
+      const cb = Math.cos(info.bearing), sb = Math.sin(info.bearing);
+      _AX.set(cb, info.slope, -sb).normalize();   // platform forward, climbing the grade
+      _AZ.set(sb, 0, cb);                          // station depth, kept horizontal
+      _AY.crossVectors(_AZ, _AX).normalize();      // station up (perpendicular)
+      _BASIS.makeBasis(_AX, _AY, _AZ);
+      e.group.quaternion.setFromRotationMatrix(_BASIS);
+      const targetY = info.y - FLOOR;             // concourse floor sits exactly on the deck
+      p.set(info.x, targetY, info.z);             // pull the station right ONTO the deck (no side gap)
+      // Plumb support columns down to the ground — spaced ALONG the (now tilted) platform,
+      // each rising to the deck-base level at its own offset and run to the terrain beneath
+      // its own foot, so they always reach the dirt however high the deck stands.
+      for (const d of [-0.9, 0, 0.9]) {           // world offsets along the track (under the station's own piers)
+        const fx = info.x + d * cb, fz = info.z - d * sb;       // foot position (on the deck centreline)
+        const topY = targetY + d * info.slope;                  // station underside rises with the deck here
+        const groundY = this._roadY(fx, fz), h = topY - groundY;
+        if (h > 0.4) this._mrtLegsGroup.add(cyl(0.34, 0.42, h, 0x9098a0, fx, (topY + groundY) / 2, fz)); // vertical pier
       }
     }
   }
@@ -3178,12 +3191,22 @@ export class Scene3D {
         if (cu < 0 || cu > 1) { car.visible = false; continue; }
         car.visible = true;
         const pos = this._alongPoly(pts, cu);
-        // tangent from the track's OWN sense (not the travel sense) so a train keeps
-        // to its own side of the deck whichever way it's heading
         const a = this._alongPoly(pts, Math.max(0, cu - eps)), b = this._alongPoly(pts, Math.min(1, cu + eps));
-        let tx = b.x - a.x, tz = b.z - a.z; const tl = Math.hypot(tx, tz) || 1; tx /= tl; tz /= tl;
-        car.position.set(pos.x - tz * lat, pos.y + tr.rideY, pos.z + tx * lat);  // shifted onto its track
-        car.rotation.y = Math.atan2(tx * tr.dir, tz * tr.dir);   // nose points the way it travels
+        // lateral offset onto the train's own track (horizontal normal, dir-independent)
+        let tx = b.x - a.x, tz = b.z - a.z; const tl = Math.hypot(tx, tz) || 1;
+        car.position.set(pos.x - (tz / tl) * lat, pos.y + tr.rideY, pos.z + (tx / tl) * lat);
+        // Orient the car to the FULL 3D travel direction, so on an elevated viaduct it
+        // PITCHES with the climb/descent (nose up the grade) instead of staying level —
+        // its body stays upright (no roll), like real rolling stock on a gradient.
+        _AZ.set((b.x - a.x) * tr.dir, (b.y - a.y) * tr.dir, (b.z - a.z) * tr.dir);   // forward (nose, +Z)
+        if (_AZ.lengthSq() < 1e-9) _AZ.set(0, 0, tr.dir);
+        _AZ.normalize();
+        _AX.crossVectors(_WORLD_UP, _AZ);                          // sideways — horizontal, so no banking
+        if (_AX.lengthSq() < 1e-9) _AX.set(1, 0, 0);
+        _AX.normalize();
+        _AY.crossVectors(_AZ, _AX);                                // car's up
+        _BASIS.makeBasis(_AX, _AY, _AZ);
+        car.quaternion.setFromRotationMatrix(_BASIS);
       }
     }
   }

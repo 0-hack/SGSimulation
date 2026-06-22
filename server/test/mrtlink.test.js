@@ -88,8 +88,9 @@ try {
   ok(j.chains===1 && j.mrtTracks===1, `two connected viaducts merge into one continuous line (${j.chains} chain, ${j.mrtTracks} track)`);
   ok(j.stops>=1, `the train stops at stations on the line (${j.stops} stop)`);
 
-  // A station on an ELEVATED span (deck standing well off the ground over a hill)
-  // drops support columns ALL THE WAY to the terrain — not floating stubs.
+  // On an ELEVATED span over a hill: the station auto-fits the deck — lifted onto it,
+  // PITCHED to its slope (not square) — its support columns reach the ground, and the
+  // train cars PITCH along the grade (nose up the climb) rather than staying level.
   const ev = await p.evaluate(() => {
     const v = window.__sgview, N = v.land.length, W = 1600;
     const strip=(X,Z,d)=>{const pts=[];for(let i=-7;i<=7;i++)pts.push([X+d[0]*i*5,Z+d[1]*i*5]);return pts;};
@@ -99,21 +100,29 @@ try {
     const prof=v._mrtProfiles[0]; let hi=null; for(const pt of prof){const g=pt.y-v._roadY(pt.x,pt.z); if(!hi||g>hi.gap)hi={x:pt.x,z:pt.z,gap:g};}
     const gx=Math.round((hi.x/W+0.5)*N), gy=Math.round((0.5-hi.z/W)*N);
     v.state.grid[gy][gx]={k:'mrt'}; v.syncAll(); v._buildPlayerRailways(v.state);
-    const e=v.buildings.get(`${gx},${gy}`); const MS=(W/N)/10;
-    let lift=0, legs=0, maxGap=0;
+    const e=v.buildings.get(`${gx},${gy}`);
+    const V=e.group.position.constructor;                                   // THREE.Vector3 (not global in-page)
+    let lift=0, legs=0, maxGap=0, tilt=0;
     if(e){
       lift = e.group.position.y - v._roadY(e.group.position.x, e.group.position.z);
-      if(e._mrtLegs) for(const m of e._mrtLegs.children){
-        legs++;
-        const h = m.geometry.parameters.height * MS;                                    // world height of this column
-        const f = e.group.localToWorld(new (m.position.constructor)(m.position.x, 0, m.position.z));
-        maxGap = Math.max(maxGap, Math.abs((e.group.position.y - h) - v._roadY(f.x, f.z)));  // foot vs ground beneath it
-      }
+      const px = new V(1,0,0).applyQuaternion(e.group.quaternion);          // platform axis in world
+      tilt = Math.abs(px.y);                                                // vertical component → station is pitched
     }
-    return { range: best.range, lift, legs, maxGap };
+    // support columns live in a shared world-space group — each must reach the ground
+    for(const m of (v._mrtLegsGroup ? v._mrtLegsGroup.children : [])){
+      legs++; const h = m.geometry.parameters.height, bottom = m.position.y - h/2;
+      maxGap = Math.max(maxGap, Math.abs(bottom - v._roadY(m.position.x, m.position.z)));
+    }
+    // train cars: nose should pitch with the grade
+    v._updateTrains(0); v._trainGroup.updateMatrixWorld(true);
+    let carPitch = 0;
+    for(const tr of (v._trains||[])) if(tr.track.kind==='mrt') for(const c of tr.cars){ if(!c.visible) continue; const f=c.localToWorld(new V(0,0,1)); carPitch=Math.max(carPitch, Math.abs(f.y - c.position.y)); }
+    return { range: best.range, lift, legs, maxGap, tilt, carPitch };
   });
   ok(ev.lift > 3, `station auto-fits the elevated deck, standing high above the ground (${ev.lift.toFixed(1)} units up, ${ev.range.toFixed(0)}m relief)`);
+  ok(ev.tilt > 0.05, `the station is PITCHED to the deck's slope, not sitting square (platform rise ${ev.tilt.toFixed(2)})`);
   ok(ev.legs >= 1 && ev.maxGap < 0.3, `its ${ev.legs} support columns reach the ground — not floating stubs (worst foot gap ${ev.maxGap.toFixed(2)})`);
+  ok(ev.carPitch > 0.03, `train cars pitch along the grade, not staying level (nose rise ${ev.carPitch.toFixed(2)})`);
 
   ok(errs.length===0, 'no console/page errors'+(errs.length?': '+errs[0]:''));
 } catch(e){ fail++; console.error('  ✗ threw:', e.message, e.stack); }

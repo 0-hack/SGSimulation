@@ -129,6 +129,26 @@ try {
   ok(ev.access, `a ground→platform access core (lift/stairs) is provided`);
   ok(ev.carPitch > 0.03, `train cars pitch along the grade between stations (nose rise ${ev.carPitch.toFixed(2)})`);
 
+  // A ground railway station turns to run PARALLEL to the track and sits just BESIDE it.
+  const rs = await p.evaluate(() => {
+    const v = window.__sgview, N = v.land.length, W = 1600;
+    const w=(gx,gy)=>[(gx/N-0.5)*W,(0.5-gy/N)*W];
+    const clear=(x,y)=>v.isLand(x,y)&&!v.isRoadAt(x,y)&&!(v.heritageMask&&v.heritageMask[y][x])&&!v.state.grid[y][x];
+    let row=-1,x0=0; for(let y=24;y<N-24&&row<0;y++){let run=0,sx=0;for(let x=24;x<N-24;x++){if(clear(x,y)){if(run===0)sx=x;run++;if(run>=30){row=y;x0=sx;break;}}else run=0;}}
+    const x1=x0+28, line=[]; for(let gx=x0;gx<=x1;gx++) line.push(w(gx,row));
+    v.state.railways=[{pts:line}];                                   // a plain GROUND railway
+    const sgx=Math.round((x0+x1)/2), sgy=row+3;
+    v.state.grid[sgy][sgx]={k:'rail_station'};                       // station placed a few cells to one side
+    v.syncAll(); v._buildPlayerRailways(v.state);
+    const e=v.buildings.get(`${sgx},${sgy}`); const tpts=(v._railLines||[])[0]||[];
+    let dmin=1e9, near=null; for(let i=0;i<tpts.length;i++){const dx=tpts[i].x-e.group.position.x, dz=tpts[i].z-e.group.position.z, d=Math.hypot(dx,dz); if(d<dmin){dmin=d; const a=tpts[Math.max(0,i-1)],b=tpts[Math.min(tpts.length-1,i+1)]; near={ax:b.x-a.x,az:b.z-a.z};}}
+    const V=e.group.position.constructor, px=new V(1,0,0).applyQuaternion(e.group.quaternion);
+    const tl=Math.hypot(near.ax,near.az)||1, parallel=Math.abs((px.x*near.ax+px.z*near.az)/tl);  // ~1 when the platform runs along the track
+    return { dist:dmin, parallel };
+  });
+  ok(rs.dist > 1.0 && rs.dist < 3.5, `the train station sits BESIDE the track, not on it (${rs.dist.toFixed(1)} units to the side)`);
+  ok(rs.parallel > 0.96, `the train station runs PARALLEL to the track (alignment ${rs.parallel.toFixed(2)})`);
+
   ok(errs.length===0, 'no console/page errors'+(errs.length?': '+errs[0]:''));
 } catch(e){ fail++; console.error('  ✗ threw:', e.message, e.stack); }
 finally { await browser.close(); server.close(); }

@@ -2207,7 +2207,7 @@ export class Scene3D {
       if (cell && cell.k && !cell.build) {                  // pop the completed building
         this._addMesh(x, y, cell.k, true, cell.c);
         if (cell.k === 'mrt') this._buildPlayerRailways(state);   // re-level the deck across the new platform, lift the station onto it, retrain
-        else if (cell.k === 'rail_station') this._refreshTrainStops(); // it becomes a new STOP for the line's trains
+        else if (cell.k === 'rail_station') { this._alignRailStations(); this._refreshTrainStops(); } // sit it beside the track; it becomes a STOP
       }
     }
   }
@@ -2287,7 +2287,7 @@ export class Scene3D {
   onBuilt(x, y, key, theme) {
     this._addMesh(x, y, key, true, theme);
     if (key === 'mrt' && this.state) this._buildPlayerRailways(this.state);   // re-level the deck across the new platform + realign + retrain
-    else if (key === 'rail_station') this._refreshTrainStops();               // a new station becomes a stop
+    else if (key === 'rail_station') { this._alignRailStations(); this._refreshTrainStops(); } // sit it beside the track; it becomes a stop
     const g = this.natureCells?.get(x + ',' + y); if (g) g.visible = false;  // clear trees under it
   }
 
@@ -2307,7 +2307,7 @@ export class Scene3D {
     this._spawnDust(c.x, c.z, 0xbfb09a, 26);
     const g = this.natureCells?.get(x + ',' + y); if (g) g.visible = true;   // greenery returns
     if (entry.key === 'mrt' && this.state) this._buildPlayerRailways(this.state);  // re-level the deck (the removed platform no longer flattens it) + realign + retrain
-    else if (entry.key === 'rail_station') this._refreshTrainStops();        // a demolished station is no longer a stop
+    else if (entry.key === 'rail_station') { this._alignRailStations(); this._refreshTrainStops(); } // a demolished station is no longer a stop
   }
   removeBuilding(x, y) {
     const id = `${x},${y}`;
@@ -2861,11 +2861,13 @@ export class Scene3D {
     this._railCarves = rails.map((r) => ({ poly: r.dense, halfW: 7, blend: 6, floors: r.grade }));
     this._syncCarves();   // cut the hills down to each railway's grade (+ airport pads)
     const tracks = [];                       // {pts, kind} — where trains will run
+    this._railLines = [];                    // ground-rail centre-lines, for aligning train stations beside them
     for (const r of rails) {
       const pts = r.dense.map((q, i) => new THREE.Vector3(q.x, r.grade[i], q.z));
-      this._railEmbankment(g, r);            // fill embankment under the track over any dip
+      this._railTrestle(g, r);               // wooden trestle where the track stands above the ground
       this._railTrack(g, pts);               // ballast + sleepers + rails on the smooth grade
       tracks.push({ pts, kind: 'train' });
+      this._railLines.push(pts);
     }
     for (const dense of viaducts) {          // elevated viaduct: flat deck clearing all below, on pillars
       const n = dense.length, deckY = this._elevatedDeckY(dense, 2);
@@ -2888,7 +2890,35 @@ export class Scene3D {
     }
     this._playerTrainTracks = tracks;
     this._alignMrtStations();   // lift any station on a viaduct so its platform meets the deck
+    this._alignRailStations();  // turn each train station to sit beside the nearest railway
     this._buildTrains();
+  }
+  // Turn each ground railway station to run PARALLEL to the nearest track and sit just
+  // BESIDE it (platform facing the rails), the way a real wayside station does — like
+  // the MRT station snaps to its viaduct. Stations far from any line stay as placed.
+  _alignRailStations() {
+    if (!this.buildings) return;
+    const lines = [...(this._railLines || []), ...((this._histTrainTracks || []).map((t) => t.pts))];
+    for (const [, e] of this.buildings) {
+      if (!e || e.key !== 'rail_station' || !e.group) continue;
+      const p = e.group.position;
+      if (e._baseX == null) { e._baseX = p.x; e._baseZ = p.z; e._groundY = p.y; e._baseRot = e.group.rotation.y; }
+      let best = null, bd = (TILE * 5) * (TILE * 5);
+      for (const pts of lines) {
+        for (let i = 0; i < pts.length; i++) {
+          const dx = pts[i].x - e._baseX, dz = pts[i].z - e._baseZ, d = dx * dx + dz * dz;
+          if (d < bd) { const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)]; bd = d; best = { x: pts[i].x, z: pts[i].z, ax: b.x - a.x, az: b.z - a.z }; }
+        }
+      }
+      if (!best) { p.set(e._baseX, e._groundY, e._baseZ); e.group.rotation.set(0, e._baseRot, 0); continue; } // off the line → as placed
+      const tl = Math.hypot(best.ax, best.az) || 1, nx = -best.az / tl, nz = best.ax / tl;  // track normal
+      const side = ((e._baseX - best.x) * nx + (e._baseZ - best.z) * nz) >= 0 ? 1 : -1;     // keep it on the side it was placed
+      const sx = best.x + nx * 2.0 * side, sz = best.z + nz * 2.0 * side;                   // set it just beside the rails
+      p.set(sx, this._roadY(sx, sz), sz);
+      let bearing = Math.atan2(-best.az, best.ax);    // platform (local +X) runs along the track
+      if (side < 0) bearing += Math.PI;               // flip so the platform side faces the rails
+      e.group.rotation.set(0, bearing, 0);
+    }
   }
   // A smooth, near-horizontal height profile for an elevated guideway: it sits
   // `clearance` above the ground, slope-limited to ≤`maxSlope`, so over rolling terrain
@@ -2904,8 +2934,11 @@ export class Scene3D {
       for (let i = n - 2; i >= 0; i--) { if (pinned[i]) continue; const d = Math.hypot(pts[i + 1].x - pts[i].x, pts[i + 1].z - pts[i].z); if (h[i] < h[i + 1] - maxSlope * d) h[i] = h[i + 1] - maxSlope * d; }
     };
     limit();                                    // lowest slope-limited profile clearing the land
-    for (const a of anchors) {                  // flatten a level platform run at each station
-      const lo = Math.max(0, a - 1), hi = Math.min(n - 1, a + 1);
+    for (const a of anchors) {                  // flatten a generous level platform run at each station
+      let lo = a, hi = a, dd = 0;
+      while (lo > 0 && dd < 3.5) { dd += Math.hypot(pts[lo].x - pts[lo - 1].x, pts[lo].z - pts[lo - 1].z); lo--; }       // ~3.5 units each side, so the
+      dd = 0;
+      while (hi < n - 1 && dd < 3.5) { dd += Math.hypot(pts[hi + 1].x - pts[hi].x, pts[hi + 1].z - pts[hi].z); hi++; }   // station sits ON the level, not at a drop
       let H = -Infinity; for (let i = lo; i <= hi; i++) H = Math.max(H, h[i]);   // sit it at the local high point (clears ground + feasible)
       for (let i = lo; i <= hi; i++) { h[i] = H; pinned[i] = true; }
     }
@@ -3006,24 +3039,26 @@ export class Scene3D {
       return new THREE.Vector3(p.x - tz * off, p.y, p.z + tx * off);
     });
   }
-  // A fill embankment under the track wherever the graded line sits above the (now
-  // cut) ground — a skirt from the ballast edge down to the terrain on each side.
-  _railEmbankment(g, prof) {
-    const { dense, grade } = prof, HW = 1.7;
-    let any = false;
-    for (let i = 0; i < dense.length; i++) if (grade[i] - this._roadY(dense[i].x, dense[i].z) > 0.4) { any = true; break; }
-    if (!any) return;                        // nothing to fill (level / cutting only)
+  // Where the graded line stands above the (cut) ground, carry the track on a WOODEN
+  // TRESTLE — bents of timber posts under a cross cap — instead of a solid earth
+  // embankment, like a 1960s timber rail viaduct. (On the ground / in cuttings: nothing.)
+  _railTrestle(g, prof) {
+    const { dense, grade } = prof, wood = 0x6b4a2c, HW = 0.9;
     const nrm = dense.map((p, i) => { const a = dense[Math.max(0, i - 1)], b = dense[Math.min(dense.length - 1, i + 1)]; let tx = b.x - a.x, tz = b.z - a.z; const l = Math.hypot(tx, tz) || 1; return [-tz / l, tx / l]; });
-    for (const sgn of [-1, 1]) {
-      const v = [], idx = [];
-      for (let i = 0; i < dense.length; i++) {
-        const ex = dense[i].x + nrm[i][0] * HW * sgn, ez = dense[i].z + nrm[i][1] * HW * sgn;
-        const top = grade[i] + 0.1, bot = Math.min(top - 0.02, this._roadY(ex, ez) - 0.1);
-        v.push(ex, top, ez, ex, bot, ez);
+    let acc = 999;
+    for (let i = 0; i < dense.length; i++) {
+      acc += i ? Math.hypot(dense[i].x - dense[i - 1].x, dense[i].z - dense[i - 1].z) : 0;
+      if (grade[i] - this._roadY(dense[i].x, dense[i].z) < 0.4) continue;   // on the ground here — no trestle
+      if (acc < 4) continue; acc = 0;                                       // a bent every ~4 units
+      const nx = nrm[i][0], nz = nrm[i][1], rot = Math.atan2(nx, nz);
+      const cap = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.3, 2.2), toon(wood));     // cross cap under the ballast
+      cap.position.set(dense[i].x, grade[i] - 0.12, dense[i].z); cap.rotation.y = rot; cap.castShadow = true; g.add(cap);
+      for (const sgn of [-1, 1]) {                                          // a timber post each side down to the ground
+        const px = dense[i].x + nx * HW * sgn, pz = dense[i].z + nz * HW * sgn, pgy = this._roadY(px, pz), ph = grade[i] - pgy;
+        if (ph < 0.2) continue;
+        const post = new THREE.Mesh(new THREE.BoxGeometry(0.34, ph, 0.34), toon(wood));
+        post.position.set(px, pgy + ph / 2, pz); post.castShadow = true; g.add(post);
       }
-      for (let i = 0; i < dense.length - 1; i++) { const a = i * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
-      const sg = new THREE.BufferGeometry(); sg.setAttribute('position', new THREE.Float32BufferAttribute(v, 3)); sg.setIndex(idx); sg.computeVertexNormals();
-      const m = new THREE.Mesh(sg, toon(0x6e6457, { side: THREE.DoubleSide })); m.receiveShadow = true; g.add(m);
     }
   }
   // Lay ballast, sleepers and rails along a polyline of Vector3 points (already at
@@ -3031,21 +3066,21 @@ export class Scene3D {
   _railTrack(g, pts) {
     if (!pts || pts.length < 2) return;
     const nrm = pts.map((p, i) => { const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)]; let tx = b.x - a.x, tz = b.z - a.z; const l = Math.hypot(tx, tz) || 1; return [-tz / l, tx / l]; });
-    this._addRibbon(g, pts, 1.55, 0x6e6457, 0.08);                                // grey gravel ballast bed
+    this._addRibbon(g, pts, 1.03, 0x6e6457, 0.08);                                // grey gravel ballast bed (a third narrower)
     // wooden cross-ties (sleepers) at even intervals across the track
     let acc = 999;
     for (let i = 0; i < pts.length; i++) {
       acc += (i ? Math.hypot(pts[i].x - pts[i - 1].x, pts[i].z - pts[i - 1].z) : 0);
       if (acc < 2.2) continue; acc = 0;
-      const slp = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.18, 2.5), toon(0x4a3a2a));
+      const slp = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.18, 1.66), toon(0x4a3a2a));
       slp.position.set(pts[i].x, pts[i].y + 0.16, pts[i].z); slp.rotation.y = Math.atan2(nrm[i][0], nrm[i][1]); slp.castShadow = true; g.add(slp);
     }
     // two steel rails on top of the ties
     for (const sgn of [-1, 1]) {
-      const rail = pts.map((p, i) => new THREE.Vector3(p.x + nrm[i][0] * 0.62 * sgn, p.y + 0.26, p.z + nrm[i][1] * 0.62 * sgn));
+      const rail = pts.map((p, i) => new THREE.Vector3(p.x + nrm[i][0] * 0.41 * sgn, p.y + 0.26, p.z + nrm[i][1] * 0.41 * sgn));
       this._addRibbon(g, rail, 0.09, 0xc7ccd1, 0.0);
     }
-    this._clearNatureAlong(pts, 1.6);          // clear trees along the track
+    this._clearNatureAlong(pts, 1.1);          // clear trees along the track
   }
   // Grade a railway onto the straight line between its endpoints, and measure the
   // earth that must be moved (hills cut down, dips filled) to that smooth grade.

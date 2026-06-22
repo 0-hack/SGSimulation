@@ -149,6 +149,55 @@ try {
   ok(rs.dist > 1.0 && rs.dist < 3.5, `the train station sits BESIDE the track, not on it (${rs.dist.toFixed(1)} units to the side)`);
   ok(rs.parallel > 0.96, `the train station runs PARALLEL to the track (alignment ${rs.parallel.toFixed(2)})`);
 
+  // The MRT train BERTHS centred on the platform (whole train within the station), and
+  // the station is COLOURABLE like a building (the chosen tint reaches its mesh).
+  const berth = await p.evaluate(() => {
+    const v = window.__sgview, N = v.land.length, W = 1600;
+    const w=(gx,gy)=>[(gx/N-0.5)*W,(0.5-gy/N)*W];
+    const clear=(x,y)=>v.isLand(x,y)&&!v.isRoadAt(x,y)&&!(v.heritageMask&&v.heritageMask[y][x])&&!v.state.grid[y][x];
+    let row=-1,x0=0; for(let y=30;y<N-30&&row<0;y++){let run=0,sx=0;for(let x=30;x<N-30;x++){if(clear(x,y)){if(run===0)sx=x;run++;if(run>=40){row=y;x0=sx;break;}}else run=0;}}
+    const x1=x0+38, line=[]; for(let gx=x0;gx<=x1;gx++) line.push(w(gx,row));
+    const sgx=Math.round((x0+x1)/2);
+    v.state.railways=[{pts:line,elevated:true,mrt:true}];
+    v.state.grid[row][sgx]={k:'mrt', c:'#e0a85e'};   // a tinted station
+    v.state.grid[row][sgx-8]={k:'mrt'};              // a default-coloured one to compare
+    v.syncAll(); v._buildPlayerRailways(v.state);
+    const tr=(v._trains||[]).find(t=>t.track.kind==='mrt' && t.stops.length);
+    const su=tr.stops.reduce((a,b)=>Math.abs(b-0.5)<Math.abs(a-0.5)?b:a);   // the central stop
+    tr.u=su-tr.dir*0.02; tr.dwell=0;                 // approaching the stop
+    for(let k=0;k<400 && tr.dwell<=0;k++) v._updateTrains(0.05);   // run until it berths
+    const mid = tr.u - tr.dir*(tr.cars.length-1)*tr.carU/2;        // geometric centre of the set
+    // the chosen tint reaches the mesh: the tinted station shows colours the default one doesn't
+    const colours=(e)=>{const s=new Set(); e.group.traverse(o=>{const c=o.material&&o.material.color; if(c) s.add(c.getHexString());}); return s;};
+    const def=colours(v.buildings.get(`${sgx-8},${row}`)), thm=colours(v.buildings.get(`${sgx},${row}`));
+    const tinted=[...thm].some(h=>!def.has(h));
+    return { dwell:tr.dwell, centreErr:Math.abs(mid-su), tinted };
+  });
+  ok(berth.dwell > 0 && berth.centreErr < 0.01, `the train berths CENTRED on the platform, not nose-first (centre offset ${berth.centreErr.toFixed(3)})`);
+  ok(berth.tinted, 'the MRT station is colourable — the chosen tint reaches its mesh');
+
+  // Cutting a hill for a railway clears the trees that stood on it (no floaters left in
+  // the cutting) and re-settles roads onto the cut (no road left floating in the air).
+  const carve = await p.evaluate(() => {
+    const v = window.__sgview, N = v.land.length;
+    const strip=(X,Z,d)=>{const pts=[];for(let i=-8;i<=8;i++)pts.push([X+d[0]*i*6,Z+d[1]*i*6]);return pts;};
+    const dirs=[[1,0],[0.7,0.7]]; let best=null;
+    for(let X=-120;X<=120;X+=10)for(let Z=-120;Z<=120;Z+=10)for(const d of dirs){const sp=strip(X,Z,d);let mx=-1e9,lo=1e9;for(const q of sp){const y=v._roadY(q[0],q[1]);mx=Math.max(mx,y);lo=Math.min(lo,y);}if(!best||(mx-lo)>best.range)best={range:mx-lo,pts:sp};}
+    v.state.roads=v.state.roads||{nodes:[],edges:[],islands:[]}; v.state.roads.edges.push({poly:best.pts.map(([x,z])=>({x,z})),type:'road'}); v.rebuildRoadNet();
+    const roadFloat=()=>{let m=0; v.roadGroup.traverse(o=>{const pos=o.geometry&&o.geometry.attributes&&o.geometry.attributes.position; if(!pos)return; for(let i=0;i<pos.count;i++) m=Math.max(m, pos.getY(i)-v._roadY(pos.getX(i),pos.getZ(i)));}); return m;};
+    const floatBefore=roadFloat();
+    v.state.railways=[{pts:best.pts}]; v._buildPlayerRailways(v.state);    // cut the hill
+    const floatAfter=roadFloat();
+    // visible trees left standing inside the cut corridor?
+    let floaters=0; const carves=v._carves||[];
+    for(const [,g] of (v.natureCells||new Map())){ if(!g.visible) continue; let near=false;
+      for(const cv of carves){ for(const pp of cv.poly){ if(Math.hypot(g.position.x-pp.x, g.position.z-pp.z) < 5){ near=true; break; } } if(near) break; }
+      if(near) floaters++; }
+    return { range:best.range, floatBefore, floatAfter, floaters };
+  });
+  ok(carve.floatAfter <= carve.floatBefore + 0.4, `roads re-settle onto the cut, not left floating (road float ${carve.floatBefore.toFixed(1)}→${carve.floatAfter.toFixed(1)} over ${carve.range.toFixed(0)}m relief)`);
+  ok(carve.floaters === 0, `no trees left floating in the railway cutting (${carve.floaters} found)`);
+
   ok(errs.length===0, 'no console/page errors'+(errs.length?': '+errs[0]:''));
 } catch(e){ fail++; console.error('  ✗ threw:', e.message, e.stack); }
 finally { await browser.close(); server.close(); }

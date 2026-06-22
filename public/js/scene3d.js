@@ -561,7 +561,13 @@ export class Scene3D {
     const all = [...(this._railCarves || []), ...(this._airCarves || [])];
     this._carves = all.length ? all : null;
     const sig = all.map((c) => `${c.poly.length}:${c.poly[0].x.toFixed(0)},${c.poly[0].z.toFixed(0)}:${(c.floors ? c.floors[0] : c.floor).toFixed(1)}:${(c.floors ? c.floors[c.floors.length - 1] : c.floor).toFixed(1)}`).join('|');
-    if (sig !== (this._carveSig ?? '')) { this._carveSig = sig; this._buildTerrain(); }
+    if (sig !== (this._carveSig ?? '')) {
+      this._carveSig = sig; this._buildTerrain();
+      // the ground just moved: re-settle roads and trees so a cut hill doesn't leave
+      // its old road/trees floating where the hill used to be
+      if (this.state) this.rebuildRoadNet();
+      this._refreshNature();
+    }
   }
   // Lower the heightfield inside carves so linear features sit IN the ground rather
   // than poking out of it. Two kinds: a tunnel-mouth ramp capsule (cut to the track
@@ -718,9 +724,20 @@ export class Scene3D {
   }
   _refreshNature() {
     if (!this.natureCells) return;
+    const carves = this._carves || [];
     for (const [key, g] of this.natureCells) {
       const [x, y] = key.split(',').map(Number);
-      g.visible = !(this.state?.grid?.[y]?.[x]);
+      if (this.state?.grid?.[y]?.[x]) { g.visible = false; continue; }   // hidden under a building
+      // a railway cutting / runway pad excavated this spot — clear the trees that were on the hill
+      const c = cellToWorld(x, y);
+      let inCut = false;
+      for (const cv of carves) {
+        const hw = (cv.halfW || 6) + 2, poly = cv.poly;
+        for (let i = 0; i < poly.length - 1; i++) { if (segPointDist(c.x, c.z, poly[i].x, poly[i].z, poly[i + 1].x, poly[i + 1].z) < hw) { inCut = true; break; } }
+        if (inCut) break;
+      }
+      g.visible = !inCut;
+      if (g.visible) g.position.y = this.terrainHeight(x, y);   // re-settle onto the (possibly re-cut) terrain
     }
   }
 
@@ -3245,8 +3262,12 @@ export class Scene3D {
       else {
         const prev = tr.u;
         tr.u += tr.dir * dt * tr.speed / tr.total;
-        for (const su of (tr.stops || [])) {  // pull up at a station as we reach it
-          if ((prev < su && tr.u >= su) || (prev > su && tr.u <= su)) { tr.u = su; tr.dwell = 2.4; break; }
+        // pull up at a station as we reach it — berth the train CENTRED on the platform
+        // (head leads by half the set), not with its nose at the platform and the body
+        // trailing out behind it
+        const halfU = (tr.cars.length - 1) * tr.carU / 2;
+        for (const su of (tr.stops || [])) {
+          if ((prev < su && tr.u >= su) || (prev > su && tr.u <= su)) { tr.u = Math.max(0, Math.min(1, su + tr.dir * halfU)); tr.dwell = 2.4; break; }
         }
         // shuttle: when the head reaches an end, reverse (and flip which way the cars trail)
         if (tr.u > 1) { tr.u = 1; tr.dir = -1; }
@@ -4525,18 +4546,32 @@ export function makeBuilding(key, theme) {
       g.add(partBox(4.4, 1.5, 0.4, mat(0xe23744), 0, 6.6, 1.45));
       const heli = new THREE.Mesh(new THREE.CircleGeometry(2.3, 18), mat(0x6a7078)); heli.rotation.x = -Math.PI / 2; heli.position.set(0, 9.1, -0.6); g.add(heli);
     } else if (key === 'mrt') {
-      // an elevated MRT STATION: a ground-level entrance, piers, and an enclosed
-      // concourse hall with a curved roof + signboard (clearly a station building).
+      // an elevated MRT station, real-world layout: a glazed GROUND ENTRANCE and a
+      // CONCOURSE (ticketing) box on piers, then an OPEN side-platform deck under a
+      // curved roof canopy — the track runs straight THROUGH the open platform (no
+      // enclosing walls), so the train is seen passing in and out. Tinted by `col`.
       lawn(g, 9, 9);
-      g.add(partBox(3.4, 2.4, 3.2, mat(0xeceee9), 0, 1.2, 3.0));                       // ground entrance pavilion
-      g.add(partBox(1.6, 1.9, 0.25, mat(0x2b3b48), 0, 0.95, 4.65));                    // doorway
-      for (const px of [-3.6, 0, 3.6]) g.add(cyl(0.6, 0.78, 5.6, 0xc4c8cc, px, 2.8, -1)); // piers
+      const metal = 0x9fb6c4, glass2 = 0x223240;
+      // ground-level entrance hall (glazed, on the +z side) — more than a doorway
+      g.add(partBox(5.6, 2.8, 3.2, mat(col), 0, 1.4, 3.3));                            // entrance hall
+      g.add(partBox(4.6, 1.8, 0.2, mat(glass2, {}, 0.7), 0, 1.25, 4.95));             // glazed shopfront
+      g.add(partBox(1.3, 1.9, 0.22, mat(glass2, {}, 0.5), -1.9, 0.95, 4.96));         // door
+      g.add(partBox(1.3, 1.9, 0.22, mat(glass2, {}, 0.5), 1.9, 0.95, 4.96));          // door
+      g.add(partBox(5.9, 0.4, 3.5, mat(metal), 0, 2.95, 3.3));                         // entrance canopy
+      // piers carrying the deck
+      for (const px of [-4.2, 0, 4.2]) g.add(cyl(0.55, 0.72, 6.3, 0xc4c8cc, px, 3.15, 0));
+      // concourse (ticketing) box tucked under the platform
+      g.add(partBox(8.8, 3.1, 5.0, mat(col), 0, 4.55, 0));                             // concourse body
+      g.add(partBox(8.9, 0.85, 5.1, mat(glass2, {}, 0.5), 0, 5.0, 0));                // concourse window band
+      // ---- platform level (open) ----
       const hy = 6.3;
-      g.add(partBox(9.6, 2.7, 4.4, mat(0xe5ecf0), 0, hy + 1.35, -1));                  // enclosed concourse hall
-      g.add(partBox(9.7, 0.7, 4.2, mat(0x35586a), 0, hy + 1.25, -1));                  // window band
-      g.add(partBox(10.2, 0.45, 5.0, mat(0x9fb6c4, { metalness: 0.3 }), 0, hy + 2.95, -1)); // flat metal station roof (overhangs)
-      g.add(partBox(9.0, 0.5, 0.5, mat(col), 0, hy + 3.3, -1));                        // coloured roof ridge cap
-      g.add(partBox(2.8, 0.95, 0.16, mat(0xe23744), 0, hy + 0.5, 1.25));              // red "MRT" signboard
+      for (const sgn of [-1, 1]) g.add(partBox(11.0, 0.3, 1.4, mat(0xcfd6db), 0, hy + 0.15, sgn * 3.0));        // side platform floors, outside the tracks
+      for (const sgn of [-1, 1]) g.add(partBox(9.2, 1.0, 0.16, mat(glass2, {}, 0.35), 0, hy + 0.7, sgn * 3.55)); // low glazed platform screens (open ends)
+      for (const cx2 of [-4.6, 0, 4.6]) for (const sgn of [-1, 1]) g.add(cyl(0.28, 0.34, 3.0, metal, cx2, hy + 1.5, sgn * 3.0)); // canopy columns (clear of the track)
+      const roofL = partBox(11.6, 0.3, 3.5, mat(metal, { metalness: 0.3 }), 0, hy + 3.0, -1.65); roofL.rotation.x = -0.16; g.add(roofL); // curved canopy, two pitched slabs
+      const roofR = partBox(11.6, 0.3, 3.5, mat(metal, { metalness: 0.3 }), 0, hy + 3.0, 1.65); roofR.rotation.x = 0.16; g.add(roofR);
+      g.add(partBox(11.8, 0.45, 0.5, mat(col), 0, hy + 3.45, 0));                       // coloured roof ridge
+      g.add(partBox(2.8, 0.95, 0.16, mat(0xe23744), 0, hy + 0.5, 3.72));               // red "MRT" signboard on the platform edge
     } else if (key === 'rail_station') {
       // an old-school 1965 railway station: a cream colonial booking hall with a
       // clock tower, a long platform under a pitched canopy, and a train waiting.

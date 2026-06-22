@@ -289,7 +289,7 @@ export const BUILDINGS = {
     desc: 'A grand British colonial civic hall with columns and a clock tower — the administrative seat inherited from the empire.',
   },
   mrt: {
-    name: 'MRT Station', cat: 'roads', icon: '🚇', color: '#5db85d',
+    name: 'MRT Station', cat: 'roads', icon: '🚇', color: '#9fb6c4', customizable: true,
     cost: 100, upkeep: 2.0, year: 1987, homes: 0, jobs: 200,
     power: -20, water: -4, pollution: -3, happiness: 8, education: 0,
     desc: 'Mass Rapid Transit station. Draw the elevated line with the 🚇 MRT mode in the Transport toolkit, then drop a station on the line — the track links up to it. Cuts congestion and pollution, and boosts happiness citywide.',

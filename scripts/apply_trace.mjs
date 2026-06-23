@@ -17,12 +17,40 @@
 //   railway/sands [[...]]     -> custom1966.js             CUSTOM_RAILWAYS / _SANDS
 import { readFileSync, writeFileSync } from 'node:fs';
 
-const WORLD = 1600, STEP = 9, MERGE = 7;
+// SIMPLIFY: Douglas-Peucker tolerance in world units (~0.6u ≈ 22m) — how far the
+//   kept polyline may stray from the raw trace. Small, so the dense southern
+//   street grid and curves stay faithful instead of being flattened.
+// MERGE: weld radius — points within this distance share a node, joining the
+//   junctions the player drew coincident WITHOUT collapsing distinct parallel
+//   streets (which sit ~2.3u apart in the south, so this stays below that).
+const WORLD = 1600, SIMPLIFY = 0.6, MERGE = 2;
 const r1 = v => Math.round(v * 10) / 10, r2 = v => Math.round(v * 100) / 100;
 const r3 = v => Math.round(v * 1000) / 1000, r4 = v => Math.round(v * 10000) / 10000;
 const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
 const toWorld = ([nx, ny]) => [(nx - 0.5) * WORLD, (0.5 - ny) * WORLD];
 const toNorm = ([x, z]) => [x / WORLD + 0.5, 0.5 - z / WORLD];
+// Douglas-Peucker line simplification (points are [x,z] world units). Keeps
+// corners and curve detail while dropping the redundant in-between points of an
+// over-sampled freehand stroke. Unlike a uniform step-decimation it NEVER drops a
+// whole short road or rounds off a sharp grid junction, so it preserves the fine
+// road detail of a careful trace.
+function simplify(pts, eps) {
+  if (pts.length < 3) return pts.slice();
+  const keep = new Uint8Array(pts.length); keep[0] = keep[pts.length - 1] = 1;
+  const stack = [[0, pts.length - 1]];
+  while (stack.length) {
+    const [s, e] = stack.pop(), a = pts[s], b = pts[e];
+    const dx = b[0] - a[0], dz = b[1] - a[1], L = Math.hypot(dx, dz) || 1;
+    let md = -1, mi = -1;
+    for (let i = s + 1; i < e; i++) {
+      const d = Math.abs((pts[i][0] - a[0]) * dz - (pts[i][1] - a[1]) * dx) / L; // perpendicular distance
+      if (d > md) { md = d; mi = i; }
+    }
+    if (md > eps && mi > 0) { keep[mi] = 1; stack.push([s, mi], [mi, e]); }
+  }
+  const out = []; for (let i = 0; i < pts.length; i++) if (keep[i]) out.push(pts[i]);
+  return out;
+}
 function decimateN(pts, minD) {
   if (pts.length < 3) return pts.map(([x, y]) => [r3(x), r3(y)]);
   const out = [pts[0]]; let last = pts[0];
@@ -146,21 +174,12 @@ export async function applyTrace(t, opts = {}) {
     const newEdges = [];
     const addEdge = (a, b, ow) => { if (a === b) return; const k = a < b ? a + ':' + b : b + ':' + a; if (seen.has(k)) return; seen.add(k); const e = [a, b, ow ? 1 : 0, 2]; edges.push(e); newEdges.push(e); };
     for (const road of roadsIn) {
-      const w = road.pts.map(toWorld), kept = [w[0]]; let last = w[0];
-      for (let i = 1; i < w.length - 1; i++) if (dist(w[i], last) >= STEP) { kept.push(w[i]); last = w[i]; }
-      kept.push(w[w.length - 1]);
+      // simplify each stroke (keep corners/curves, drop oversampling), then weld
+      // its vertices into the shared node graph — no uniform decimation that would
+      // erase short streets, and no smoothing that would distort the grid.
+      const kept = simplify(road.pts.map(toWorld), SIMPLIFY);
       let prev = nodeAt(kept[0]);
       for (let i = 1; i < kept.length; i++) { const id = nodeAt(kept[i]); addEdge(prev, id, road.oneway); prev = id; }
-    }
-    if (!merge) {  // smooth freehand jitter (only when building from scratch)
-      const adj = nodes.map(() => new Set());
-      for (const [a, b] of edges) { adj[a].add(b); adj[b].add(a); }
-      const smooth = wt => { const o = nodes.map(p => p.slice());
-        for (let i = 0; i < nodes.length; i++) { const nb = adj[i]; if (!nb.size) continue;
-          let sx = 0, sz = 0; for (const j of nb) { sx += nodes[j][0]; sz += nodes[j][1]; }
-          o[i][0] = nodes[i][0] + wt * (sx / nb.size - nodes[i][0]); o[i][1] = nodes[i][1] + wt * (sz / nb.size - nodes[i][1]); }
-        for (let i = 0; i < nodes.length; i++) nodes[i] = o[i]; };
-      for (let k = 0; k < 3; k++) { smooth(0.5); smooth(-0.48); }
     }
     // compact: keep only nodes referenced by an edge (drops orphans from bulldoze)
     const used = new Set(); for (const e of edges) { used.add(e[0]); used.add(e[1]); }

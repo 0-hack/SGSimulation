@@ -197,7 +197,7 @@ function startNew() {
   attachState();
   saveLocal();
   toast('A new nation is born. 🇸🇬');
-  openPanel('build');
+  // Start on the clean map (no build sheet) so the player sees the whole island first.
 }
 
 function continueGame() {

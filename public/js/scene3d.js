@@ -55,6 +55,7 @@ const SNAP_R = Math.max(8, Math.round(110 / TILE));
 const SEA_Y = -1.2;
 const SEA_COLOR = 0x3aa0d8;   // shared by the sea, river, reservoirs & coastal inlets
 const DAY_CYCLE = 1;          // one full day/night cycle per in-game day (locked to the calendar)
+const TOP_DOWN_PHI = 0.06;    // default tilt: ~3° off straight-down (map view, north up; >0 keeps the look-at stable)
 const LIGHT_YEAR = 1965;      // junction traffic lights are present from the start (SG had them since the 1930s)
 const MRT_DECK_CLEAR = 6.3 * MODEL_SCALE;            // deck clearance = the station's concourse-floor height, so the two meet
 const MRT_MAX_SLOPE = Math.tan(20 * Math.PI / 180);  // viaduct never climbs/falls steeper than 20°
@@ -1320,7 +1321,9 @@ export class Scene3D {
     // stops z-fighting (sand bleeding through grass) when zoomed far out.
     this.camera = new THREE.PerspectiveCamera(45, 1, 4, WORLD * 4.2);
     this.target = new THREE.Vector3(0, 0, 0);
-    this.cam = { radius: WORLD * 0.85, theta: -0.7, phi: 0.92 };
+    // Default to a near-top-down map view, north at the top (theta 0), framed to
+    // fit the whole island (centerCamera() computes the radius for the aspect).
+    this.cam = { radius: WORLD * 0.85, theta: 0, phi: TOP_DOWN_PHI };
     this.MIN_R = 26;             // street-level zoom (buildings unchanged)
     // Navigation limit: a generous zoom-out that still stays over drawn land
     // (Singapore + its grey neighbours) rather than an endless fogged sea.
@@ -1396,7 +1399,7 @@ export class Scene3D {
       if (this._painting) { this._paintAt(p); return; }     // drag paints cells (reclamation)
       if (this._panDrag) { this._pan(dx, dy); this._hover(p); return; } // drag to shift the view
       this.cam.theta -= dx * 0.005;
-      this.cam.phi = THREE.MathUtils.clamp(this.cam.phi - dy * 0.005, 0.22, 1.28);
+      this.cam.phi = THREE.MathUtils.clamp(this.cam.phi - dy * 0.005, TOP_DOWN_PHI, 1.28);
       this._hover(p);
     });
     const end = (e) => {
@@ -1500,7 +1503,20 @@ export class Scene3D {
     this.camera.lookAt(this.target);
   }
 
-  centerCamera() { this.target.set(0, 0, 0); this.cam.radius = WORLD * 0.85; this.cam.theta = -0.7; this.cam.phi = 0.92; }
+  // Frame the whole island in a near-top-down map view (north up). The radius is
+  // computed from the camera's vertical FOV and the current aspect so the island's
+  // east–west span (the wider axis) fits the viewport with a small margin — on any
+  // screen shape "the whole of Singapore" is visible at once.
+  centerCamera() {
+    this.target.set(0, 0, 0);
+    this.cam.theta = 0; this.cam.phi = TOP_DOWN_PHI;
+    const halfX = WORLD * 0.44, halfZ = WORLD * 0.25;   // island half-extents (incl. offshore isles) + margin
+    const t = Math.tan(this.camera.fov * Math.PI / 360); // tan(fov/2) — half the vertical world-span per unit height
+    const aspect = this.camera.aspect || 1.4;
+    const r = Math.max(halfZ / t, halfX / (t * aspect)); // height that fits both axes
+    this.MAX_R = Math.max(this.MAX_R, r * 1.05);          // allow zooming out at least to the framed view
+    this.cam.radius = THREE.MathUtils.clamp(r, this.MIN_R, this.MAX_R);
+  }
 
   resize() {
     const r = this.canvas.getBoundingClientRect();
@@ -2380,13 +2396,13 @@ export class Scene3D {
   _assignLane(a) {
     const meta = this.edgeMeta[a.edge] || { type: 'road', lanes: 2 };
     const T = ROAD_TYPES[meta.type] || ROAD_TYPES.road;
-    const hw = T.width / 2;
+    const hw = T.renderHW || T.width / 2;          // the DRAWN half-width, so traffic stays on the carriageway
     if (a.group === 'veh') {
       const lpd = Math.max(1, Math.round((meta.lanes || 2) / 2));
       const li = (a.laneIdx || 0) % lpd;
       a.lane = (li + 0.5) * (hw / lpd);          // keep-left; opposing dir auto-mirrors
     } else {
-      a.lane = (hw + 0.7) * (a.side || 1);       // pedestrians on the pavement
+      a.lane = (hw + 0.7) * (a.side || 1);       // pedestrians on the pavement just off the kerb
     }
   }
   _edgesNear(R, walkOnly) {
@@ -2505,7 +2521,11 @@ export class Scene3D {
       ? (r < 0.32 ? 'car' : r < 0.44 ? 'taxi' : r < 0.64 ? 'trishaw' : r < 0.8 ? 'bike' : r < 0.92 ? 'lorry' : 'bus')
       : (r < 0.46 ? 'car' : r < 0.6 ? 'taxi' : r < 0.76 ? 'bike' : r < 0.88 ? 'lorry' : 'bus');
     const { mesh, len } = makeVehicle(kind, gen);
-    const VS = 0.6; mesh.scale.setScalar(VS);   // smaller vehicles relative to roads/buildings
+    // sized to fit the drawn carriageway: a road renders at renderHW=0.34 (≈0.68
+    // wide), so each direction is ~0.34. At this scale even the widest vehicle (a
+    // bus, ~2.2 across) is ~0.33 wide, so every vehicle stays within its lane
+    // instead of spilling across the centre-line or onto the verge.
+    const VS = 0.15; mesh.scale.setScalar(VS);
     this.scene.add(mesh);
     const speed = { car: 6, taxi: 6, bike: 7, trishaw: 3, lorry: 4.5, bus: 4 }[kind];
     const ag = {

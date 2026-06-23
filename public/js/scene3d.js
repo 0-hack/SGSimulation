@@ -1117,13 +1117,25 @@ export class Scene3D {
   _relocateHeritageOffRoads() {
     if (this._heritageRoadFixed || !this.heritagePlacements) return;
     for (const p of this.heritagePlacements) {
-      if (p.decor) continue;                       // town terraces are already set back off the road
+      if (p.decor) continue;                       // town terraces handled in the pass below
       if (!this.isRoadAt(p.gx, p.gy)) continue;
       const s = this._nearestNonRoad(p.gx, p.gy, SNAP_R); if (!s) continue;
       if (this.heritageMask) { this.heritageMask[p.gy][p.gx] = false; this.heritageMask[s.y][s.x] = true; }
       if (this.heritageInfo) { const nm = this.heritageInfo.get(`${p.gx},${p.gy}`); if (nm) { this.heritageInfo.delete(`${p.gx},${p.gy}`); this.heritageInfo.set(`${s.x},${s.y}`, nm); } }
       p.gx = s.x; p.gy = s.y;
       const c = cellToWorld(s.x, s.y); if (p.mesh) p.mesh.position.set(c.x, this.terrainHeight(s.x, s.y), c.z);
+    }
+    // Decorative street terraces are set back off the kerb at placement time, but that
+    // uses a rasterised road mask that can disagree with the rendered carriageway on
+    // tight curves/junctions. If any part of a terrace ended up ON the actual tarmac,
+    // drop it — purely cosmetic density, safe to remove so nothing sits in the road.
+    for (let i = this.heritagePlacements.length - 1; i >= 0; i--) {
+      const p = this.heritagePlacements[i];
+      if (!p.decor || !p.cells) continue;
+      if (!p.cells.some(([cx, cy]) => this._onCarriageway(cx, cy))) continue;
+      if (p.mesh && this.heritageGroup) this.heritageGroup.remove(p.mesh);
+      for (const [cx, cy] of p.cells) { if (this.heritageMask?.[cy]) this.heritageMask[cy][cx] = false; if (this._shopMask?.[cy]) this._shopMask[cy][cx] = 0; }
+      this.heritagePlacements.splice(i, 1);
     }
     this._heritageRoadFixed = true;
   }
@@ -1774,6 +1786,21 @@ export class Scene3D {
       for (let i = 0; i < pts.length - 1; i++) {
         if (segPointDist(c.x, c.z, pts[i].x, pts[i].z, pts[i + 1].x, pts[i + 1].z) < margin) return true;
       }
+    }
+    return false;
+  }
+  // True only when a cell sits on the actual DRAWN carriageway (renderHW) plus a small
+  // buffer — NOT the wide footpath clearance isRoadAt() uses. Lets the de-collision tell
+  // a house genuinely on the tarmac apart from one correctly fronting the kerb.
+  _onCarriageway(gx, gy, extra = 0.7) {
+    if (!this.edgePts) return false;
+    const c = cellToWorld(gx, gy);
+    for (let e = 0; e < this.edgePts.length; e++) {
+      const pts = this.edgePts[e]; if (!pts || pts.length < 2) continue;
+      const T = ROAD_TYPES[this.edgeMeta[e]?.type] || ROAD_TYPES.road;
+      const margin = (T.renderHW || T.width / 2) + extra;
+      for (let i = 0; i < pts.length - 1; i++)
+        if (segPointDist(c.x, c.z, pts[i].x, pts[i].z, pts[i + 1].x, pts[i + 1].z) < margin) return true;
     }
     return false;
   }
@@ -3394,6 +3421,23 @@ export class Scene3D {
     return h0 * (1 - tz) + h1 * tz;
   }
   _roadY(x, z) { return this._meshY(x, z) + 0.12; }   // sit just on the rendered mesh
+  // Resample a centre-line to <= `step` world-unit spacing, re-sampling the ground
+  // height at EVERY point (plus a small `lift`) so a road/marking ribbon FOLLOWS the
+  // terrain surface across slopes instead of spanning a straight chord that a hill can
+  // rise in front of and hide. The grid cell is 2.5u, so a ~2u step keeps every
+  // segment sub-cell — the ribbon stays on the visible mesh on any gradient.
+  _densifyRoad(pts, step = 2.0, lift = 0) {
+    if (!pts || pts.length < 2) return pts;
+    const out = [];
+    for (let i = 0; i < pts.length - 1; i++) {
+      const a = pts[i], b = pts[i + 1];
+      const dx = b.x - a.x, dz = b.z - a.z, d = Math.hypot(dx, dz);
+      const n = Math.max(1, Math.ceil(d / step));
+      for (let k = 0; k < n; k++) { const t = k / n, x = a.x + dx * t, z = a.z + dz * t; out.push({ x, y: this._roadY(x, z) + lift, z }); }
+    }
+    const e = pts[pts.length - 1]; out.push({ x: e.x, y: this._roadY(e.x, e.z) + lift, z: e.z });
+    return out;
+  }
   // ---- elevated flyover / viaduct / raised runway shared helpers ----------
   // The highest obstacle (terrain or building top) under a corridor, so an elevated
   // deck can be set above EVERYTHING below it (no overlaps).
@@ -3562,8 +3606,10 @@ export class Scene3D {
     if (roads) {
       const hw = ROAD_TYPES.road.renderHW || 0.34; // uniform width — matches player-drawn roads
       for (const chain of this._tracedChains(roads)) {
-        const pts = chain.map((ni) => { const nd = roads.nodes[ni]; return nd && { x: nd.x, y: this._roadY(nd.x, nd.z), z: nd.z }; }).filter(Boolean);
-        if (pts.length >= 2) ribbonSmooth(road, pts, hw, 0.04);
+        const raw = chain.map((ni) => { const nd = roads.nodes[ni]; return nd && { x: nd.x, z: nd.z }; }).filter(Boolean);
+        // resample to sub-cell spacing so the ribbon hugs the hillsides (traced nodes
+        // are ~9u apart — a straight chord between them sinks under steep terrain)
+        if (raw.length >= 2) ribbonSmooth(road, this._densifyRoad(raw, 2.0, 0.10), hw, 0.04);
       }
     }
 
@@ -3610,7 +3656,7 @@ export class Scene3D {
       const m = new THREE.Mesh(g, material); m.receiveShadow = true; this.roadGroup.add(m);
     };
     const DS = THREE.DoubleSide;
-    mk(pave, toon(0xc4bda8, { side: DS })); mk(road, toon(0x33363d, { side: DS })); mk(mark, toon(0xfaf3d8, { side: DS }));
+    mk(pave, toon(0xc4bda8, { side: DS, polygonOffset: true })); mk(road, toon(0x33363d, { side: DS, polygonOffset: true })); mk(mark, toon(0xfaf3d8, { side: DS, polygonOffset: true }));
 
     this._buildNavGraph();
   }
@@ -3624,25 +3670,25 @@ export class Scene3D {
       for (let i = 0; i < nodes.length; i++) { const n = nodes[i]; if (Math.abs(n.x - x) < MERGE && Math.abs(n.z - z) < MERGE && Math.abs(n.y - y) < 3) return i; }
       nodes.push({ x, z, y }); adj.push([]); return nodes.length - 1;
     };
-    const add = (pts, lanes, type, elevated, walk) => {
+    const add = (pts, lanes, type, elevated, walk, traced) => {
       if (pts.length < 2) return;
       let len = 0; for (let i = 0; i < pts.length - 1; i++) len += Math.hypot(pts[i + 1].x - pts[i].x, pts[i + 1].z - pts[i].z);
       const n1 = nodeAt(pts[0].x, pts[0].z, pts[0].y), n2 = nodeAt(pts[pts.length - 1].x, pts[pts.length - 1].z, pts[pts.length - 1].y);
       if (n1 === n2) return;
       const ei = this.edgePts.length;
-      this.edgePts.push(pts); this.edgeLen.push(len); this.edgeMeta.push({ lanes, type, elevated, walk });
+      this.edgePts.push(pts); this.edgeLen.push(len); this.edgeMeta.push({ lanes, type, elevated, walk, traced: !!traced });
       this.edgeN1.push(n1); this.edgeN2.push(n2);
       const mid = pts[Math.floor(pts.length / 2)]; this.edgeMid.push({ x: mid.x, z: mid.z });
       adj[n1].push({ edge: ei, to: n2, fwd: true }); adj[n2].push({ edge: ei, to: n1, fwd: false });
     };
     if (this.roadEdges) for (const [[ai, aj], [bi, bj]] of this.roadEdges) {
       const a = cornerToWorld(ai, aj), b = cornerToWorld(bi, bj);
-      add([{ x: a.x, y: 0.16, z: a.z }, { x: b.x, y: 0.16, z: b.z }], 2, 'road', false, true);
+      add([{ x: a.x, y: 0.16, z: a.z }, { x: b.x, y: 0.16, z: b.z }], 2, 'road', false, true, false);
     }
     const roads = this.state?.roads;
     if (roads) roads.edges.forEach((e) => {
       const T = ROAD_TYPES[e.type] || ROAD_TYPES.road;
-      add(this._sampleEdge(roads, e), e.lanes || T.lanes, e.type, e.elevated, !e.elevated);
+      add(this._sampleEdge(roads, e), e.lanes || T.lanes, e.type, e.elevated, !e.elevated, e.traced);
     });
     this.navNodes = nodes; this.navAdj = adj;
     this._buildLights();
@@ -3783,11 +3829,26 @@ export class Scene3D {
     }
     return out;
   }
+  // Within ~3 cells of the shophouse town (the same test the traffic lights use): the
+  // built-up 1966 streets that carried lamps. Lets the lamp pass light the town's
+  // base roads while leaving the long rural 1966 roads dark.
+  _nearShopTown(x, z, rad = 3) {
+    if (!this._shopMask) return false;
+    const cgx = Math.round(x / TILE + N / 2), cgy = Math.round(N / 2 - z / TILE);
+    for (let oy = -rad; oy <= rad; oy++) for (let ox = -rad; ox <= rad; ox++) {
+      const gx = cgx + ox, gy = cgy + oy;
+      if (gx >= 0 && gy >= 0 && gx < N && gy < N && this._shopMask[gy]?.[gx]) return true;
+    }
+    return false;
+  }
   // Line the surface roads with street lamps: spaced along each road, alternating
   // sides, the lamp head reaching over the carriageway and GLOWING after dark. Built
   // from the live road network, so player roads get them automatically and they
   // vanish when a road is demolished (the whole group is rebuilt each road change).
-  // Two merged meshes (dark posts, glowing heads) keep it to a couple of draw calls.
+  // The traced 1966 network now spans the whole rural island, so its base roads are
+  // lit ONLY through the built-up town (1966 villages had no street lighting) — that
+  // keeps the lamp count sane and leaves the budget for the player's modern roads,
+  // which are always lit. Two merged meshes (posts, glowing heads) = a couple of draws.
   _buildStreetLamps() {
     if (this._lampGroup) { this._lampGroup.traverse((o) => o.geometry && o.geometry.dispose()); this.scene.remove(this._lampGroup); }
     this._lampGroup = new THREE.Group(); this.scene.add(this._lampGroup);
@@ -3823,8 +3884,11 @@ export class Scene3D {
         const perpx = -dz, perpz = dx;                              // unit normal to the road
         while (acc <= segL && count < MAX) {
           const cx = a.x + dx * acc, cz = a.z + dz * acc;
-          addLamp(cx, cz, perpx, perpz, 1, off);                    // a matched PAIR, one on each kerb,
-          if (count < MAX) addLamp(cx, cz, perpx, perpz, -1, off);  // so the spacing reads as a regular ladder
+          // base 1966 roads light the town only; player-built roads are always lit
+          if (!meta.traced || this._nearShopTown(cx, cz)) {
+            addLamp(cx, cz, perpx, perpz, 1, off);                  // a matched PAIR, one on each kerb,
+            if (count < MAX) addLamp(cx, cz, perpx, perpz, -1, off); // so the spacing reads as a regular ladder
+          }
           acc += STEP;
         }
         acc -= segL;
@@ -4003,6 +4067,10 @@ function toonOpts(opts = {}) {
   if (opts.map) o.map = opts.map;
   if (opts.emissiveMap) o.emissiveMap = opts.emissiveMap;
   if (opts.depthWrite != null) o.depthWrite = opts.depthWrite;
+  // Pull a flat ground decal slightly toward the camera in depth so the terrain it
+  // lies on can't win the depth test and flicker/draw over it (road carriageways,
+  // lane markings) — a cheap supplement to terrain-following geometry.
+  if (opts.polygonOffset) { o.polygonOffset = true; o.polygonOffsetFactor = opts.polygonOffsetFactor ?? -2; o.polygonOffsetUnits = opts.polygonOffsetUnits ?? -2; }
   return o;
 }
 // Un-registered toon material (ground/sea/markings — should not glow at night).

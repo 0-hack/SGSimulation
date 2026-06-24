@@ -110,7 +110,7 @@ const TYPES = {};
 // Road sub-types the player can trace, each a flag on the road object:
 //   standard = 2-way (two lanes, both directions) · single = a NARROW single lane
 //   (one car at a time, both directions) · dirt = a brown off-track / unpaved road.
-const SINGLE_COLOR = '#ff9f43', DIRT_COLOR = '#b5793b';
+const SINGLE_COLOR = '#ff9f43', DIRT_COLOR = '#8b4513';   // single lane = the old one-way orange; dirt = a clearly darker saddle-brown
 const roadStyle = (r, overlay) => r.dirt ? { c: DIRT_COLOR, w: overlay ? 2.2 : 2.0 }
   : r.oneway ? { c: SINGLE_COLOR, w: overlay ? 1.5 : 1.35 }   // single lane: plain, just narrower
   : { c: LAYERS.roads.c, w: overlay ? 2.6 : 2.2 };

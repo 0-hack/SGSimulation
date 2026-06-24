@@ -1346,56 +1346,104 @@ export class Scene3D {
     }
   }
 
-  // Airliners flying a continuous traffic circuit over Paya Lebar: a racetrack
-  // aligned with the runway, the long approach leg descending into a low pass
-  // right over the strip before climbing back out, the downwind leg held high
-  // and offset to one side. Built as a closed 3D polyline whose y already encodes
-  // the descend-low-pass-climb profile, so a plane just rides along it.
+  // Working airliners at Paya Lebar: each flies a full circuit and actually USES
+  // the field — descends the glideslope and touches down on the runway, rolls out,
+  // taxis to the apron and PARKS for a spell, then taxis back, accelerates down the
+  // strip and LIFTS OFF, climbs out and flies the pattern round to land again. The
+  // whole cycle is one closed 3D polyline (y encodes the vertical profile, y=0 = on
+  // the ground), built in the airport's OWN frame so the planes inherit its scale —
+  // exactly the size of the docked aircraft — and line up perfectly with the runway.
   _initAirportPlanes() {
     this._airportPlanes = [];
-    const c = this._airportCenter;
-    if (!c) return;
-    if (this._airPlaneGroup) this.scene.remove(this._airPlaneGroup);
-    const grp = new THREE.Group(); this.scene.add(grp); this._airPlaneGroup = grp;
-    const ux = Math.sin(c.rot), uz = Math.cos(c.rot);     // along the runway (south→north)
-    const px = uz, pz = -ux;                              // perpendicular, to one side of the field
-    const base = this._airfieldY || 0;
-    const A = Math.max(60, c.len * 0.85);                 // half-length of the straight legs
-    const R = Math.max(34, c.len * 0.6);                  // radius of the end turns
-    const SIDE = (AIRPORT.side || 1);                     // sweep the downwind leg to the field's open side
-    const patAlt = 40, lowAlt = 7;                        // pattern altitude vs the low pass over the runway
+    const g = this.airportGroup;
+    if (!g) return;
+    if (this._airPlaneGroup && this._airPlaneGroup.parent) this._airPlaneGroup.parent.remove(this._airPlaneGroup);
+    const grp = new THREE.Group(); g.add(grp); this._airPlaneGroup = grp;   // ride in the airport's scaled/rotated local frame
+
+    // runway geometry in the LOCAL airport frame (+Z = runway long axis, +X*SIDE = terminal side)
+    const nw = (p) => ({ x: (p.x - 0.5) * WORLD, z: (0.5 - p.y) * WORLD });
+    const s = nw(AIRPORT.south), n = nw(AIRPORT.north);
+    const RL = Math.hypot(n.x - s.x, n.z - s.z) / 2;      // half runway (threshold→threshold), local units
+    const SIDE = AIRPORT.side || 1;
+    const apX = AIRPORT.apronOff * SIDE;                  // apron parking, terminal side
+    const apZ = AIRPORT.apronCzFrac * (RL + AIRPORT.overrun);
+    const txX = AIRPORT.taxiOff * SIDE;                   // parallel taxiway
+    const dwX = -RL * 1.45;                               // downwind leg, seaward side (opposite the terminals)
+    const GY = 0;                                         // wheels on the ground (matches the docked planes)
+    const PA = RL * 1.7;                                  // pattern / cruise altitude
+    const APP = RL * 5.0;                                 // length of the final-approach run
+
     const pts = [];
-    const at = (along, off, y) => pts.push(new THREE.Vector3(c.cx + ux * along + px * off * SIDE, base + y, c.cz + uz * along + pz * off * SIDE));
-    const NA = 26, NT = 18;
-    // 1) approach leg over the runway centreline: dips to lowAlt mid-field (parabolic descent → climb-out)
-    for (let i = 0; i <= NA; i++) { const t = i / NA, along = -A + 2 * A * t, k = along / A; at(along, 0, lowAlt + (patAlt - lowAlt) * k * k); }
-    // 2) turn off the north end, offset 0 → 2R, at pattern altitude
-    for (let i = 1; i <= NT; i++) { const th = (i / NT) * Math.PI; at(A + R * Math.sin(th), R * (1 - Math.cos(th)), patAlt); }
-    // 3) downwind leg, offset 2R, back south at pattern altitude
-    for (let i = 1; i <= NA; i++) { const t = i / NA; at(A - 2 * A * t, 2 * R, patAlt); }
-    // 4) turn off the south end, offset 2R → 0, closing the loop
-    for (let i = 1; i < NT; i++) { const th = (i / NT) * Math.PI; at(-A - R * Math.sin(th), R * (1 + Math.cos(th)), patAlt); }
+    const V = (x, y, z) => new THREE.Vector3(x, y, z);
+    const push = (p) => { if (!pts.length || pts[pts.length - 1].distanceToSquared(p) > 1e-4) pts.push(p); };
+    const line = (a, b, nn) => { for (let i = 1; i <= nn; i++) { const t = i / nn; push(V(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t)); } };
+    const thN = V(0, GY, RL), thS = V(0, GY, -RL);
+    push(V(0, PA, RL + APP));                             // [seam] established on final, heading south
+
+    // 1) FINAL APPROACH — descend the glideslope and TOUCH DOWN on the north threshold
+    line(V(0, PA, RL + APP), V(0, GY + RL * 0.16, RL + RL * 0.5), 16);    // glideslope down to the numbers
+    line(V(0, GY + RL * 0.16, RL + RL * 0.5), thN, 6);                    // flare onto the runway
+    // 2) LANDING ROLLOUT — wheels on the strip, rolling south and slowing
+    line(thN, V(0, GY, -RL * 0.45), 12);
+    // 3) TURN OFF the runway and TAXI to the apron
+    line(V(0, GY, -RL * 0.45), V(apX * 0.55, GY, -RL * 0.72), 5);
+    line(V(apX * 0.55, GY, -RL * 0.72), V(apX, GY, apZ), 5);
+    const parkIdx = pts.length - 1;                       // [PARK] sit here a while
+    // 4) TAXI back out to the parallel taxiway and up to the threshold to line up
+    line(V(apX, GY, apZ), V(txX, GY, apZ), 4);
+    line(V(txX, GY, apZ), V(txX, GY, RL + RL * 0.22), 12);
+    line(V(txX, GY, RL + RL * 0.22), V(0, GY, RL + RL * 0.12), 5);
+    line(V(0, GY, RL + RL * 0.12), thN, 3);              // lined up at the threshold, heading south
+    // 5) TAKEOFF ROLL — accelerate down the strip and LEAVE THE GROUND near the far end
+    line(thN, V(0, GY, -RL * 0.35), 10);                 // ground roll
+    line(V(0, GY, -RL * 0.35), V(0, GY + RL * 0.1, -RL), 4);             // rotate, wheels just off at the far threshold
+    line(V(0, GY + RL * 0.1, -RL), V(0, PA * 0.78, -RL - APP * 0.55), 10);   // climb out to the south
+    // 6) CIRCUIT — crosswind, downwind (seaward) and base, rolling out onto final
+    line(V(0, PA * 0.78, -RL - APP * 0.55), V(dwX * 0.6, PA, -RL - APP * 0.78), 8);
+    line(V(dwX * 0.6, PA, -RL - APP * 0.78), V(dwX, PA, -RL - RL * 1.4), 6);
+    line(V(dwX, PA, -RL - RL * 1.4), V(dwX, PA, RL + RL * 1.4), 18);     // downwind, heading north
+    line(V(dwX, PA, RL + RL * 1.4), V(dwX * 0.6, PA, RL + APP * 0.78), 6);
+    line(V(dwX * 0.6, PA, RL + APP * 0.78), V(0, PA, RL + APP + RL * 1.2), 8);  // roll onto the centreline above the seam
+    push(V(0, PA, RL + APP));                             // close straight-in onto the seam (== pts[0]) for a seamless loop
+
+    // arc-fraction of the parking spot, where each plane pauses on its lap
+    let total = 0; const seg = [];
+    for (let i = 1; i < pts.length; i++) { const d = pts[i].distanceTo(pts[i - 1]); seg.push(d); total += d; }
+    let acc = 0; for (let i = 0; i < parkIdx; i++) acc += seg[i];
+    const parkU = total ? acc / total : 0;
+
     const COUNT = 3;
     for (let i = 0; i < COUNT; i++) {
-      const mesh = makeAirliner(); mesh.scale.setScalar(AIRPORT.planeScale * 1.4); mesh.rotation.order = 'YXZ';
+      const mesh = makeAirliner(); mesh.scale.setScalar(AIRPORT.planeScale); mesh.rotation.order = 'YXZ';  // SAME size as the docked planes
       grp.add(mesh);
-      this._airportPlanes.push({ mesh, pts, u: i / COUNT, speed: 0.011 + i * 0.001 }); // spaced around the circuit, gentle pace
+      const u0 = (i / COUNT + 0.12) % 1;
+      this._airportPlanes.push({ mesh, pts, parkU, GY, u: u0, speed: 0.028, parked: false, dwell: 0, didPark: u0 >= parkU });
     }
   }
   _updateAirportPlanes(dt) {
+    const DWELL = 5;   // seconds parked at the gate each lap
     for (const p of (this._airportPlanes || [])) {
-      p.u += dt * p.speed; if (p.u >= 1) p.u -= 1;
+      if (p.parked) {
+        p.dwell -= dt; if (p.dwell <= 0) p.parked = false;
+      } else {
+        const onGround = this._alongPoly(p.pts, p.u).y <= p.GY + 1.0;
+        const prev = p.u;
+        p.u += dt * p.speed * (onGround ? 0.4 : 1);       // taxi / roll slower than flight
+        if (p.u >= 1) { p.u -= 1; p.didPark = false; }
+        if (!p.didPark && prev < p.parkU && p.u >= p.parkU) { p.u = p.parkU; p.parked = true; p.dwell = DWELL; p.didPark = true; }
+      }
       const pos = this._alongPoly(p.pts, p.u);
-      const a1 = this._alongPoly(p.pts, (p.u + 0.01) % 1);
-      const a2 = this._alongPoly(p.pts, (p.u + 0.02) % 1);
-      p.mesh.position.copy(pos);
-      const head = Math.atan2(a1.x - pos.x, a1.z - pos.z);
+      const a1 = this._alongPoly(p.pts, (p.u + 0.008) % 1);
+      const a2 = this._alongPoly(p.pts, (p.u + 0.016) % 1);
       const dHoriz = Math.hypot(a1.x - pos.x, a1.z - pos.z) || 1;
+      const head = Math.atan2(a1.x - pos.x, a1.z - pos.z);
       let dh = Math.atan2(a2.x - a1.x, a2.z - a1.z) - head;
       while (dh > Math.PI) dh -= 2 * Math.PI; while (dh < -Math.PI) dh += 2 * Math.PI;
+      const airborne = pos.y > p.GY + 1.0;
+      p.mesh.position.copy(pos);
       p.mesh.rotation.y = head;
-      p.mesh.rotation.x = -Math.atan2(a1.y - pos.y, dHoriz) * 0.8;   // nose up on the climb-out, down on the approach
-      p.mesh.rotation.z = Math.max(-0.5, Math.min(0.5, dh * 5));     // bank into the turns
+      p.mesh.rotation.x = airborne ? -Math.atan2(a1.y - pos.y, dHoriz) * 0.7 : 0;   // pitch only in the air
+      p.mesh.rotation.z = airborne ? Math.max(-0.45, Math.min(0.45, dh * 4)) : 0;   // bank into the turns aloft
     }
   }
 
@@ -5215,22 +5263,24 @@ function makePerson(kind) {
   const pants = [0x2b3a55, 0x394b59, 0x6b4f3a, 0x4a5560, 0x222831, 0x5d4037];
   const hairs = [0x1b1410, 0x2a1d14, 0x4a3526, 0x6b5536, 0x8d6a3f];
   const umbs = [0x2c3e50, 0xe74c3c, 0x2980d9, 0x111317, 0x16a085, 0xf1c40f];
-  const o = { skin: pick(skins), umb: pick(umbs), hairColor: pick(hairs), capColor: pick(shirts) };
+  // one standard height for everyone — only the clothing/hair varies, so the
+  // crowd reads as a uniform, realistically small size (no oversized outliers)
+  const STD = 0.9;
+  const o = { skin: pick(skins), umb: pick(umbs), hairColor: pick(hairs), capColor: pick(shirts), scale: STD };
   if (kind === 'woman') {
     Object.assign(o, { shirt: pick([0xe84393, 0x9b59b6, 0xff7675, 0x00b894, 0xfd79a8, 0x00bcd4]),
       pants: pick(pants), hairStyle: pick(['long', 'long', 'bun']), shortSleeve: Math.random() < 0.6,
-      dress: Math.random() < 0.55 ? pick([0xe84393, 0x6c5ce7, 0xfdcb6e, 0xff7675, 0x00cec9, 0xffffff]) : null,
-      scale: 0.96 });
+      dress: Math.random() < 0.55 ? pick([0xe84393, 0x6c5ce7, 0xfdcb6e, 0xff7675, 0x00cec9, 0xffffff]) : null });
   } else if (kind === 'child') {
     Object.assign(o, { shirt: pick(shirts), pants: pick(shirts), hairStyle: Math.random() < 0.25 ? 'cap' : pick(['short', 'long']),
-      shorts: true, shortSleeve: true, scale: 0.6 });
+      shorts: true, shortSleeve: true });
   } else if (kind === 'elderly') {
     Object.assign(o, { shirt: pick([0x95a5a6, 0x7f8c8d, 0xb2bec3, 0xa29bfe, 0xbdc3c7, 0x8d9197]),
       pants: pick([0x555a60, 0x6b6f74, 0x4a4f55]), hairColor: 0xe6e9ea, hairStyle: Math.random() < 0.4 ? 'bald' : 'short',
-      scale: 0.92, lean: 0.14, cane: true });
+      lean: 0.14, cane: true });
   } else {
     Object.assign(o, { shirt: pick(shirts), pants: pick(pants), hairStyle: Math.random() < 0.18 ? 'cap' : 'short',
-      shortSleeve: Math.random() < 0.5, scale: 1.0 });
+      shortSleeve: Math.random() < 0.5 });
   }
   return { mesh: buildPerson(o), len: 1.0 };
 }

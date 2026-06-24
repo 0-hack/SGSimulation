@@ -136,17 +136,17 @@ const AIRPORT = {
   apronOff: 15,        // apron centre offset across the runway, inland (+localX)
   apronHalfW: 8,       // apron half-width
   apronHalfL: 12,      // apron half-length (a compact parking, toward one end)
-  apronCzFrac: -0.1,   // apron/building cluster offset along the runway (× runway half-length)
+  apronCzFrac: 0.18,   // apron/building cluster offset along the runway — shifted into the gap between the inland roads so the complex sits BESIDE them, not on them
   apronLinks: 4,       // short links from the apron to the parallel taxiway
   linkW: 2.4,          // taxiway/link width
   pierOff: 19,         // finger-pier offset (aircraft dock against it)
   termOff: 30,         // terminal offset (rotated 90°: tower toward the apron, slab inland)
   carparkOff: 36,      // landside car park offset
-  hangarOff: 33,       // maintenance hangars offset, inland
+  hangarOff: 30,       // maintenance hangars offset, inland
   termScale: 0.6,      // terminal/hangar shrunk toward normal building scale
   planeScale: 0.46,    // airliners ~one building-length (a touch smaller than the terminals)
   scale: 0.62,         // master shrink: the 1955/66 field was tiny next to the island, so the whole complex is scaled down
-  side: -1,            // which flank of the runway the terminal/apron complex sits on (+1 inland/NW, -1 seaward/SE — kept clear of the traced roads)
+  side: 1,             // which flank of the runway the terminal/apron complex sits on (+1 inland/NW beside the roads, -1 seaward/SE)
   // Hand-placed buildings (from the tracer) override the procedural cluster.
   // Each: { type, cx, cy, w, h, rot, hgt } — centre in normalised island coords,
   // w/h normalised footprint, rot radians, hgt height multiplier.
@@ -818,12 +818,12 @@ export class Scene3D {
     const term = makeTerminal(); term.scale.setScalar(sc);
     term.position.set(AIRPORT.termOff * SIDE, 0, apCz); term.rotation.y = SIDE < 0 ? Math.PI : 0; g.add(term);
     // --- car park inline on the terminal's left side (−Z) ---
-    const carZ = apCz - 14;
+    const carZ = apCz - 12;
     slab(20, 13, 0x6d6f74, AIRPORT.carparkOff, carZ, 0.12);
     addCars(g, AIRPORT.carparkOff * SIDE, carZ, 18, 12);
     // --- hangar group, well clear of the car park, the whole row tilted ~30° off the grid ---
     const hg = new THREE.Group();
-    hg.position.set((AIRPORT.hangarOff + 8) * SIDE, 0, carZ - 22); hg.rotation.y = faceApron + Math.PI / 6;
+    hg.position.set((AIRPORT.hangarOff + 8) * SIDE, 0, carZ - 16); hg.rotation.y = faceApron + Math.PI / 6;
     for (let i = 0; i < 2; i++) {                       // wide open-door hangars side by side
       const h = makeHangar(); h.scale.setScalar(sc);
       h.position.set((i - 0.5) * 13, 0, 0); hg.add(h);
@@ -842,7 +842,7 @@ export class Scene3D {
     g.add(hg);
     // --- on the terminal's far (+Z) side, past an open space: a long low wide hall ---
     const hall = makeLowHall(34, 5, 14); hall.scale.setScalar(sc);
-    hall.position.set(24 * SIDE, 0, apCz + 20); hall.rotation.y = faceApron; g.add(hall);
+    hall.position.set(24 * SIDE, 0, apCz + 12); hall.rotation.y = faceApron; g.add(hall);
 
     // --- service road running in front of the buildings, linked through to the hangars ---
     const roadX = 16, roadZ0 = apCz + 28, roadZ1 = carZ - 24;
@@ -852,9 +852,9 @@ export class Scene3D {
     // taxi lane spur from the parallel taxiway out to the hangar apron
     slab(34 - txOff, 6, 0x3a3d43, (txOff + 34) / 2, carZ - 22, 0.125);
     // an aircraft parked on its own apron beside the low hall
-    slab(11, 12, 0xb9b4a6, 14, apCz + 20, 0.12);
+    slab(11, 12, 0xb9b4a6, 14, apCz + 12, 0.12);
     const plHall = makeAirliner(); plHall.scale.setScalar(AIRPORT.planeScale);
-    plHall.position.set(14 * SIDE, 0, apCz + 20); plHall.rotation.y = faceApron; g.add(plHall);
+    plHall.position.set(14 * SIDE, 0, apCz + 12); plHall.rotation.y = faceApron; g.add(plHall);
     } // end procedural cluster
 
     if (handPlaced) this._placeStructures(AIRPORT.buildings, 'airportBuildings');
@@ -985,7 +985,7 @@ export class Scene3D {
       // hard so the heritage city reads as the small, dense, fine-grained place the
       // 1966 survey map shows — shophouses smallest, big works (port/power/factory)
       // a touch larger — rather than looming oversized over the island.
-      const sc = key === 'shophouse' ? 0.36
+      const sc = key === 'shophouse' ? MODEL_SCALE   // same size as a player-built shophouse (the build-menu size)
         : key === 'kampong' ? 0.42
         : (key === 'port' || key === 'power_station' || key === 'factory' || key === 'processing') ? 0.62
         : 0.5;
@@ -1061,7 +1061,7 @@ export class Scene3D {
     // terraces end-to-end on both kerbs, fronts to the road. Each terrace reuses the
     // proper `makeBuilding('shophouse')` model, collapsed per-material so it stays a
     // single, individually-demolishable object without a swarm of meshes.
-    const SC = 0.5, TW = 4 * 2.05 * SC, DEP = 4.6 * SC;   // terrace world width / depth
+    const SC = MODEL_SCALE, TW = 4 * 2.05 * SC, DEP = 4.6 * SC;   // terrace width/depth — matches a player-built shophouse
     const STEP = TW + 0.3, SETBACK = 2.25, MAX = 150;
     const w2c = (wx, wz) => [Math.round(wx / TILE + N / 2), Math.round(N / 2 - wz / TILE)];
     const okCell = (gx, gy) => gx >= 2 && gy >= 2 && gx < N - 2 && gy < N - 2 &&
@@ -2514,6 +2514,19 @@ export class Scene3D {
     while (this.vehicles.length < target) this._addVehicle();
     while (this.vehicles.length > target) { const v = this.vehicles.pop(); this.scene.remove(v.mesh); }
   }
+  // Pick a road edge to spawn/route traffic on, biased toward the busier south
+  // (where the dense 1966 city sits) so most cars run in town rather than out on
+  // the empty rural lanes. ~80% of picks keep the most southern of three candidates.
+  _pickEdge() {
+    const n = this.edgePts.length, rnd = () => Math.floor(Math.random() * n);
+    let e = rnd();
+    if (Math.random() < 0.8) for (let k = 0; k < 2; k++) {
+      const c = rnd();
+      const cz = this.edgeMid[c] ? this.edgeMid[c].z : -1e9, ez = this.edgeMid[e] ? this.edgeMid[e].z : -1e9;
+      if (cz > ez) e = c;
+    }
+    return e;
+  }
   _addVehicle() {
     if (!this.edgePts.length) return;
     // The on-road fleet's generation is set by the economy (fleetEra): a developed
@@ -2533,7 +2546,7 @@ export class Scene3D {
     this.scene.add(mesh);
     const speed = { car: 6, taxi: 6, bike: 7, trishaw: 3, lorry: 4.5, bus: 4 }[kind];
     const ag = {
-      mesh, len: len * VS, group: 'veh', kind, edge: Math.floor(Math.random() * this.edgePts.length),
+      mesh, len: len * VS, group: 'veh', kind, edge: this._pickEdge(),
       dir: Math.random() < 0.5 ? 1 : -1, t: Math.random(), phase: 0,
       speed: speed * (0.85 + Math.random() * 0.3), animK: 1, laneIdx: Math.floor(Math.random() * 3),
     };
@@ -4014,9 +4027,14 @@ export class Scene3D {
     // a zero delta — the camera and placement tweens above keep their real dt.
     const adt = this.frozen ? 0 : dt;
 
-    // unified traffic — density scales with population, drives grid + freeform roads
+    // unified traffic — a busier city makes more traffic: it scales with people on
+    // the island, the size of the road network they drive, and how built-up it is.
     if (!this.frozen && this.state && this.edgePts.length) {
-      const target = THREE.MathUtils.clamp(Math.floor(this.state.population / 30000), 5, 60);
+      const roadSpan = this.edgePts.length;                                  // how much road there is to drive
+      const builtUp = (this.buildings ? this.buildings.size : 0) + (this.heritagePlacements ? this.heritagePlacements.length : 0);
+      const target = THREE.MathUtils.clamp(
+        Math.round(this.state.population / 26000 + roadSpan / 22 + builtUp / 11),
+        10, 220);
       // traffic lights appear once the city has modernised past LIGHT_YEAR
       const wantLights = (this.state.date?.y || 1965) >= LIGHT_YEAR;
       if (wantLights !== this._lightsActive) this._buildLights();

@@ -17,13 +17,18 @@
 //   railway/sands [[...]]     -> custom1966.js             CUSTOM_RAILWAYS / _SANDS
 import { readFileSync, writeFileSync } from 'node:fs';
 
-// SIMPLIFY: Douglas-Peucker tolerance in world units (~0.6u ≈ 22m) — how far the
-//   kept polyline may stray from the raw trace. Small, so the dense southern
-//   street grid and curves stay faithful instead of being flattened.
-// MERGE: weld radius — points within this distance share a node, joining the
-//   junctions the player drew coincident WITHOUT collapsing distinct parallel
-//   streets (which sit ~2.3u apart in the south, so this stays below that).
-const WORLD = 1600, SIMPLIFY = 0.6, MERGE = 2;
+// SIMPLIFY: Douglas-Peucker tolerance in world units (~0.15u ≈ 5.5m) — how far the
+//   kept polyline may stray from the raw trace. Kept SMALL so a freehand curve keeps
+//   enough points to render as a faithful smooth line (no facets) rather than being
+//   flattened into long straight chords.
+// MERGE: weld radius for road ENDPOINTS — endpoints within this distance share a
+//   node, joining the junctions the player drew coincident (and T-junctions, where an
+//   end lands on another road's body) WITHOUT collapsing distinct parallel streets
+//   (which sit ~2.3u apart in the south, so this stays below that).
+// MERGE_MID: a much smaller weld radius for INTERIOR curve points — they only dedupe
+//   near-coincident samples, so the curve is NOT quantised onto a coarse grid (that
+//   quantising is what made traced freehand curves look rigid/faceted before).
+const WORLD = 1600, SIMPLIFY = 0.15, MERGE = 2, MERGE_MID = 0.25;
 const r1 = v => Math.round(v * 10) / 10, r2 = v => Math.round(v * 100) / 100;
 const r3 = v => Math.round(v * 1000) / 1000, r4 = v => Math.round(v * 10000) / 10000;
 const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
@@ -160,11 +165,14 @@ export async function applyTrace(t, opts = {}) {
     const grid = new Map();
     const key = (x, z) => Math.floor(x / MERGE) + ',' + Math.floor(z / MERGE);
     nodes.forEach((p, id) => { const k = key(p[0], p[1]); if (!grid.has(k)) grid.set(k, []); grid.get(k).push(id); });
-    const nodeAt = p => {
+    // weld to an existing node within radius `r` (defaults to the endpoint radius);
+    // the spatial grid stays keyed at the larger MERGE cell so a 3×3 scan still finds
+    // any neighbour within MERGE (and the smaller MERGE_MID is a subset of that).
+    const nodeAt = (p, r = MERGE) => {
       const cx = Math.floor(p[0] / MERGE), cz = Math.floor(p[1] / MERGE);
       for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) {
         const arr = grid.get((cx + dx) + ',' + (cz + dz));
-        if (arr) for (const id of arr) if (dist(nodes[id], p) <= MERGE) return id;
+        if (arr) for (const id of arr) if (dist(nodes[id], p) <= r) return id;
       }
       const id = nodes.length; nodes.push(p.slice());
       const k = key(p[0], p[1]); if (!grid.has(k)) grid.set(k, []); grid.get(k).push(id);
@@ -174,12 +182,17 @@ export async function applyTrace(t, opts = {}) {
     const newEdges = [];
     const addEdge = (a, b, ow) => { if (a === b) return; const k = a < b ? a + ':' + b : b + ':' + a; if (seen.has(k)) return; seen.add(k); const e = [a, b, ow ? 1 : 0, 2]; edges.push(e); newEdges.push(e); };
     for (const road of roadsIn) {
-      // simplify each stroke (keep corners/curves, drop oversampling), then weld
-      // its vertices into the shared node graph — no uniform decimation that would
-      // erase short streets, and no smoothing that would distort the grid.
+      // simplify each stroke (keep corners/curves, drop oversampling), then weld it
+      // into the shared graph: ENDPOINTS weld at MERGE (so junctions/T-junctions join),
+      // INTERIOR points weld at the tiny MERGE_MID (so the curve keeps its shape and is
+      // NOT snapped onto a coarse grid). No decimation, no smoothing — the road follows
+      // the trace exactly.
       const kept = simplify(road.pts.map(toWorld), SIMPLIFY);
-      let prev = nodeAt(kept[0]);
-      for (let i = 1; i < kept.length; i++) { const id = nodeAt(kept[i]); addEdge(prev, id, road.oneway); prev = id; }
+      let prev = nodeAt(kept[0], MERGE);
+      for (let i = 1; i < kept.length; i++) {
+        const id = nodeAt(kept[i], i === kept.length - 1 ? MERGE : MERGE_MID);
+        addEdge(prev, id, road.oneway); prev = id;
+      }
     }
     // compact: keep only nodes referenced by an edge (drops orphans from bulldoze)
     const used = new Set(); for (const e of edges) { used.add(e[0]); used.add(e[1]); }

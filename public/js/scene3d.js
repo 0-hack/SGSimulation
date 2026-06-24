@@ -2547,11 +2547,12 @@ export class Scene3D {
     }
     return out;
   }
-  _pickNetEdge(node, fromEdge, walkOnly, head) {
+  _pickNetEdge(node, fromEdge, walkOnly, head, allow) {
     const all = this.navAdj[node] || [];
-    let pool = all.filter((l) => l.edge !== fromEdge && (!walkOnly || this.edgeMeta[l.edge].walk));
-    if (!pool.length) pool = all.filter((l) => !walkOnly || this.edgeMeta[l.edge].walk);
-    if (!pool.length) return null;
+    const okEdge = (l) => (!walkOnly || this.edgeMeta[l.edge].walk) && (!allow || allow(l.edge));
+    let pool = all.filter((l) => l.edge !== fromEdge && okEdge(l));
+    if (!pool.length) pool = all.filter((l) => okEdge(l));
+    if (!pool.length) return null;   // nothing admissible (e.g. the only exit is an occupied one-way road) — caller waits/reverses
     if (head && Math.random() < 0.82) {            // prefer continuing roughly straight
       let best = -2, pick = null;
       for (const l of pool) {
@@ -2569,6 +2570,11 @@ export class Scene3D {
     const grp = new Map();
     for (const a of list) { if (!a.mesh.visible) continue; const k = a.edge + ':' + a.dir; let g = grp.get(k); if (!g) grp.set(k, g = []); g.push(a); }
     for (const g of grp.values()) { g.sort((p, q) => (p.dir > 0 ? p.t - q.t : q.t - p.t)); for (let i = 0; i < g.length; i++) g[i]._lead = g[i + 1] || null; }
+    // one-way road capacity: count the cars currently on each one-way road so no
+    // second car may enter while one is on it (only cars; pedestrians are exempt).
+    const owOcc = (list === this.vehicles && this._owGroupCount) ? new Map() : null;
+    if (owOcc) for (const v of this.vehicles) { if (!v.mesh.visible) continue; const g = this._owGroupOf[v.edge]; if (g >= 0) owOcc.set(g, (owOcc.get(g) || 0) + 1); }
+    const owEnter = owOcc ? new Set() : null;   // groups claimed by a car entering THIS frame
     for (const a of list) {
       if (!a.mesh.visible) continue;
       if (!this.edgePts[a.edge]) continue;   // edge removed by a rebuild this frame
@@ -2597,9 +2603,19 @@ export class Scene3D {
         const pts = this.edgePts[a.edge];
         const p0 = atEnd ? pts[pts.length - 2] : pts[1], p1 = atEnd ? pts[pts.length - 1] : pts[0];
         const head = { x: p1.x - p0.x, z: p1.z - p0.z };
-        const nx = this._pickNetEdge(node, a.edge, a.group === 'ped', head);
+        const curG = owOcc ? this._owGroupOf[a.edge] : -1;
+        const allow = owOcc ? (edge) => {
+          const g = this._owGroupOf[edge];
+          if (g < 0 || g === curG) return true;                       // two-way, or staying on the road it's already on
+          return ((owOcc.get(g) || 0) + (owEnter.has(g) ? 1 : 0)) === 0; // only enter an EMPTY one-way road
+        } : null;
+        const nx = this._pickNetEdge(node, a.edge, a.group === 'ped', head, allow);
         if (!nx) { a.dir *= -1; a.t = THREE.MathUtils.clamp(a.t, 0, 1); }
-        else { a.edge = nx.edge; a.dir = nx.fwd ? 1 : -1; a.t = nx.fwd ? 0.001 : 0.999; this._assignLane(a); }
+        else {
+          a.edge = nx.edge; a.dir = nx.fwd ? 1 : -1; a.t = nx.fwd ? 0.001 : 0.999;
+          if (owEnter) { const ng = this._owGroupOf[a.edge]; if (ng >= 0 && ng !== curG) owEnter.add(ng); } // claim it
+          this._assignLane(a);
+        }
         continue;
       }
       this._placeNetAgent(a, dt, moving);
@@ -2646,7 +2662,10 @@ export class Scene3D {
   // (where the dense 1966 city sits) so most cars run in town rather than out on
   // the empty rural lanes. ~80% of picks keep the most southern of three candidates.
   _pickEdge() {
-    const n = this.edgePts.length, rnd = () => Math.floor(Math.random() * n);
+    const n = this.edgePts.length;
+    // never SPAWN onto a one-way road (it admits one car at a time, entered from a
+    // junction) — keep retrying for a normal two-way edge
+    const rnd = () => { let i = Math.floor(Math.random() * n); for (let k = 0; k < 5 && this._owGroupOf && this._owGroupOf[i] >= 0; k++) i = Math.floor(Math.random() * n); return i; };
     let e = rnd();
     if (Math.random() < 0.8) for (let k = 0; k < 2; k++) {
       const c = rnd();
@@ -3837,31 +3856,64 @@ export class Scene3D {
       for (let i = 0; i < nodes.length; i++) { const n = nodes[i]; if (Math.abs(n.x - x) < MERGE && Math.abs(n.z - z) < MERGE && Math.abs(n.y - y) < 3) return i; }
       nodes.push({ x, z, y }); adj.push([]); return nodes.length - 1;
     };
-    const add = (pts, lanes, type, elevated, walk, traced) => {
+    const add = (pts, lanes, type, elevated, walk, traced, oneway) => {
       if (pts.length < 2) return;
       let len = 0; for (let i = 0; i < pts.length - 1; i++) len += Math.hypot(pts[i + 1].x - pts[i].x, pts[i + 1].z - pts[i].z);
       const n1 = nodeAt(pts[0].x, pts[0].z, pts[0].y), n2 = nodeAt(pts[pts.length - 1].x, pts[pts.length - 1].z, pts[pts.length - 1].y);
       if (n1 === n2) return;
       const ei = this.edgePts.length;
-      this.edgePts.push(pts); this.edgeLen.push(len); this.edgeMeta.push({ lanes, type, elevated, walk, traced: !!traced });
+      this.edgePts.push(pts); this.edgeLen.push(len); this.edgeMeta.push({ lanes, type, elevated, walk, traced: !!traced, oneway: !!oneway });
       this.edgeN1.push(n1); this.edgeN2.push(n2);
       const mid = pts[Math.floor(pts.length / 2)]; this.edgeMid.push({ x: mid.x, z: mid.z });
       adj[n1].push({ edge: ei, to: n2, fwd: true }); adj[n2].push({ edge: ei, to: n1, fwd: false });
     };
     if (this.roadEdges) for (const [[ai, aj], [bi, bj]] of this.roadEdges) {
       const a = cornerToWorld(ai, aj), b = cornerToWorld(bi, bj);
-      add([{ x: a.x, y: 0.16, z: a.z }, { x: b.x, y: 0.16, z: b.z }], 2, 'road', false, true, false);
+      add([{ x: a.x, y: 0.16, z: a.z }, { x: b.x, y: 0.16, z: b.z }], 2, 'road', false, true, false, false);
     }
     const roads = this.state?.roads;
     if (roads) roads.edges.forEach((e) => {
       const T = ROAD_TYPES[e.type] || ROAD_TYPES.road;
-      add(this._sampleEdge(roads, e), e.lanes || T.lanes, e.type, e.elevated, !e.elevated, e.traced);
+      add(this._sampleEdge(roads, e), e.lanes || T.lanes, e.type, e.elevated, !e.elevated, e.traced, e.oneway);
     });
     this.navNodes = nodes; this.navAdj = adj;
+    this._computeOneWayGroups();   // group one-way edges into "roads" (capacity: one car each)
     this._buildLights();
     this._buildStreetLamps();
     this._buildTurnArrows();
     this._reseatAgents();   // edge indices changed — keep live agents valid
+  }
+  // A ONE-WAY road only admits a single car at a time. Group the connected one-way
+  // edges into "roads" — a maximal run of one-way edges joined through pass-through
+  // (degree-2) nav nodes, broken at every junction — and tag each edge with its
+  // group id (−1 = a normal two-way edge). The traffic logic then keeps at most one
+  // car on each group. With no one-way roads on the map this is a no-op.
+  _computeOneWayGroups() {
+    const NE = this.edgePts.length;
+    this._owGroupOf = new Array(NE).fill(-1);
+    this._owGroupCount = 0;
+    const owNodes = new Map();   // nav node -> [one-way edge ids]
+    let any = false;
+    for (let i = 0; i < NE; i++) {
+      if (!this.edgeMeta[i].oneway) continue;
+      any = true;
+      for (const n of [this.edgeN1[i], this.edgeN2[i]]) { let a = owNodes.get(n); if (!a) owNodes.set(n, a = []); a.push(i); }
+    }
+    if (!any) return;
+    const deg = (n) => (this.navAdj[n]?.length || 0);
+    const seen = new Set(); let gid = 0;
+    for (let i = 0; i < NE; i++) {
+      if (!this.edgeMeta[i].oneway || seen.has(i)) continue;
+      const g = gid++; const stack = [i];
+      while (stack.length) {
+        const e = stack.pop(); if (seen.has(e)) continue; seen.add(e); this._owGroupOf[e] = g;
+        for (const n of [this.edgeN1[e], this.edgeN2[e]]) {
+          if (deg(n) !== 2) continue;                 // a junction ends the one-way road
+          for (const e2 of (owNodes.get(n) || [])) if (!seen.has(e2)) stack.push(e2);
+        }
+      }
+    }
+    this._owGroupCount = gid;
   }
 
   // Painted turn-lane arrows on each approach to a junction (left / ahead / right).
@@ -4092,6 +4144,7 @@ export class Scene3D {
       if (!ne) { a.edge = 0; return; }
       let e = Math.floor(Math.random() * ne);
       if (walkOnly) { for (let i = 0; i < ne; i++) { if (this.edgeMeta[(e + i) % ne].walk) { e = (e + i) % ne; break; } } }
+      else if (this._owGroupOf) { for (let i = 0; i < ne; i++) { const j = (e + i) % ne; if (this._owGroupOf[j] < 0) { e = j; break; } } } // keep reseated cars off one-way roads
       a.edge = e; a.t = Math.random(); a.dir = Math.random() < 0.5 ? 1 : -1; this._assignLane(a);
     };
     for (const a of this.vehicles) fix(a, false);

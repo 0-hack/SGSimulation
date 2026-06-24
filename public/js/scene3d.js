@@ -134,9 +134,9 @@ const AIRPORT = {
   taxiOff: 9,          // continuous parallel taxiway offset (localX, inland of runway)
   taxiHalfW: 1.6,      // parallel-taxiway half-width
   apronOff: 15,        // apron centre offset across the runway, inland (+localX)
-  apronHalfW: 8,       // apron half-width
-  apronHalfL: 12,      // apron half-length (a compact parking, toward one end)
-  apronCzFrac: 0.18,   // apron/building cluster offset along the runway — shifted into the gap between the inland roads so the complex sits BESIDE them, not on them
+  apronHalfW: 6,       // apron half-width
+  apronHalfL: 7,       // apron half-length (a compact parking, toward one end)
+  apronCzFrac: -0.44,  // apron offset along the runway — beside the Terminal Building (the small road loop on the 1966 sheet)
   apronLinks: 4,       // short links from the apron to the parallel taxiway
   linkW: 2.4,          // taxiway/link width
   pierOff: 19,         // finger-pier offset (aircraft dock against it)
@@ -147,10 +147,16 @@ const AIRPORT = {
   planeScale: 0.46,    // airliners ~one building-length (a touch smaller than the terminals)
   scale: 0.62,         // master shrink: the 1955/66 field was tiny next to the island, so the whole complex is scaled down
   side: 1,             // which flank of the runway the terminal/apron complex sits on (+1 inland/NW beside the roads, -1 seaward/SE)
-  // Hand-placed buildings (from the tracer) override the procedural cluster.
-  // Each: { type, cx, cy, w, h, rot, hgt } — centre in normalised island coords,
-  // w/h normalised footprint, rot radians, hgt height multiplier.
-  buildings: [],
+  // Hand-placed buildings override the procedural cluster, sized & sited to the
+  // 1966 survey sheet: the Terminal Building sits inside the small road loop, with
+  // the other airfield buildings strung south of it along the road. Each:
+  // { type, cx, cy, w, h, rot, hgt } — centre normalised, w/h normalised footprint
+  // (× 1600 = world units), rot radians, hgt height multiplier.
+  buildings: [
+    { type: 'terminal', cx: 0.5799, cy: 0.5180, w: 0.0036, h: 0.0044, rot: 1.19, hgt: 0.32 }, // fits the road-loop pocket (hgt keeps the tower low, not a skyscraper)
+    { type: 'block',    cx: 0.5777, cy: 0.5095, w: 0.0036, h: 0.0064, rot: 1.19, hgt: 0.7 },
+    { type: 'hangar',   cx: 0.5766, cy: 0.5035, w: 0.0040, h: 0.0052, rot: 1.19, hgt: 0.55 },
+  ],
 };
 
 export class Scene3D {
@@ -560,7 +566,7 @@ export class Scene3D {
   // they change. (Railway gradings are managed by the railway builder, flat runway
   // pads by the airstrip builder; both feed this so they coexist.)
   _syncCarves() {
-    const all = [...(this._railCarves || []), ...(this._airCarves || [])];
+    const all = [...(this._railCarves || []), ...(this._airCarves || []), ...(this._airBuiltinCarve || [])];
     this._carves = all.length ? all : null;
     const sig = all.map((c) => `${c.poly.length}:${c.poly[0].x.toFixed(0)},${c.poly[0].z.toFixed(0)}:${(c.floors ? c.floors[0] : c.floor).toFixed(1)}:${(c.floors ? c.floors[c.floors.length - 1] : c.floor).toFixed(1)}`).join('|');
     if (sig !== (this._carveSig ?? '')) {
@@ -757,7 +763,20 @@ export class Scene3D {
     const rot = Math.atan2(dx, dz);             // local +Z = south→north runway axis
     const SC = AIRPORT.scale;                   // uniform shrink of the whole complex
     const SIDE = AIRPORT.side || 1;             // flank: +1 puts the complex inland (+localX), -1 mirrors it seaward
-    const g = new THREE.Group(); g.position.set(cx, 0, cz); g.rotation.y = rot; g.scale.setScalar(SC);
+    // Flatten a pad under the runway so the strip lies ON the ground instead of
+    // being buried where Paya Lebar rises (the built-in field never carved before).
+    // Cut the hill down to the lowest ground along the strip, then sit the whole
+    // complex at that level.
+    const rdx = (n.x - s.x) / (len || 1), rdz = (n.z - s.z) / (len || 1), rnx = -rdz, rnz = rdx;
+    const STEPS = Math.max(2, Math.ceil(len / 4)), pad = [];
+    for (let i = 0; i <= STEPS; i++) { const t = i / STEPS; pad.push({ x: s.x + (n.x - s.x) * t, z: s.z + (n.z - s.z) * t }); }
+    let level = Infinity;
+    for (const p of pad) for (const w of [-AIRPORT.rwHalfW, 0, AIRPORT.rwHalfW]) level = Math.min(level, this._meshY(p.x + rnx * w, p.z + rnz * w));
+    if (!isFinite(level)) level = 0;
+    this._airBuiltinCarve = [{ poly: pad, halfW: AIRPORT.rwHalfW + 2, blend: 16, floor: level }];
+    this._syncCarves();                         // re-cut the terrain flat under the runway
+    this._airfieldY = level;
+    const g = new THREE.Group(); g.position.set(cx, level, cz); g.rotation.y = rot; g.scale.setScalar(SC);
     this.scene.add(g); this.airportGroup = g;
     this._airportCenter = { cx, cz, rot, len: len * SC };
 
@@ -857,7 +876,11 @@ export class Scene3D {
     plHall.position.set(14 * SIDE, 0, apCz + 12); plHall.rotation.y = faceApron; g.add(plHall);
     } // end procedural cluster
 
-    if (handPlaced) this._placeStructures(AIRPORT.buildings, 'airportBuildings');
+    if (handPlaced) {
+      this._placeStructures(AIRPORT.buildings, 'airportBuildings');
+      // sit each building on the (now-flattened) airfield ground rather than y=0
+      for (const m of this.airportBuildings.children) m.position.y = this._meshY(m.position.x, m.position.z);
+    }
 
     // --- footprint mask (unbuildable) ---
     this.airportMask = Array.from({ length: N }, () => Array(N).fill(false));

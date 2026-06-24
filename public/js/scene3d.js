@@ -3622,6 +3622,17 @@ export class Scene3D {
     const e = pts[pts.length - 1]; out.push({ x: e.x, y: this._roadY(e.x, e.z) + lift, z: e.z });
     return out;
   }
+  // Like _densifyRoad, but the centre-line is first run through smoothRoute — the
+  // SAME smoother the game uses for player-drawn roads (Douglas-Peucker denoise +
+  // Chaikin corner-rounding ×3). A freehand-traced stroke keeps fine jitter and the
+  // odd spike after simplification; this rounds those facets/spikes into smooth bends
+  // so a traced curve reads like a smooth road, while straight runs stay straight and
+  // the chain's junction endpoints are preserved exactly.
+  _smoothCenterline(pts, step = 2.0, lift = 0) {
+    if (!pts || pts.length < 3) return this._densifyRoad(pts, step, lift);
+    const sm = smoothRoute(pts, 1.5);
+    return this._densifyRoad(sm.length >= 2 ? sm : pts, step, lift);
+  }
   // ---- elevated flyover / viaduct / raised runway shared helpers ----------
   // The highest obstacle (terrain or building top) under a corridor, so an elevated
   // deck can be set above EVERYTHING below it (no overlaps).
@@ -3793,9 +3804,11 @@ export class Scene3D {
       const HW1 = HW2 * 0.62;                        // one-way street: a single lane, clearly narrower
       for (const { nodes, oneway } of this._tracedChains(roads)) {
         const raw = nodes.map((ni) => { const nd = roads.nodes[ni]; return nd && { x: nd.x, z: nd.z }; }).filter(Boolean);
-        // resample to sub-cell spacing so the ribbon hugs the hillsides (traced nodes
-        // are ~9u apart — a straight chord between them sinks under steep terrain)
-        if (raw.length >= 2) ribbonSmooth(road, this._densifyRoad(raw, 2.0, 0.10), oneway ? HW1 : HW2, 0.04);
+        // Smooth + resample: a centripetal Catmull-Rom curve through the (simplified)
+        // traced nodes rounds the facets the simplifier left between them, so a freehand
+        // curve renders as a smooth road rather than a string of straight chords. The
+        // sub-cell spacing also keeps the ribbon hugging the hillsides.
+        if (raw.length >= 2) ribbonSmooth(road, this._smoothCenterline(raw, 2.0, 0.10), oneway ? HW1 : HW2, 0.04);
       }
     }
 

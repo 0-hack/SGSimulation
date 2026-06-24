@@ -29,10 +29,11 @@ try {
     // segments, not node-pair keys.
     let continuous=true, totalSegs=0, longest=0, multi=0;
     for(const ch of chains){
-      longest=Math.max(longest,ch.length);
-      if(ch.length>=4) multi++;
-      for(let i=0;i<ch.length-1;i++){
-        if(!tracedSet.has(key(ch[i],ch[i+1]))) continuous=false;
+      const nodes=ch.nodes;                 // _tracedChains now returns { nodes, oneway }
+      longest=Math.max(longest,nodes.length);
+      if(nodes.length>=4) multi++;
+      for(let i=0;i<nodes.length-1;i++){
+        if(!tracedSet.has(key(nodes[i],nodes[i+1]))) continuous=false;
         totalSegs++;
       }
     }

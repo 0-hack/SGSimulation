@@ -136,27 +136,21 @@ const AIRPORT = {
   apronOff: 15,        // apron centre offset across the runway, inland (+localX)
   apronHalfW: 6,       // apron half-width
   apronHalfL: 7,       // apron half-length (a compact parking, toward one end)
-  apronCzFrac: -0.44,  // apron offset along the runway — beside the Terminal Building (the small road loop on the 1966 sheet)
+  apronCzFrac: -0.55,  // apron offset along the runway — beside the Terminal Building (the small road loop on the 1966 sheet)
   apronLinks: 4,       // short links from the apron to the parallel taxiway
   linkW: 2.4,          // taxiway/link width
   pierOff: 19,         // finger-pier offset (aircraft dock against it)
-  termOff: 30,         // terminal offset (rotated 90°: tower toward the apron, slab inland)
-  carparkOff: 36,      // landside car park offset
-  hangarOff: 30,       // maintenance hangars offset, inland
+  termOff: 43,         // terminal offset (rotated 90°: tower toward the apron, slab inland)
+  carparkOff: 30,      // landside car park offset
+  hangarOff: 19,       // maintenance hangars offset, inland
   termScale: 0.6,      // terminal/hangar shrunk toward normal building scale
-  planeScale: 0.46,    // airliners ~one building-length (a touch smaller than the terminals)
-  scale: 0.62,         // master shrink: the 1955/66 field was tiny next to the island, so the whole complex is scaled down
+  planeScale: 0.4,     // airliners ~one building-length (a touch smaller than the terminals)
+  scale: 0.42,         // master shrink: keep the whole 1966 field compact so the terminal fits the traced road loop
   side: 1,             // which flank of the runway the terminal/apron complex sits on (+1 inland/NW beside the roads, -1 seaward/SE)
-  // Hand-placed buildings override the procedural cluster, sized & sited to the
-  // 1966 survey sheet: the Terminal Building sits inside the small road loop, with
-  // the other airfield buildings strung south of it along the road. Each:
-  // { type, cx, cy, w, h, rot, hgt } — centre normalised, w/h normalised footprint
-  // (× 1600 = world units), rot radians, hgt height multiplier.
-  buildings: [
-    { type: 'terminal', cx: 0.5799, cy: 0.5180, w: 0.0036, h: 0.0044, rot: 1.19, hgt: 0.32 }, // fits the road-loop pocket (hgt keeps the tower low, not a skyscraper)
-    { type: 'block',    cx: 0.5777, cy: 0.5095, w: 0.0036, h: 0.0064, rot: 1.19, hgt: 0.7 },
-    { type: 'hangar',   cx: 0.5766, cy: 0.5035, w: 0.0040, h: 0.0052, rot: 1.19, hgt: 0.55 },
-  ],
+  // Procedural 1966 complex (terminal + control tower, finger pier with airliners,
+  // car park, maintenance hangars with a taxi spur to the runway, low hall). Leave
+  // `buildings` empty to use it; a non-empty list replaces it with hand-placed ones.
+  buildings: [],
 };
 
 export class Scene3D {

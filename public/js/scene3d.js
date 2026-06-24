@@ -3692,7 +3692,7 @@ export class Scene3D {
     const deg = (n) => (adj.get(n)?.length || 0);
     const used = new Set(), chains = [];
     const walk = (start, ei) => {
-      const ow = !!edges[ei].oneway;                   // a chain is a single road type, so it renders at one width
+      const ow = !!edges[ei].oneway, dirt = !!edges[ei].dirt;   // a chain is a single road type → one width & colour
       const nodes = [start]; let cur = start, edge = ei;
       while (true) {
         used.add(edge);
@@ -3700,10 +3700,10 @@ export class Scene3D {
         nodes.push(nxt); cur = nxt;
         if (deg(cur) !== 2) break;                      // stop at a junction or dead end
         const nb = adj.get(cur).find((x) => !used.has(x.e));
-        if (!nb || !!edges[nb.e].oneway !== ow) break;  // never merge a one-way run with a two-way one
+        if (!nb || !!edges[nb.e].oneway !== ow || !!edges[nb.e].dirt !== dirt) break;  // don't merge different road types
         edge = nb.e;
       }
-      return { nodes, oneway: ow };
+      return { nodes, oneway: ow, dirt };
     };
     for (const [node, list] of adj) {                    // start chains at endpoints/junctions
       if (deg(node) === 2) continue;
@@ -3718,7 +3718,7 @@ export class Scene3D {
     if (!this.roadGroup) { this.roadGroup = new THREE.Group(); this.scene.add(this.roadGroup); }
     while (this.roadGroup.children.length) { const c = this.roadGroup.children.pop(); c.geometry?.dispose?.(); this.roadGroup.remove(c); }
     const roads = this.state?.roads;
-    const pave = [[], []], road = [[], []], mark = [[], []];
+    const pave = [[], []], road = [[], []], mark = [[], []], dirtRoad = [[], []]; // dirtRoad = brown off-track ribbons
     const ribbon = (buf, pts, hw, yOff) => {
       const [v, idx] = buf;
       for (let i = 0; i < pts.length - 1; i++) {
@@ -3790,13 +3790,17 @@ export class Scene3D {
     // polylines and draw each as ONE mitred ribbon — smooth like the trace map.
     if (roads) {
       const HW2 = ROAD_TYPES.road.renderHW || 0.34; // two-way width — matches player-drawn roads
-      const HW1 = HW2 * 0.62;                        // one-way street: a single lane, clearly narrower
-      for (const { nodes, oneway } of this._tracedChains(roads)) {
+      const HW1 = HW2 * 0.62;                        // single lane: a single lane, clearly narrower
+      const HWD = HW2 * 0.9;                         // dirt / off-track road: a touch narrower, drawn brown
+      for (const { nodes, oneway, dirt } of this._tracedChains(roads)) {
         const raw = nodes.map((ni) => { const nd = roads.nodes[ni]; return nd && { x: nd.x, z: nd.z }; }).filter(Boolean);
         // resample to sub-cell spacing so the ribbon hugs the hillsides (and so a
         // densely-traced curve renders as the exact smooth line the player drew — the
         // trace keeps its own points, we do NOT re-curve or distort it here).
-        if (raw.length >= 2) ribbonSmooth(road, this._densifyRoad(raw, 2.0, 0.10), oneway ? HW1 : HW2, 0.04);
+        if (raw.length < 2) continue;
+        const pts = this._densifyRoad(raw, 2.0, 0.10);
+        if (dirt) ribbonSmooth(dirtRoad, pts, HWD, 0.035);        // brown off-track road
+        else ribbonSmooth(road, pts, oneway ? HW1 : HW2, 0.04);  // paved (standard or single lane)
       }
     }
 
@@ -3844,6 +3848,7 @@ export class Scene3D {
     };
     const DS = THREE.DoubleSide;
     mk(pave, toon(0xc4bda8, { side: DS, polygonOffset: true })); mk(road, toon(0x33363d, { side: DS, polygonOffset: true })); mk(mark, toon(0xfaf3d8, { side: DS, polygonOffset: true }));
+    mk(dirtRoad, toon(0x9c6f3f, { side: DS, polygonOffset: true }));   // off-track / unpaved roads in earthy brown
 
     this._buildNavGraph();
   }

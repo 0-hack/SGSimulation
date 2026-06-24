@@ -68,7 +68,7 @@ function decimateN(pts, minD) {
 // the existing network instead of starting blank.
 export function graphToTrace(nodes, edges) {
   const adj = nodes.map(() => []);
-  for (const e of edges) { adj[e[0]].push({ n: e[1], ow: !!e[2] }); adj[e[1]].push({ n: e[0], ow: !!e[2] }); }
+  for (const e of edges) { adj[e[0]].push({ n: e[1], ow: !!e[2], dirt: !!e[4] }); adj[e[1]].push({ n: e[0], ow: !!e[2], dirt: !!e[4] }); }
   const used = new Set(), ek = (a, b) => (a < b ? a + ':' + b : b + ':' + a), roads = [];
   const walk = (a, entry) => {
     const pts = [a]; let prev = a, cur = entry.n; used.add(ek(a, entry.n)); pts.push(cur);
@@ -77,11 +77,11 @@ export function graphToTrace(nodes, edges) {
       if (!nxt || used.has(ek(cur, nxt.n))) break;
       used.add(ek(cur, nxt.n)); prev = cur; cur = nxt.n; pts.push(cur);
     }
-    return { pts, ow: entry.ow };
+    return { pts, ow: entry.ow, dirt: entry.dirt };
   };
   for (let i = 0; i < nodes.length; i++) { if (adj[i].length === 2) continue; for (const e of adj[i]) if (!used.has(ek(i, e.n))) roads.push(walk(i, e)); }
   for (let i = 0; i < nodes.length; i++) for (const e of adj[i]) if (!used.has(ek(i, e.n))) roads.push(walk(i, e));
-  return { roads: roads.filter(c => c.pts.length >= 2).map(c => ({ pts: c.pts.map(j => toNorm(nodes[j]).map(r4)), oneway: c.ow })) };
+  return { roads: roads.filter(c => c.pts.length >= 2).map(c => ({ pts: c.pts.map(j => toNorm(nodes[j]).map(r4)), oneway: c.ow, dirt: c.dirt })) };
 }
 
 // Return ALL current game map layers as tracer polylines/polygons, so the
@@ -148,12 +148,12 @@ export async function applyTrace(t, opts = {}) {
   const did = [];
 
   // ---- roads ----
-  let outNodes = cur.ROAD_NODES_1966, outEdges = cur.ROAD_EDGES_1966.map(e => [e[0], e[1], e[2] ? 1 : 0, e[3] || 2]);
+  let outNodes = cur.ROAD_NODES_1966, outEdges = cur.ROAD_EDGES_1966.map(e => [e[0], e[1], e[2] ? 1 : 0, e[3] || 2, e[4] ? 1 : 0]);
   if (roadsIn.length || (opts.mergeRoads && bulldozeIn.length)) {
     const merge = !!opts.mergeRoads;
     // when merging, seed the graph with the existing network so new roads snap to it
     let nodes = merge ? cur.ROAD_NODES_1966.map(p => [p[0], p[1]]) : [];
-    let edges = merge ? cur.ROAD_EDGES_1966.map(e => [e[0], e[1], e[2] ? 1 : 0, e[3] || 2]) : [];
+    let edges = merge ? cur.ROAD_EDGES_1966.map(e => [e[0], e[1], e[2] ? 1 : 0, e[3] || 2, e[4] ? 1 : 0]) : [];
     // BULLDOZE: drop existing edges scribbled over (within 12u of a delete stroke)
     if (merge && bulldozeIn.length) {
       const strokes = bulldozeIn.map(p => p.map(toWorld)), DEL = 12;
@@ -180,7 +180,7 @@ export async function applyTrace(t, opts = {}) {
     };
     const seen = new Set(edges.map(e => (e[0] < e[1] ? e[0] + ':' + e[1] : e[1] + ':' + e[0])));
     const newEdges = [];
-    const addEdge = (a, b, ow) => { if (a === b) return; const k = a < b ? a + ':' + b : b + ':' + a; if (seen.has(k)) return; seen.add(k); const e = [a, b, ow ? 1 : 0, 2]; edges.push(e); newEdges.push(e); };
+    const addEdge = (a, b, ow, dirt) => { if (a === b) return; const k = a < b ? a + ':' + b : b + ':' + a; if (seen.has(k)) return; seen.add(k); const e = [a, b, ow ? 1 : 0, 2, dirt ? 1 : 0]; edges.push(e); newEdges.push(e); };
     for (const road of roadsIn) {
       // simplify each stroke (keep corners/curves, drop oversampling), then weld it
       // into the shared graph: ENDPOINTS weld at MERGE (so junctions/T-junctions join),
@@ -191,14 +191,14 @@ export async function applyTrace(t, opts = {}) {
       let prev = nodeAt(kept[0], MERGE);
       for (let i = 1; i < kept.length; i++) {
         const id = nodeAt(kept[i], i === kept.length - 1 ? MERGE : MERGE_MID);
-        addEdge(prev, id, road.oneway); prev = id;
+        addEdge(prev, id, road.oneway, road.dirt); prev = id;
       }
     }
     // compact: keep only nodes referenced by an edge (drops orphans from bulldoze)
     const used = new Set(); for (const e of edges) { used.add(e[0]); used.add(e[1]); }
     const remap = new Map(), cnodes = [];
     for (const id of used) { remap.set(id, cnodes.length); cnodes.push(nodes[id]); }
-    nodes = cnodes; edges = edges.map(e => [remap.get(e[0]), remap.get(e[1]), e[2], e[3]]);
+    nodes = cnodes; edges = edges.map(e => [remap.get(e[0]), remap.get(e[1]), e[2], e[3], e[4] || 0]);
     outNodes = nodes.map(p => [r1(p[0]), r1(p[1])]); outEdges = edges;
     if (roadsIn.length) did.push(merge ? `roads +${newEdges.length} added -> ${outEdges.length} total` : `roads -> ${outNodes.length} nodes / ${outEdges.length} edges`);
   }
@@ -208,10 +208,11 @@ export async function applyTrace(t, opts = {}) {
 
   if (roadsIn.length || reservoirsIn.length || (opts.mergeRoads && bulldozeIn.length)) {
     const body = `// 1966 Singapore road network + reservoirs. NODES: [x,z] world.
-// EDGES: [a,b,oneway,class].  RESERVOIRS: normalised polygons.
+// EDGES: [a,b,oneway,class,dirt?].  oneway=1 -> single lane.  dirt=1 -> brown
+// off-track road (5th field omitted when 0).  RESERVOIRS: normalised polygons.
 export const ROAD_NODES_1966 = [${outNodes.map(p => `[${p[0]},${p[1]}]`).join(', ')}];
 
-export const ROAD_EDGES_1966 = [${outEdges.map(e => `[${e[0]},${e[1]},${e[2] ? 1 : 0},${e[3] || 2}]`).join(',')}];
+export const ROAD_EDGES_1966 = [${outEdges.map(e => e[4] ? `[${e[0]},${e[1]},${e[2] ? 1 : 0},${e[3] || 2},1]` : `[${e[0]},${e[1]},${e[2] ? 1 : 0},${e[3] || 2}]`).join(',')}];
 
 export const RESERVOIRS_1966 = ${JSON.stringify(reservoirs)};
 `;

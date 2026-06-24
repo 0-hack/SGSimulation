@@ -41,7 +41,11 @@
   </div>
   <div class="grp" id="layers" title="What you're tracing. Draw/Erase act on this layer."><small>trace</small></div>
   <div class="grp">
-    <button id="oneway" title="Tag roads as ONE-WAY: drawn in the direction of travel and recorded NARROWER than a two-way road">➔ One-way</button>
+    <select id="roadtype" title="Type for new roads — Road: standard 2-way (two lanes). Single lane: a narrow lane, one car at a time, both directions. Dirt track: a brown off-track / unpaved road.">
+      <option value="road">Road · 2-way</option>
+      <option value="single">Single lane</option>
+      <option value="dirt">Dirt track</option>
+    </select>
     <button id="freehand" class="on" title="Freehand: hold &amp; drag. Click: tap each point/corner; Esc, double-click or click the first dot to finish.">Freehand</button>
     <span><small>brush</small> <input id="brush" type="range" min="4" max="60" value="16"></span>
   </div>
@@ -103,14 +107,20 @@ const LAYERS = {
 };
 const KEYS = Object.keys(LAYERS);
 const TYPES = {};
-const ONEWAY_COLOR = '#ff9f43';
+// Road sub-types the player can trace, each a flag on the road object:
+//   standard = 2-way (two lanes, both directions) · single = a NARROW single lane
+//   (one car at a time, both directions) · dirt = a brown off-track / unpaved road.
+const SINGLE_COLOR = '#ff9f43', DIRT_COLOR = '#b5793b';
+const roadStyle = (r, overlay) => r.dirt ? { c: DIRT_COLOR, w: overlay ? 2.2 : 2.0 }
+  : r.oneway ? { c: SINGLE_COLOR, w: overlay ? 1.5 : 1.35 }   // single lane: plain, just narrower
+  : { c: LAYERS.roads.c, w: overlay ? 2.6 : 2.2 };
 // `bulldoze` is an internal accumulator (no longer a visible layer): Erase over
 // the Roads layer drops a delete-marker here so the game removes that road.
 const blank = () => ({ roads: [], bulldoze: [], mainland: [], reservoirs: [], railway: [], sands: [], airport: [] });
 let data = blank();
 // What's ALREADY in the game, per layer (read-only reference shown under "show").
 let game = { roads: [], mainland: [], reservoirs: [], railway: [], sands: [], airport: [] };
-let active = 'roads', oneway = false, freehand = true, mode = 'draw';
+let active = 'roads', roadType = 'road', freehand = true, mode = 'draw';   // roadType: road | single | dirt
 let vis = {}; KEYS.forEach(k => vis[k] = true); vis.guide = true;
 let opacity = 0.55, brush = 16, bType = 'terminal', bRot = 0, bHgt = 1.0;
 let view = { zoom: 1, offX: 0, offY: 0, unit: 1000 };
@@ -133,7 +143,7 @@ function refreshTypes() { if (!RECT(active)) return; const list = TYPES[active] 
 function toast(msg, bad) { const t = $('toast'); t.textContent = msg; t.style.background = bad ? '#e2503b' : '#2ecc71'; t.style.color = bad ? '#fff' : '#052915'; t.style.opacity = 1; clearTimeout(t._t); t._t = setTimeout(() => t.style.opacity = 0, 1300); }
 function autosave(explicit) { try { localStorage.setItem(LS, JSON.stringify({ version: 3, bg, ...data })); if (explicit) toast('Saved in browser'); } catch (e) { if (explicit) toast('Save failed: ' + e.message, true); } }
 function applyLoaded(d) { if (d.bg) bg = d.bg; const nd = blank();
-  nd.roads = (d.roads || []).map(r => Array.isArray(r) ? { pts: r, oneway: false } : r);
+  nd.roads = (d.roads || []).map(r => Array.isArray(r) ? { pts: r, oneway: false, dirt: false } : { pts: r.pts, oneway: !!r.oneway, dirt: !!r.dirt });
   nd.mainland = (d.mainland || d.coast || []).concat(d.islands || []); // old Islands folded into Coast
   nd.reservoirs = d.reservoirs || d.resv || []; nd.railway = d.railway || []; nd.sands = d.sands || [];
   nd.airport = d.airport || []; nd.bulldoze = d.bulldoze || []; data = nd; }
@@ -167,16 +177,6 @@ function strokePoly(pts, close) {
   ctx.stroke();
 }
 function dots(pts) { ctx.fillStyle = '#fff'; for (const [nx, ny] of pts) { const [x, y] = toScreen(nx, ny); ctx.beginPath(); ctx.arc(x, y, 3, 0, 7); ctx.fill(); } }
-function drawArrows(pts) {
-  let acc = 0;
-  for (let i = 1; i < pts.length; i++) {
-    const [ax, ay] = toScreen(pts[i - 1][0], pts[i - 1][1]), [bx, by] = toScreen(pts[i][0], pts[i][1]);
-    const dx = bx - ax, dy = by - ay, len = Math.hypot(dx, dy); if (!len) continue; acc += len;
-    if (acc >= 34) { acc = 0; const ux = dx / len, uy = dy / len, s = 7;
-      ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(bx - ux * s - uy * s * 0.6, by - uy * s + ux * s * 0.6);
-      ctx.moveTo(bx, by); ctx.lineTo(bx - ux * s + uy * s * 0.6, by - uy * s - ux * s * 0.6); ctx.stroke(); }
-  }
-}
 function bCorners(b) {
   const r = (b.rot || 0) * PI / 180, c = Math.cos(r), s = Math.sin(r), hw = b.w / 2, hh = b.h / 2;
   return [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]].map(([dx, dy]) => [b.cx + dx * c - dy * s, b.cy + dx * s + dy * c]);
@@ -209,7 +209,7 @@ function draw() {
   ctx.globalAlpha = 0.8;
   for (const k of KEYS) {
     if (!vis[k] || !game[k] || !game[k].length) continue;
-    if (k === 'roads') { for (const p of game.roads) { ctx.strokeStyle = p.oneway ? ONEWAY_COLOR : LAYERS.roads.c; ctx.lineWidth = p.oneway ? 1.5 : 2.6; strokePoly(p, false); if (p.oneway) drawArrows(p); } continue; }
+    if (k === 'roads') { for (const p of game.roads) { const st = roadStyle(p, true); ctx.strokeStyle = st.c; ctx.lineWidth = st.w; strokePoly(p, false); } continue; }
     ctx.strokeStyle = LAYERS[k].c; ctx.lineWidth = k === 'mainland' ? 2.4 : 2;
     for (const p of game[k]) strokePoly(p, !!LAYERS[k].closed);
   }
@@ -218,11 +218,14 @@ function draw() {
     if (!vis[k]) continue; const L = LAYERS[k];
     if (RECT(k)) { data[k].forEach(b => drawRect(b, L.c)); continue; }
     ctx.lineWidth = k === 'mainland' ? 2.6 : 2.2;
-    if (k === 'roads') { for (const r of data.roads) { ctx.strokeStyle = r.oneway ? ONEWAY_COLOR : L.c; ctx.lineWidth = r.oneway ? 1.35 : 2.2; strokePoly(r.pts, false); if (r.oneway) drawArrows(r.pts); } } // one-way drawn narrower than a two-way road
+    if (k === 'roads') { for (const r of data.roads) { const st = roadStyle(r, false); ctx.strokeStyle = st.c; ctx.lineWidth = st.w; strokePoly(r.pts, false); } } // single lane drawn narrower, dirt drawn brown
     else { ctx.strokeStyle = L.c; for (const p of data[k]) strokePoly(p, false); } // open: never auto-close ends (trace part by part; the game closes polygons itself)
   }
   if (sel && RECT(sel.layer) && data[sel.layer][sel.idx] && vis[sel.layer]) drawHandles(data[sel.layer][sel.idx]);
-  if (cur) { const curOW = active === 'roads' && (curItem ? curItem.oneway : oneway); ctx.lineWidth = curOW ? 1.6 : 2.6; ctx.strokeStyle = curOW ? ONEWAY_COLOR : LAYERS[active].c; ctx.globalAlpha = 0.9; strokePoly(cur, RECT(active)); if (curOW) drawArrows(cur); dots(cur); ctx.globalAlpha = 1; }
+  if (cur) { let st;
+    if (active === 'roads') st = roadStyle(curItem || { oneway: roadType === 'single', dirt: roadType === 'dirt' }, true);
+    else st = { c: LAYERS[active].c, w: 2.6 };
+    ctx.lineWidth = st.w; ctx.strokeStyle = st.c; ctx.globalAlpha = 0.9; strokePoly(cur, RECT(active)); dots(cur); ctx.globalAlpha = 1; }
   if (rectStart && rectNow) drawRect(rectToBldg(rectStart, rectNow), LAYERS[active].c + '99');
   if (mode === 'erase' && lastPt) { ctx.strokeStyle = '#e2503b'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(lastPt.sx, lastPt.sy, brush, 0, 7); ctx.stroke(); }
 }
@@ -242,7 +245,13 @@ function inBldg(b, gp) {
   return Math.abs(ox * c - oy * s) <= b.w / 2 && Math.abs(ox * s + oy * c) <= b.h / 2;
 }
 function lineOf(item) { return active === 'roads' ? item.pts : item; }
-function commitLine() { if (active === 'roads') data.roads.push({ pts: cur, oneway: curItem ? curItem.oneway : oneway }); else data[active].push(cur); resumable = { layer: active, idx: data[active].length - 1 }; }
+function commitLine() {
+  if (active === 'roads') data.roads.push({ pts: cur,
+    oneway: curItem ? !!curItem.oneway : roadType === 'single',
+    dirt: curItem ? !!curItem.dirt : roadType === 'dirt' });
+  else data[active].push(cur);
+  resumable = { layer: active, idx: data[active].length - 1 };
+}
 function finishCur() {
   if (!cur) return;
   if (RECT(active)) { if (cur.length >= 3) { const b = fitRect(cur); if (b) { data[active].push(b); sel = { layer: active, idx: data[active].length - 1 }; syncToolbar(b); } } }
@@ -258,7 +267,9 @@ function tryResume(g) {
 }
 function syncToolbar(b) { bType = b.type; bRot = b.rot || 0; bHgt = b.hgt || 1; $('btype').value = b.type; $('brot').value = bRot; $('bhgt').value = Math.round(bHgt * 10); }
 function updateStat() {
-  let s = KEYS.map(k => { const n = data[k].length; const ow = k === 'roads' ? ` (${data.roads.filter(r => r.oneway).length}→)` : ''; return `<b>${n}</b> ${LAYERS[k].name.slice(0, 4)}${ow}`; }).join(' · ');
+  let s = KEYS.map(k => { const n = data[k].length;
+    const extra = k === 'roads' ? ` (${data.roads.filter(r => r.oneway).length} single·${data.roads.filter(r => r.dirt).length} dirt)` : '';
+    return `<b>${n}</b> ${LAYERS[k].name.slice(0, 4)}${extra}`; }).join(' · ');
   const gameN = KEYS.reduce((t, k) => t + ((game[k] && game[k].length) || 0), 0);
   if (gameN) s += ` · <span style="color:#8ab"><b>${gameN}</b> in&nbsp;game</span>`;
   if (data.bulldoze.length) s += ` · <span style="color:#ff7a7a"><b>${data.bulldoze.length}</b> to&nbsp;delete</span>`;
@@ -280,7 +291,7 @@ function loadGameData() {
     const N = rd.ROAD_NODES_1966, E = rd.ROAD_EDGES_1966;
     if (!N || !E) throw new Error('modules unavailable');
     game = {
-      roads: E.map((e) => { const na = N[e[0]], nb = N[e[1]]; if (!na || !nb) return null; const arr = [toNorm(na), toNorm(nb)]; arr.oneway = !!e[2]; return arr; }).filter(Boolean), // keep the one-way flag so the overlay shows it narrower
+      roads: E.map((e) => { const na = N[e[0]], nb = N[e[1]]; if (!na || !nb) return null; const arr = [toNorm(na), toNorm(nb)]; arr.oneway = !!e[2]; arr.dirt = !!e[4]; return arr; }).filter(Boolean), // keep the single-lane (e[2]) & dirt (e[4]) flags so the overlay matches
 
       mainland: [sh.SG_OUTLINE, ...(sh.SG_ISLANDS || [])].filter((p) => p && p.length >= 3),
       reservoirs: (rd.RESERVOIRS_1966 || []).filter((p) => p && p.length >= 3),
@@ -400,7 +411,7 @@ function eraseAt(p) {
     if (RECT(k)) { data[k] = data[k].filter(b => rectDist(b, gp) > radG); continue; }
     const out = [];
     for (const item of data[k]) { const pts = k === 'roads' ? item.pts : item;
-      for (const seg of eraseFromLine(pts, gp, radG)) out.push(k === 'roads' ? { pts: seg, oneway: item.oneway } : seg); }
+      for (const seg of eraseFromLine(pts, gp, radG)) out.push(k === 'roads' ? { pts: seg, oneway: item.oneway, dirt: item.dirt } : seg); }
     data[k] = out;
   }
   // Deleting EXISTING game roads: scrub with Erase while Roads is visible — cut
@@ -429,7 +440,7 @@ function setMode(m) { finishCur(); mode = m; cv.style.cursor = m === 'pan' ? 'gr
   ['draw', 'erase', 'pan'].forEach(x => $('m-' + x).classList.toggle('on', x === m)); rectStart = null; draw(); updateStat(); }
 function setLayer(l) { finishCur(); active = l; sel = null; resumable = null; KEYS.forEach(x => $('L-' + x).classList.toggle('on', x === l)); refreshTypes(); draw(); }
 $('m-draw').onclick = () => setMode('draw'); $('m-erase').onclick = () => setMode('erase'); $('m-pan').onclick = () => setMode('pan');
-$('oneway').onclick = () => { oneway = !oneway; $('oneway').classList.toggle('on', oneway); draw(); };
+$('roadtype').onchange = e => { roadType = e.target.value; draw(); };
 $('freehand').onclick = () => { finishCur(); freehand = !freehand; $('freehand').classList.toggle('on', freehand); $('freehand').textContent = freehand ? 'Freehand' : 'Click pts'; draw(); };
 $('opacity').oninput = e => { opacity = e.target.value / 100; draw(); };
 $('brush').oninput = e => { brush = +e.target.value; draw(); };
@@ -497,7 +508,7 @@ fetch('/trace-data.json').then(r => r.json()).then(d => {
     $('hint').innerHTML =
     '<b>Tools:</b> <b>D</b>raw · <b>E</b>rase · <b>P</b>an (or hold Space). <b>iPad:</b> draw with the Pencil; one finger pans, two fingers pinch-zoom. Tap <b>ⓘ</b> (or click this box) to hide.<br>' +
     '<b>Pause anytime</b> with <b>Esc</b> — your trace is kept &amp; autosaved; click near a line\'s end to continue. <b>Undo</b>/<b>Redo</b> (Ctrl+Z / Ctrl+Y). <b>Erase</b> clears anything inside the brush across all <b>visible</b> layers (hide a layer to protect it; the <b>brush</b> slider sets the size). <b>Coast</b> traces mainland AND islands.<br>' +
-    '<b><span style="color:' + ONEWAY_COLOR + '">➔ One-way</span></b> roads: turn the button ON, then draw in the direction of travel — they\'re drawn <b>narrower</b> than a two-way road (with direction arrows) and recorded as one-way, so the game renders them as a slim single-lane street.<br>' +
+    '<b>Road type</b> (the drop-down, for new roads): <b>Road · 2-way</b> = standard two-lane road; <b><span style="color:' + SINGLE_COLOR + '">Single lane</span></b> = a narrow lane drawn thinner (one car at a time, both directions — no arrows); <b><span style="color:' + DIRT_COLOR + '">Dirt track</span></b> = a brown off-track / unpaved road.<br>' +
     '<b>What\'s already in the game</b> shows for every <b>show</b> filter (roads, coast, reservoirs, railway, sands, airport) as a faded line in that layer\'s colour — trace/edit on top. <b>Delete a game road:</b> show <span style="color:#37d0ff">Roads</span>, switch to <b>Erase</b>, scrub over it, then <b>🎮 Add to game</b>. <b>Airport ✈</b> = runway centre-line (plane take-off/landing, not a car road).<br>' +
     '<b>Save</b> = keep state in this browser · <b>Export</b> = download JSON · <b>🆕 New</b> = clear the saved session (use it once your roads are in the game, so your old blue lines don\'t double up over the game\'s roads; or open <b>trace.html?fresh</b>). Dashed <span style="color:#ffd23f">yellow</span> = current game coast (trace the real one in <span style="color:#7CFC8A">green</span>).'; };
   bgImg.onload = boot; bgImg.onerror = () => { $('hint').textContent = 'Could not load /trace-map.jpg'; boot(); };

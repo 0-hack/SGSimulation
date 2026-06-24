@@ -101,16 +101,17 @@ function cellWorld(x, y) {
 // of kampongs dotted across an otherwise rural island. Players build out the rest.
 // Inject the traced 1966 road network into a roads object: the full, smoothed,
 // interconnected graph — nodes shared between edges so the streets connect at
-// every junction. One-way streets carry a `oneway` flag (lanes: 1). `traced`
-// marks them for the slim, no-stop-line rendering. Seeded only once.
+// every junction. Single-lane streets carry an `oneway` flag (lanes: 1); dirt
+// streets carry a `dirt` flag (the 5th edge field). `traced` marks them all for
+// the slim, no-stop-line rendering. Seeded only once.
 function injectTracedRoads(roads) {
   const base = roads.nodes.length;
   for (const [x, z] of ROAD_NODES_1966) roads.nodes.push({ x, z, y: 0 });
-  for (const [a, b, ow, cls] of ROAD_EDGES_1966)
+  for (const [a, b, ow, cls, dirt] of ROAD_EDGES_1966)
     roads.edges.push({
       a: a + base, b: b + base, ctrl: null,
       type: 'road', lanes: ow ? 1 : 2, elevated: false,
-      oneway: !!ow, traced: true, roadClass: cls || 3,
+      oneway: !!ow, dirt: !!dirt, traced: true, roadClass: cls || 3,
     });
   roads.seeded1966 = true;
 }

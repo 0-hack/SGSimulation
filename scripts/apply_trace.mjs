@@ -56,6 +56,28 @@ function simplify(pts, eps) {
   const out = []; for (let i = 0; i < pts.length; i++) if (keep[i]) out.push(pts[i]);
   return out;
 }
+// Drop JITTER spikes from a freehand stroke: a vertex where the line turns by more
+// than `maxTurn` degrees is a near-reversal (the hand crossed back on itself) — no
+// real road bends that sharply, so removing it makes the road both smoother AND more
+// faithful. Iterated, since dropping one spike can expose another. Real corners
+// (grid junctions ~90°, normal bends) are well below the threshold and untouched.
+function deSpike(pts, maxTurn = 150) {
+  if (pts.length < 3) return pts;
+  const turnAt = (a, b, c) => {
+    const ux = b[0] - a[0], uz = b[1] - a[1], vx = c[0] - b[0], vz = c[1] - b[1];
+    const la = Math.hypot(ux, uz) || 1, lb = Math.hypot(vx, vz) || 1;
+    let cc = (ux * vx + uz * vz) / (la * lb); cc = Math.max(-1, Math.min(1, cc));
+    return Math.acos(cc) * 180 / Math.PI;
+  };
+  let changed = true;
+  while (changed && pts.length > 2) {
+    changed = false;
+    for (let i = 1; i < pts.length - 1; i++) {
+      if (turnAt(pts[i - 1], pts[i], pts[i + 1]) > maxTurn) { pts.splice(i, 1); changed = true; break; }
+    }
+  }
+  return pts;
+}
 function decimateN(pts, minD) {
   if (pts.length < 3) return pts.map(([x, y]) => [r3(x), r3(y)]);
   const out = [pts[0]]; let last = pts[0];
@@ -187,12 +209,29 @@ export async function applyTrace(t, opts = {}) {
       // INTERIOR points weld at the tiny MERGE_MID (so the curve keeps its shape and is
       // NOT snapped onto a coarse grid). No decimation, no smoothing — the road follows
       // the trace exactly.
-      const kept = simplify(road.pts.map(toWorld), SIMPLIFY);
+      const kept = deSpike(simplify(road.pts.map(toWorld), SIMPLIFY), 150);   // drop near-reversal jitter spikes
       let prev = nodeAt(kept[0], MERGE);
       for (let i = 1; i < kept.length; i++) {
         const id = nodeAt(kept[i], i === kept.length - 1 ? MERGE : MERGE_MID);
         addEdge(prev, id, road.oneway, road.dirt); prev = id;
       }
+    }
+    // drop degenerate TINY self-loops: a chain of degree-2 nodes that returns to its
+    // own start within a few world units is a freehand stroke that crossed itself, not
+    // a real loop — it renders as a sharp spur, so remove its edges.
+    {
+      const a2 = new Map(); const pushA = (n, rec) => { let x = a2.get(n); if (!x) a2.set(n, x = []); x.push(rec); };
+      edges.forEach((e, i) => { pushA(e[0], { n: e[1], e: i }); pushA(e[1], { n: e[0], e: i }); });
+      const deg = (n) => (a2.get(n)?.length || 0), dd = (a, b) => Math.hypot(nodes[a][0] - nodes[b][0], nodes[a][1] - nodes[b][1]);
+      const seen = new Set(), drop = new Set();
+      const walk = (start, ei) => { const ns = [start], es = []; let cur = start, edge = ei;
+        while (true) { seen.add(edge); es.push(edge); const e = edges[edge], nxt = e[0] === cur ? e[1] : e[0]; ns.push(nxt); cur = nxt;
+          if (deg(cur) !== 2) break; const nb = a2.get(cur).find((x) => !seen.has(x.e)); if (!nb) break; edge = nb.e; } return { ns, es }; };
+      const consider = (ns, es) => { const s = ns[0], e = ns[ns.length - 1]; if (s !== e && dd(s, e) >= 3) return;
+        let span = 0; for (const x of ns) span = Math.max(span, dd(s, x)); if (span < 4) es.forEach((x) => drop.add(x)); };
+      for (const [node, list] of a2) { if (deg(node) === 2) continue; for (const nb of list) if (!seen.has(nb.e)) { const { ns, es } = walk(node, nb.e); consider(ns, es); } }
+      for (let i = 0; i < edges.length; i++) if (!seen.has(i)) { const { ns, es } = walk(edges[i][0], i); consider(ns, es); }   // pure loops
+      if (drop.size) edges = edges.filter((_, i) => !drop.has(i));
     }
     // compact: keep only nodes referenced by an edge (drops orphans from bulldoze)
     const used = new Set(); for (const e of edges) { used.add(e[0]); used.add(e[1]); }

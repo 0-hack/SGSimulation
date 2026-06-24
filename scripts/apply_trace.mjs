@@ -186,7 +186,10 @@ export async function applyTrace(t, opts = {}) {
     }
     const grid = new Map();
     const key = (x, z) => Math.floor(x / MERGE) + ',' + Math.floor(z / MERGE);
-    nodes.forEach((p, id) => { const k = key(p[0], p[1]); if (!grid.has(k)) grid.set(k, []); grid.get(k).push(id); });
+    // index only LIVE nodes (still on a surviving edge) so new roads never weld to the
+    // orphan ghost nodes left behind by bulldozed edges (which sit on the OLD road path)
+    const liveNodes = new Set(); for (const e of edges) { liveNodes.add(e[0]); liveNodes.add(e[1]); }
+    nodes.forEach((p, id) => { if (!liveNodes.has(id)) return; const k = key(p[0], p[1]); if (!grid.has(k)) grid.set(k, []); grid.get(k).push(id); });
     // weld to an existing node within radius `r` (defaults to the endpoint radius);
     // the spatial grid stays keyed at the larger MERGE cell so a 3×3 scan still finds
     // any neighbour within MERGE (and the smaller MERGE_MID is a subset of that).
@@ -208,8 +211,9 @@ export async function applyTrace(t, opts = {}) {
       // into the shared graph: ENDPOINTS weld at MERGE (so junctions/T-junctions join),
       // INTERIOR points weld at the tiny MERGE_MID (so the curve keeps its shape and is
       // NOT snapped onto a coarse grid). No decimation, no smoothing — the road follows
-      // the trace exactly.
-      const kept = deSpike(simplify(road.pts.map(toWorld), SIMPLIFY), 150);   // drop near-reversal jitter spikes
+      // the trace exactly. opts.exact skips the de-jitter pass so the line maps 1:1.
+      const simp = simplify(road.pts.map(toWorld), SIMPLIFY);
+      const kept = opts.exact ? simp : deSpike(simp, 150);   // drop near-reversal jitter spikes (unless exact)
       let prev = nodeAt(kept[0], MERGE);
       for (let i = 1; i < kept.length; i++) {
         const id = nodeAt(kept[i], i === kept.length - 1 ? MERGE : MERGE_MID);
@@ -218,8 +222,8 @@ export async function applyTrace(t, opts = {}) {
     }
     // drop degenerate TINY self-loops: a chain of degree-2 nodes that returns to its
     // own start within a few world units is a freehand stroke that crossed itself, not
-    // a real loop — it renders as a sharp spur, so remove its edges.
-    {
+    // a real loop — it renders as a sharp spur, so remove its edges. (skipped in exact mode)
+    if (!opts.exact) {
       const a2 = new Map(); const pushA = (n, rec) => { let x = a2.get(n); if (!x) a2.set(n, x = []); x.push(rec); };
       edges.forEach((e, i) => { pushA(e[0], { n: e[1], e: i }); pushA(e[1], { n: e[0], e: i }); });
       const deg = (n) => (a2.get(n)?.length || 0), dd = (a, b) => Math.hypot(nodes[a][0] - nodes[b][0], nodes[a][1] - nodes[b][1]);

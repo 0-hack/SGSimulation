@@ -73,6 +73,7 @@
     <button id="save" title="Save the working state in this browser (also autosaves)">💾 Save</button>
     <button id="export" title="Download the trace as a JSON file to send back">⬇ Export</button>
     <label class="btn">📂 Load<input id="load" type="file" accept="application/json" hidden></label>
+    <button id="newsession" title="Start fresh: clear the working session saved in this browser. Use this after your traces have been added to the game, so the old blue lines stop showing ON TOP of the game's roads." style="background:#5a2a2a;border-color:#7a3a3a">🆕 New</button>
     <button id="help" title="Show / hide the instructions">ⓘ</button>
   </div>
   <div id="stat"></div>
@@ -452,6 +453,15 @@ $('export').onclick = () => { finishCur();
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'sg1966-trace.json'; a.click(); draw(); updateStat(); };
 $('load').onchange = e => { const f = e.target.files[0]; if (!f) return; const rd = new FileReader();
   rd.onload = () => { try { applyLoaded(JSON.parse(rd.result)); sel = null; resumable = null; snapshot(); draw(); updateStat(); toast('Loaded'); } catch (err) { toast('Bad file: ' + err.message, true); } }; rd.readAsText(f); };
+// Start a fresh working session: wipe the in-browser autosave so the previously
+// traced lines stop showing on top of the game overlay. The game's own roads
+// (the faded reference) are untouched; export first if you want a copy.
+$('newsession').onclick = () => {
+  if (!confirm('Start a NEW trace?\n\nThis clears the working session saved in this browser (your blue traced lines). Anything already added to the game stays in the game, and the faded game overlay still shows.\n\nTip: ⬇ Export first if you want to keep a copy.')) return;
+  data = blank(); cur = curItem = sel = resumable = rectStart = rectNow = null; history = []; redoStack = [];
+  try { localStorage.removeItem(LS); } catch (e) {}
+  autosave(); draw(); updateStat(); toast('New trace — previous session cleared');
+};
 // ---- live editing: add traced roads straight into the game's map data ----
 $('applygame').onclick = async () => {
   finishCur(); updateStat();
@@ -476,14 +486,20 @@ addEventListener('beforeunload', () => autosave());
 
 fetch('/trace-data.json').then(r => r.json()).then(d => {
   DATA = d; bgImg.src = d.bg.img; refreshTypes();
-  let restored = false; try { const s = localStorage.getItem(LS); if (s) { applyLoaded(JSON.parse(s)); restored = true; } } catch (e) {}
-  const boot = () => { resize(); fitView(); updateStat(); loadGameData(); if (restored) toast('Restored your last session');
+  // Restore the last working session UNLESS the page was opened with ?fresh (or ?new)
+  // — open trace.html?fresh to start blank without the previously-saved blue lines.
+  const params = new URLSearchParams(location.search); const freshStart = params.has('fresh') || params.has('new');
+  let restored = false;
+  if (!freshStart) { try { const s = localStorage.getItem(LS); if (s) { applyLoaded(JSON.parse(s)); restored = true; } } catch (e) {} }
+  const boot = () => { resize(); fitView(); updateStat(); loadGameData();
+    if (restored) toast('Restored your last session — press 🆕 New to start fresh');
+    else if (freshStart) toast('Fresh trace — previous session not loaded');
     $('hint').innerHTML =
     '<b>Tools:</b> <b>D</b>raw · <b>E</b>rase · <b>P</b>an (or hold Space). <b>iPad:</b> draw with the Pencil; one finger pans, two fingers pinch-zoom. Tap <b>ⓘ</b> (or click this box) to hide.<br>' +
     '<b>Pause anytime</b> with <b>Esc</b> — your trace is kept &amp; autosaved; click near a line\'s end to continue. <b>Undo</b>/<b>Redo</b> (Ctrl+Z / Ctrl+Y). <b>Erase</b> clears anything inside the brush across all <b>visible</b> layers (hide a layer to protect it; the <b>brush</b> slider sets the size). <b>Coast</b> traces mainland AND islands.<br>' +
     '<b><span style="color:' + ONEWAY_COLOR + '">➔ One-way</span></b> roads: turn the button ON, then draw in the direction of travel — they\'re drawn <b>narrower</b> than a two-way road (with direction arrows) and recorded as one-way, so the game renders them as a slim single-lane street.<br>' +
     '<b>What\'s already in the game</b> shows for every <b>show</b> filter (roads, coast, reservoirs, railway, sands, airport) as a faded line in that layer\'s colour — trace/edit on top. <b>Delete a game road:</b> show <span style="color:#37d0ff">Roads</span>, switch to <b>Erase</b>, scrub over it, then <b>🎮 Add to game</b>. <b>Airport ✈</b> = runway centre-line (plane take-off/landing, not a car road).<br>' +
-    '<b>Save</b> = keep state in this browser · <b>Export</b> = download JSON. Dashed <span style="color:#ffd23f">yellow</span> = current game coast (trace the real one in <span style="color:#7CFC8A">green</span>).'; };
+    '<b>Save</b> = keep state in this browser · <b>Export</b> = download JSON · <b>🆕 New</b> = clear the saved session (use it once your roads are in the game, so your old blue lines don\'t double up over the game\'s roads; or open <b>trace.html?fresh</b>). Dashed <span style="color:#ffd23f">yellow</span> = current game coast (trace the real one in <span style="color:#7CFC8A">green</span>).'; };
   bgImg.onload = boot; bgImg.onerror = () => { $('hint').textContent = 'Could not load /trace-map.jpg'; boot(); };
 }).catch(err => { $('hint').textContent = 'Could not load /trace-data.json — ' + err.message; });
 </script>

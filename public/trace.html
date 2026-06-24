@@ -420,7 +420,7 @@ function eraseAt(p) {
     const out = []; let cut = false;
     for (const pts of game.roads) { const segs = eraseFromLine(pts, gp, radG);
       if (segs.length !== 1 || segs[0].length !== pts.length) cut = true;
-      for (const seg of segs) out.push(seg); }
+      for (const seg of segs) { seg.oneway = pts.oneway; seg.dirt = pts.dirt; out.push(seg); } } // keep the road type (eraseFromLine makes bare arrays)
     game.roads = out;
     if (cut) data.bulldoze.push({ pts: [[gp[0], gp[1]]] });
   }

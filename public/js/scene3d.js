@@ -133,17 +133,17 @@ const AIRPORT = {
   overrun: 4,          // paved overrun past each threshold
   taxiOff: 9,          // continuous parallel taxiway offset (localX, inland of runway)
   taxiHalfW: 1.6,      // parallel-taxiway half-width
-  apronOff: 34,        // apron centre offset across the runway, inland (+localX)
-  apronHalfW: 6,       // apron half-width
-  apronHalfL: 7,       // apron half-length (a compact parking, toward one end)
+  apronOff: 10,        // apron centre offset across the runway, inland (+localX)
+  apronHalfW: 7,       // apron half-width
+  apronHalfL: 8,       // apron half-length (a compact parking, toward one end)
   apronCzFrac: -0.78,  // apron offset along the runway — beside the Terminal Building (the small road loop on the 1966 sheet)
   apronLinks: 4,       // short links from the apron to the parallel taxiway
   linkW: 2.4,          // taxiway/link width
-  pierOff: 42,         // finger-pier offset (aircraft dock against it)
-  termOff: 48,         // terminal offset (rotated 90°: tower toward the apron, slab inland)
-  carparkOff: 16,      // landside car park offset
+  pierOff: 16,         // finger-pier offset (aircraft dock against it)
+  termOff: 25,         // terminal offset (rotated 90°: tower toward the apron, slab inland)
+  carparkOff: 30,      // landside car park offset
   hangarOff: 16,       // maintenance hangars offset, inland
-  termScale: 0.34,      // terminal/hangar shrunk toward normal building scale
+  termScale: 0.45,      // terminal/hangar shrunk toward normal building scale
   planeScale: 0.4,     // airliners ~one building-length (a touch smaller than the terminals)
   scale: 0.35,         // master shrink: keep the whole 1966 field compact so the terminal fits the traced road loop
   side: 1,             // which flank of the runway the terminal/apron complex sits on (+1 inland/NW beside the roads, -1 seaward/SE)

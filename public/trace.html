@@ -367,7 +367,18 @@ cv.addEventListener('pointermove', e => {
     else if (act === 'resize') { const r = (b.rot || 0) * PI / 180, c = Math.cos(-r), s = Math.sin(-r), ox = g[0] - b.cx, oy = g[1] - b.cy; b.w = Math.max(0.002, 2 * Math.abs(ox * c - oy * s)); b.h = Math.max(0.002, 2 * Math.abs(ox * s + oy * c)); }
     draw(); return;
   }
-  if (mode === 'draw' && freehand && drawing && cur && !RECT(active)) { const last = cur[cur.length - 1]; if (Math.hypot(g[0] - last[0], g[1] - last[1]) > 2 / (view.unit * view.zoom)) { cur.push(g); draw(); } } // sample every ~2 screen px, so curves stay smooth at any zoom
+  if (mode === 'draw' && freehand && drawing && cur && !RECT(active)) {
+    // Capture EVERY pointer position the browser batched into this move (getCoalescedEvents),
+    // not just the latest — otherwise a fast stroke loses all its in-between points and the
+    // curve flattens. A fine threshold keeps every wiggle; apply_trace simplifies later.
+    const minD = 0.6 / (view.unit * view.zoom);
+    const evs = (e.getCoalescedEvents && e.getCoalescedEvents()) || null;
+    for (const ev of (evs && evs.length ? evs : [e])) {
+      const q = evPos(ev), gg = toGame(q.sx, q.sy), last = cur[cur.length - 1];
+      if (Math.hypot(gg[0] - last[0], gg[1] - last[1]) > minD) cur.push(gg);
+    }
+    draw();
+  } // sample finely & from coalesced events, so curves keep every detail at any zoom
   else if (mode === 'erase' && drawing) eraseAt(p);
   else if (mode === 'draw' && !freehand && cur) { draw(); const [x0, y0] = toScreen(...cur[cur.length - 1]); ctx.strokeStyle = '#fff8'; ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(p.sx, p.sy); ctx.stroke(); }
   else if (mode === 'erase') draw();

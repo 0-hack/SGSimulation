@@ -3673,23 +3673,24 @@ export class Scene3D {
     const deg = (n) => (adj.get(n)?.length || 0);
     const used = new Set(), chains = [];
     const walk = (start, ei) => {
+      const ow = !!edges[ei].oneway;                   // a chain is a single road type, so it renders at one width
       const nodes = [start]; let cur = start, edge = ei;
       while (true) {
         used.add(edge);
         const e = edges[edge], nxt = (e.a === cur) ? e.b : e.a;
         nodes.push(nxt); cur = nxt;
-        if (deg(cur) !== 2) break;                       // stop at a junction or dead end
+        if (deg(cur) !== 2) break;                      // stop at a junction or dead end
         const nb = adj.get(cur).find((x) => !used.has(x.e));
-        if (!nb) break;
+        if (!nb || !!edges[nb.e].oneway !== ow) break;  // never merge a one-way run with a two-way one
         edge = nb.e;
       }
-      return nodes;
+      return { nodes, oneway: ow };
     };
     for (const [node, list] of adj) {                    // start chains at endpoints/junctions
       if (deg(node) === 2) continue;
       for (const nb of list) if (!used.has(nb.e)) chains.push(walk(node, nb.e));
     }
-    for (const i of tracedIdx) if (!used.has(i)) chains.push(walk(edges[i].a, i)); // leftover pure loops
+    for (const i of tracedIdx) if (!used.has(i)) chains.push(walk(edges[i].a, i)); // leftover pure loops / one-way splits
     return chains;
   }
   // Render freeform road meshes (asphalt, pavement, lane markings, stop lines,
@@ -3769,12 +3770,13 @@ export class Scene3D {
     // its own normal). Instead, chain connected traced edges into continuous
     // polylines and draw each as ONE mitred ribbon — smooth like the trace map.
     if (roads) {
-      const hw = ROAD_TYPES.road.renderHW || 0.34; // uniform width — matches player-drawn roads
-      for (const chain of this._tracedChains(roads)) {
-        const raw = chain.map((ni) => { const nd = roads.nodes[ni]; return nd && { x: nd.x, z: nd.z }; }).filter(Boolean);
+      const HW2 = ROAD_TYPES.road.renderHW || 0.34; // two-way width — matches player-drawn roads
+      const HW1 = HW2 * 0.62;                        // one-way street: a single lane, clearly narrower
+      for (const { nodes, oneway } of this._tracedChains(roads)) {
+        const raw = nodes.map((ni) => { const nd = roads.nodes[ni]; return nd && { x: nd.x, z: nd.z }; }).filter(Boolean);
         // resample to sub-cell spacing so the ribbon hugs the hillsides (traced nodes
         // are ~9u apart — a straight chord between them sinks under steep terrain)
-        if (raw.length >= 2) ribbonSmooth(road, this._densifyRoad(raw, 2.0, 0.10), hw, 0.04);
+        if (raw.length >= 2) ribbonSmooth(road, this._densifyRoad(raw, 2.0, 0.10), oneway ? HW1 : HW2, 0.04);
       }
     }
 

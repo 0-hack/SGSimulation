@@ -41,7 +41,7 @@
   </div>
   <div class="grp" id="layers" title="What you're tracing. Draw/Erase act on this layer."><small>trace</small></div>
   <div class="grp">
-    <button id="oneway" title="Tag roads as ONE-WAY (drawn in the direction of travel)">➔ One-way</button>
+    <button id="oneway" title="Tag roads as ONE-WAY: drawn in the direction of travel and recorded NARROWER than a two-way road">➔ One-way</button>
     <button id="freehand" class="on" title="Freehand: hold &amp; drag. Click: tap each point/corner; Esc, double-click or click the first dot to finish.">Freehand</button>
     <span><small>brush</small> <input id="brush" type="range" min="4" max="60" value="16"></span>
   </div>
@@ -208,7 +208,8 @@ function draw() {
   ctx.globalAlpha = 0.8;
   for (const k of KEYS) {
     if (!vis[k] || !game[k] || !game[k].length) continue;
-    ctx.strokeStyle = LAYERS[k].c; ctx.lineWidth = k === 'roads' ? 2.6 : k === 'mainland' ? 2.4 : 2;
+    if (k === 'roads') { for (const p of game.roads) { ctx.strokeStyle = p.oneway ? ONEWAY_COLOR : LAYERS.roads.c; ctx.lineWidth = p.oneway ? 1.5 : 2.6; strokePoly(p, false); if (p.oneway) drawArrows(p); } continue; }
+    ctx.strokeStyle = LAYERS[k].c; ctx.lineWidth = k === 'mainland' ? 2.4 : 2;
     for (const p of game[k]) strokePoly(p, !!LAYERS[k].closed);
   }
   ctx.globalAlpha = 1;
@@ -216,11 +217,11 @@ function draw() {
     if (!vis[k]) continue; const L = LAYERS[k];
     if (RECT(k)) { data[k].forEach(b => drawRect(b, L.c)); continue; }
     ctx.lineWidth = k === 'mainland' ? 2.6 : 2.2;
-    if (k === 'roads') { for (const r of data.roads) { ctx.strokeStyle = r.oneway ? ONEWAY_COLOR : L.c; strokePoly(r.pts, false); if (r.oneway) drawArrows(r.pts); } }
+    if (k === 'roads') { for (const r of data.roads) { ctx.strokeStyle = r.oneway ? ONEWAY_COLOR : L.c; ctx.lineWidth = r.oneway ? 1.35 : 2.2; strokePoly(r.pts, false); if (r.oneway) drawArrows(r.pts); } } // one-way drawn narrower than a two-way road
     else { ctx.strokeStyle = L.c; for (const p of data[k]) strokePoly(p, false); } // open: never auto-close ends (trace part by part; the game closes polygons itself)
   }
   if (sel && RECT(sel.layer) && data[sel.layer][sel.idx] && vis[sel.layer]) drawHandles(data[sel.layer][sel.idx]);
-  if (cur) { ctx.lineWidth = 2.6; ctx.strokeStyle = (active === 'roads' && oneway) ? ONEWAY_COLOR : LAYERS[active].c; ctx.globalAlpha = 0.9; strokePoly(cur, RECT(active)); dots(cur); ctx.globalAlpha = 1; }
+  if (cur) { const curOW = active === 'roads' && (curItem ? curItem.oneway : oneway); ctx.lineWidth = curOW ? 1.6 : 2.6; ctx.strokeStyle = curOW ? ONEWAY_COLOR : LAYERS[active].c; ctx.globalAlpha = 0.9; strokePoly(cur, RECT(active)); if (curOW) drawArrows(cur); dots(cur); ctx.globalAlpha = 1; }
   if (rectStart && rectNow) drawRect(rectToBldg(rectStart, rectNow), LAYERS[active].c + '99');
   if (mode === 'erase' && lastPt) { ctx.strokeStyle = '#e2503b'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(lastPt.sx, lastPt.sy, brush, 0, 7); ctx.stroke(); }
 }
@@ -278,7 +279,8 @@ function loadGameData() {
     const N = rd.ROAD_NODES_1966, E = rd.ROAD_EDGES_1966;
     if (!N || !E) throw new Error('modules unavailable');
     game = {
-      roads: E.map((e) => [toNorm(N[e[0]]), toNorm(N[e[1]])]).filter((p) => p[0] && p[1]),
+      roads: E.map((e) => { const na = N[e[0]], nb = N[e[1]]; if (!na || !nb) return null; const arr = [toNorm(na), toNorm(nb)]; arr.oneway = !!e[2]; return arr; }).filter(Boolean), // keep the one-way flag so the overlay shows it narrower
+
       mainland: [sh.SG_OUTLINE, ...(sh.SG_ISLANDS || [])].filter((p) => p && p.length >= 3),
       reservoirs: (rd.RESERVOIRS_1966 || []).filter((p) => p && p.length >= 3),
       railway: cu.CUSTOM_RAILWAYS || [],
@@ -479,6 +481,7 @@ fetch('/trace-data.json').then(r => r.json()).then(d => {
     $('hint').innerHTML =
     '<b>Tools:</b> <b>D</b>raw · <b>E</b>rase · <b>P</b>an (or hold Space). <b>iPad:</b> draw with the Pencil; one finger pans, two fingers pinch-zoom. Tap <b>ⓘ</b> (or click this box) to hide.<br>' +
     '<b>Pause anytime</b> with <b>Esc</b> — your trace is kept &amp; autosaved; click near a line\'s end to continue. <b>Undo</b>/<b>Redo</b> (Ctrl+Z / Ctrl+Y). <b>Erase</b> clears anything inside the brush across all <b>visible</b> layers (hide a layer to protect it; the <b>brush</b> slider sets the size). <b>Coast</b> traces mainland AND islands.<br>' +
+    '<b><span style="color:' + ONEWAY_COLOR + '">➔ One-way</span></b> roads: turn the button ON, then draw in the direction of travel — they\'re drawn <b>narrower</b> than a two-way road (with direction arrows) and recorded as one-way, so the game renders them as a slim single-lane street.<br>' +
     '<b>What\'s already in the game</b> shows for every <b>show</b> filter (roads, coast, reservoirs, railway, sands, airport) as a faded line in that layer\'s colour — trace/edit on top. <b>Delete a game road:</b> show <span style="color:#37d0ff">Roads</span>, switch to <b>Erase</b>, scrub over it, then <b>🎮 Add to game</b>. <b>Airport ✈</b> = runway centre-line (plane take-off/landing, not a car road).<br>' +
     '<b>Save</b> = keep state in this browser · <b>Export</b> = download JSON. Dashed <span style="color:#ffd23f">yellow</span> = current game coast (trace the real one in <span style="color:#7CFC8A">green</span>).'; };
   bgImg.onload = boot; bgImg.onerror = () => { $('hint').textContent = 'Could not load /trace-map.jpg'; boot(); };

@@ -277,6 +277,7 @@ export class Scene3D {
     this._buildRailways(CUSTOM_RAILWAYS); // railway lines (hand-traced) — after nature so the track clears its own trees
     this._buildNavGraph();   // traffic graph (freeform roads only; added on setState)
     this._initBoats();
+    this._initAirportPlanes();   // airliners circling Paya Lebar
     this._initWeather();
 
     // Flood plane (hidden until a flood event)
@@ -1296,37 +1297,45 @@ export class Scene3D {
   _initBoats() {
     this.boats = [];
     this._buildCoastRadius();   // so boats can hug the coast and never sail onto land
-    const types = ['bumboat', 'bumboat', 'cargo', 'sampan', 'bumboat', 'cargo', 'sampan', 'bumboat'];
+    // a busy little fleet, weighted toward big cargo ships so the sea clearly reads
+    const types = ['cargo', 'bumboat', 'cargo', 'sampan', 'bumboat', 'cargo', 'sampan', 'bumboat', 'cargo', 'bumboat', 'sampan', 'cargo'];
     for (let i = 0; i < types.length; i++) {
       const b = makeBoat(types[i]);
       const ang = Math.random() * Math.PI * 2;
-      const rad = WORLD * (0.44 + Math.random() * 0.12);
       this.scene.add(b);
-      // angular speed tuned so the LINEAR speed is way slower than anything on land
-      const lin = 0.5 + Math.random() * 0.4;   // ~0.5–0.9 world units/sec
-      this.boats.push({ mesh: b, ang, rad, angSpeed: (lin / Math.max(1, rad)) * (Math.random() < 0.5 ? 1 : -1) });
+      const lin = 0.6 + Math.random() * 0.7;   // ~0.6–1.3 world units/sec — a visible cruise, still slow vs land
+      const margin = 14 + Math.random() * 50;  // how far this one rides off the Singapore shoreline
+      this.boats.push({ mesh: b, ang, lin, margin, dir: Math.random() < 0.5 ? 1 : -1 });
     }
   }
-  // Max radius (from the map centre) reached by land at each compass bearing, so a
-  // boat can stay just offshore. Covers Singapore, its islands and foreign land.
+  // Max radius (from the map centre) reached by land at each compass bearing. Two
+  // rings: `_coastR` covers Singapore + its islands + the foreign landmasses (used
+  // to keep things clear of ALL land), `_coastRSG` covers ONLY Singapore so boats
+  // can hug the local shoreline and sail the visible straits/harbour instead of
+  // being pushed way out past Johor & Batam into the fog.
   _buildCoastRadius() {
-    const BINS = 240; this._coastR = new Float32Array(BINS);
-    const upd = (wx, wz) => { const a = Math.atan2(wz, wx), r = Math.hypot(wx, wz); const bin = ((Math.floor(((a + Math.PI) / (2 * Math.PI)) * BINS) % BINS) + BINS) % BINS; if (r > this._coastR[bin]) this._coastR[bin] = r; };
-    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) if (this.land[y][x]) { const w = cellToWorld(x, y); upd(w.x, w.z); }
-    for (const poly of (SG_FOREIGN || [])) for (const [nx, ny] of poly) upd((nx - 0.5) * WORLD, (0.5 - ny) * WORLD);
+    const BINS = 240; this._coastR = new Float32Array(BINS); this._coastRSG = new Float32Array(BINS);
+    const bin = (wx, wz) => { const a = Math.atan2(wz, wx); return ((Math.floor(((a + Math.PI) / (2 * Math.PI)) * BINS) % BINS) + BINS) % BINS; };
+    const upd = (arr, wx, wz) => { const r = Math.hypot(wx, wz), b = bin(wx, wz); if (r > arr[b]) arr[b] = r; };
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) if (this.land[y][x]) { const w = cellToWorld(x, y); upd(this._coastR, w.x, w.z); upd(this._coastRSG, w.x, w.z); }
+    for (const poly of (SG_FOREIGN || [])) for (const [nx, ny] of poly) upd(this._coastR, (nx - 0.5) * WORLD, (0.5 - ny) * WORLD);
   }
-  _coastRadiusAt(ang) {
-    if (!this._coastR) return 0;
-    const BINS = this._coastR.length;
+  _coastRadiusAt(ang) { return this._sampleCoast(this._coastR, ang); }
+  _coastRadiusSGAt(ang) { return this._sampleCoast(this._coastRSG, ang); }
+  _sampleCoast(arr, ang) {
+    if (!arr) return 0;
+    const BINS = arr.length;
     const base = ((Math.floor(((ang + Math.PI) / (2 * Math.PI)) * BINS) % BINS) + BINS) % BINS;
-    let m = 0; for (let k = -3; k <= 3; k++) m = Math.max(m, this._coastR[(base + k + BINS) % BINS]); // small look-ahead margin
+    let m = 0; for (let k = -3; k <= 3; k++) m = Math.max(m, arr[(base + k + BINS) % BINS]); // small look-ahead margin
     return m;
   }
   _updateBoats(dt) {
     if (!this.boats) return;
     for (const bo of this.boats) {
-      bo.ang += bo.angSpeed * dt;
-      const rad = Math.min(WORLD * 0.78, Math.max(bo.rad, this._coastRadiusAt(bo.ang) + 24)); // stay offshore, inside the fog
+      // ride just off the SINGAPORE shoreline (the visible straits & harbour),
+      // capped so they never wander out into the open-sea fog
+      const rad = Math.max(40, Math.min(WORLD * 0.5, this._coastRadiusSGAt(bo.ang) + bo.margin));
+      bo.ang += bo.dir * (bo.lin / Math.max(60, rad)) * dt;   // constant linear speed regardless of radius
       const x = Math.cos(bo.ang) * rad, z = Math.sin(bo.ang) * rad;
       if (bo._px !== undefined) {                       // face the actual direction of travel (bow = +Z)
         const vx = x - bo._px, vz = z - bo._pz;
@@ -1334,6 +1343,59 @@ export class Scene3D {
       }
       bo._px = x; bo._pz = z;
       bo.mesh.position.set(x, SEA_Y + 0.6 + Math.sin(this.clock.elapsedTime * 1.0 + bo.ang * 4) * 0.2, z); // gentle bob
+    }
+  }
+
+  // Airliners flying a continuous traffic circuit over Paya Lebar: a racetrack
+  // aligned with the runway, the long approach leg descending into a low pass
+  // right over the strip before climbing back out, the downwind leg held high
+  // and offset to one side. Built as a closed 3D polyline whose y already encodes
+  // the descend-low-pass-climb profile, so a plane just rides along it.
+  _initAirportPlanes() {
+    this._airportPlanes = [];
+    const c = this._airportCenter;
+    if (!c) return;
+    if (this._airPlaneGroup) this.scene.remove(this._airPlaneGroup);
+    const grp = new THREE.Group(); this.scene.add(grp); this._airPlaneGroup = grp;
+    const ux = Math.sin(c.rot), uz = Math.cos(c.rot);     // along the runway (south→north)
+    const px = uz, pz = -ux;                              // perpendicular, to one side of the field
+    const base = this._airfieldY || 0;
+    const A = Math.max(60, c.len * 0.85);                 // half-length of the straight legs
+    const R = Math.max(34, c.len * 0.6);                  // radius of the end turns
+    const SIDE = (AIRPORT.side || 1);                     // sweep the downwind leg to the field's open side
+    const patAlt = 40, lowAlt = 7;                        // pattern altitude vs the low pass over the runway
+    const pts = [];
+    const at = (along, off, y) => pts.push(new THREE.Vector3(c.cx + ux * along + px * off * SIDE, base + y, c.cz + uz * along + pz * off * SIDE));
+    const NA = 26, NT = 18;
+    // 1) approach leg over the runway centreline: dips to lowAlt mid-field (parabolic descent → climb-out)
+    for (let i = 0; i <= NA; i++) { const t = i / NA, along = -A + 2 * A * t, k = along / A; at(along, 0, lowAlt + (patAlt - lowAlt) * k * k); }
+    // 2) turn off the north end, offset 0 → 2R, at pattern altitude
+    for (let i = 1; i <= NT; i++) { const th = (i / NT) * Math.PI; at(A + R * Math.sin(th), R * (1 - Math.cos(th)), patAlt); }
+    // 3) downwind leg, offset 2R, back south at pattern altitude
+    for (let i = 1; i <= NA; i++) { const t = i / NA; at(A - 2 * A * t, 2 * R, patAlt); }
+    // 4) turn off the south end, offset 2R → 0, closing the loop
+    for (let i = 1; i < NT; i++) { const th = (i / NT) * Math.PI; at(-A - R * Math.sin(th), R * (1 + Math.cos(th)), patAlt); }
+    const COUNT = 3;
+    for (let i = 0; i < COUNT; i++) {
+      const mesh = makeAirliner(); mesh.scale.setScalar(AIRPORT.planeScale * 1.4); mesh.rotation.order = 'YXZ';
+      grp.add(mesh);
+      this._airportPlanes.push({ mesh, pts, u: i / COUNT, speed: 0.011 + i * 0.001 }); // spaced around the circuit, gentle pace
+    }
+  }
+  _updateAirportPlanes(dt) {
+    for (const p of (this._airportPlanes || [])) {
+      p.u += dt * p.speed; if (p.u >= 1) p.u -= 1;
+      const pos = this._alongPoly(p.pts, p.u);
+      const a1 = this._alongPoly(p.pts, (p.u + 0.01) % 1);
+      const a2 = this._alongPoly(p.pts, (p.u + 0.02) % 1);
+      p.mesh.position.copy(pos);
+      const head = Math.atan2(a1.x - pos.x, a1.z - pos.z);
+      const dHoriz = Math.hypot(a1.x - pos.x, a1.z - pos.z) || 1;
+      let dh = Math.atan2(a2.x - a1.x, a2.z - a1.z) - head;
+      while (dh > Math.PI) dh -= 2 * Math.PI; while (dh < -Math.PI) dh += 2 * Math.PI;
+      p.mesh.rotation.y = head;
+      p.mesh.rotation.x = -Math.atan2(a1.y - pos.y, dHoriz) * 0.8;   // nose up on the climb-out, down on the approach
+      p.mesh.rotation.z = Math.max(-0.5, Math.min(0.5, dh * 5));     // bank into the turns
     }
   }
 
@@ -2613,12 +2675,12 @@ export class Scene3D {
       const kinds = ['man', 'woman', 'man', 'woman', 'child', 'elderly'];
       const kind = kinds[Math.floor(Math.random() * kinds.length)];
       const { mesh, len } = makePerson(kind);
-      mesh.scale.multiplyScalar(0.62);   // smaller pedestrians relative to the scene
+      mesh.scale.multiplyScalar(0.3);    // realistic pedestrian size against roads, cars and buildings
       this.scene.add(mesh);
-      const speed = { man: 1.4, woman: 1.3, child: 1.3, elderly: 0.85 }[kind]; // pedestrians clearly slower than any vehicle
+      const speed = { man: 0.7, woman: 0.65, child: 0.65, elderly: 0.42 }[kind]; // a slow, unhurried walk — far below any vehicle
       const ag = { mesh, len, group: 'ped', kind, edge: list[Math.floor(Math.random() * list.length)],
         dir: Math.random() < 0.5 ? 1 : -1, t: Math.random(), phase: Math.random() * 6, speed,
-        animK: 5.5, side: Math.random() < 0.5 ? 1 : -1 };
+        animK: 11, side: Math.random() < 0.5 ? 1 : -1 }; // cadence doubled to keep the stride matched now that they're smaller & slower
       this._assignLane(ag);
       this.people.push(ag);
     }
@@ -3833,9 +3895,9 @@ export class Scene3D {
       const light = { node: n, grpByEdge, period: 7 + Math.random() * 3, t: Math.random() * 5, phase: 0, head: null };
       // a little signal post with a coloured lamp
       const post = new THREE.Group();
-      post.add(cyl(0.1, 0.12, 2.3, 0x3a3f45, 0, 1.15, 0));
-      const head = new THREE.Mesh(new THREE.SphereGeometry(0.26, 10, 8), new THREE.MeshToonMaterial({ color: 0x2ecc71, emissive: 0x2ecc71, emissiveIntensity: 0.7, gradientMap: toonGradient() }));
-      head.position.set(0, 2.3, 0); post.add(head); light.head = head;
+      post.add(cyl(0.045, 0.055, 1.05, 0x3a3f45, 0, 0.525, 0));   // shorter signal post, sized to the smaller pedestrians
+      const head = new THREE.Mesh(new THREE.SphereGeometry(0.12, 10, 8), new THREE.MeshToonMaterial({ color: 0x2ecc71, emissive: 0x2ecc71, emissiveIntensity: 0.7, gradientMap: toonGradient() }));
+      head.position.set(0, 1.05, 0); post.add(head); light.head = head;
       post.position.set(node.x, node.y, node.z); this.lightGroup.add(post);
       this.lights.push(light); this.lightByNode.set(n, light);
     }
@@ -3909,9 +3971,9 @@ export class Scene3D {
     this._lampGroup = new THREE.Group(); this.scene.add(this._lampGroup);
     // cached lamp-part templates (built once, at origin: base on the ground, arm/head reaching +Z)
     if (!this._lampTpl) {
-      const postG = new THREE.CylinderGeometry(0.055, 0.075, 2.5, 6).translate(0, 1.25, 0);
-      const armG = new THREE.BoxGeometry(0.06, 0.06, 0.5).translate(0, 2.42, 0.25);
-      const headG = new THREE.SphereGeometry(0.12, 8, 6).translate(0, 2.38, 0.48);
+      const postG = new THREE.CylinderGeometry(0.025, 0.034, 1.12, 6).translate(0, 0.56, 0);   // lamp post scaled to match the smaller people & signals
+      const armG = new THREE.BoxGeometry(0.028, 0.028, 0.225).translate(0, 1.09, 0.11);
+      const headG = new THREE.SphereGeometry(0.055, 8, 6).translate(0, 1.07, 0.215);
       this._lampTpl = { struct: this._mergeGeos([postG, armG]), head: headG };
     }
     const STEP = 20, MAX = 520;                                     // fixed distance between lamps along a road
@@ -4078,6 +4140,7 @@ export class Scene3D {
     this._updateDevelopment(adt);
     this._updatePeople(adt);
     this._updateBoats(adt);
+    if (!this.frozen) this._updateAirportPlanes(adt);   // airliners circling the built-in airport
     if (!this.frozen) this._updateAirstripPlanes(dt);   // taxiing/landing aircraft on drawn runways
     if (!this.frozen) this._updateTrains(dt);           // trains shuttling along every railway & MRT line
     this._updateDisaster(adt);

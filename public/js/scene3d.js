@@ -133,16 +133,16 @@ const AIRPORT = {
   overrun: 4,          // paved overrun past each threshold
   taxiOff: 9,          // continuous parallel taxiway offset (localX, inland of runway)
   taxiHalfW: 1.6,      // parallel-taxiway half-width
-  apronOff: 16,        // apron centre offset across the runway, inland (+localX)
+  apronOff: 34,        // apron centre offset across the runway, inland (+localX)
   apronHalfW: 6,       // apron half-width
   apronHalfL: 7,       // apron half-length (a compact parking, toward one end)
   apronCzFrac: -0.78,  // apron offset along the runway — beside the Terminal Building (the small road loop on the 1966 sheet)
   apronLinks: 4,       // short links from the apron to the parallel taxiway
   linkW: 2.4,          // taxiway/link width
-  pierOff: 22,         // finger-pier offset (aircraft dock against it)
+  pierOff: 42,         // finger-pier offset (aircraft dock against it)
   termOff: 48,         // terminal offset (rotated 90°: tower toward the apron, slab inland)
-  carparkOff: 22,      // landside car park offset
-  hangarOff: 14,       // maintenance hangars offset, inland
+  carparkOff: 16,      // landside car park offset
+  hangarOff: 16,       // maintenance hangars offset, inland
   termScale: 0.34,      // terminal/hangar shrunk toward normal building scale
   planeScale: 0.4,     // airliners ~one building-length (a touch smaller than the terminals)
   scale: 0.35,         // master shrink: keep the whole 1966 field compact so the terminal fits the traced road loop
@@ -832,8 +832,9 @@ export class Scene3D {
     term.position.set(AIRPORT.termOff * SIDE, 0, apCz); term.rotation.y = SIDE < 0 ? Math.PI : 0; g.add(term);
     // --- car park inline on the terminal's left side (−Z) ---
     const carZ = apCz - 12;
-    slab(12, 8, 0x6d6f74, AIRPORT.carparkOff, carZ, 0.12);
-    addCars(g, AIRPORT.carparkOff * SIDE, carZ, 10, 6);
+    slab(16, 11, 0x53565c, AIRPORT.carparkOff, carZ, 0.12);                                   // tarmac lot
+    for (let i = -2; i <= 2; i++) slab(0.22, 9, 0xcfc9b6, AIRPORT.carparkOff + i * 3.2, carZ, 0.135); // parking-bay lines
+    addCars(g, AIRPORT.carparkOff * SIDE, carZ, 13, 8);
     // --- hangar group, well clear of the car park, the whole row tilted ~30° off the grid ---
     const hg = new THREE.Group();
     hg.position.set((AIRPORT.hangarOff + 8) * SIDE, 0, carZ - 16); hg.rotation.y = faceApron + Math.PI / 6;
@@ -843,8 +844,8 @@ export class Scene3D {
     }
     const beside = makeSawtoothShed(10, 5.5, 18, 3); beside.scale.setScalar(sc); // saw-tooth workshop beside (L-shape)
     beside.position.set(-12, 0, -3); hg.add(beside);
-    const behind = makeAirBlock(22, 6, 9); behind.scale.setScalar(sc);   // low block set back behind the hangars
-    behind.position.set(2, 0, -15); hg.add(behind);
+    const behind = makeAirBlock(22, 6, 9); behind.scale.setScalar(sc);   // freight/works block, ACROSS the road from the hangars
+    behind.position.set(66 * SIDE, 0, -93); behind.rotation.y = faceApron; g.add(behind);
     // apron + a couple of aircraft parked outside the hangars
     const ha = new THREE.Mesh(new THREE.BoxGeometry(30, 0.24, 12), toon(0xb9b4a6));
     ha.position.set(0, 0.12, 13); ha.receiveShadow = true; hg.add(ha);

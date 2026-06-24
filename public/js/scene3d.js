@@ -146,6 +146,7 @@ const AIRPORT = {
   termScale: 0.6,      // terminal/hangar shrunk toward normal building scale
   planeScale: 0.46,    // airliners ~one building-length (a touch smaller than the terminals)
   scale: 0.62,         // master shrink: the 1955/66 field was tiny next to the island, so the whole complex is scaled down
+  side: -1,            // which flank of the runway the terminal/apron complex sits on (+1 inland/NW, -1 seaward/SE — kept clear of the traced roads)
   // Hand-placed buildings (from the tracer) override the procedural cluster.
   // Each: { type, cx, cy, w, h, rot, hgt } — centre in normalised island coords,
   // w/h normalised footprint, rot radians, hgt height multiplier.
@@ -755,6 +756,7 @@ export class Scene3D {
     const dx = n.x - s.x, dz = n.z - s.z, len = Math.hypot(dx, dz);
     const rot = Math.atan2(dx, dz);             // local +Z = south→north runway axis
     const SC = AIRPORT.scale;                   // uniform shrink of the whole complex
+    const SIDE = AIRPORT.side || 1;             // flank: +1 puts the complex inland (+localX), -1 mirrors it seaward
     const g = new THREE.Group(); g.position.set(cx, 0, cz); g.rotation.y = rot; g.scale.setScalar(SC);
     this.scene.add(g); this.airportGroup = g;
     this._airportCenter = { cx, cz, rot, len: len * SC };
@@ -763,7 +765,7 @@ export class Scene3D {
     const halfW = AIRPORT.rwHalfW, over = AIRPORT.overrun, halfL = len / 2 + over;
     const slab = (w, d, color, x, z, y = 0.12) => {
       const m = new THREE.Mesh(new THREE.BoxGeometry(w, 0.24, d), toon(color));
-      m.position.set(x, y, z); m.receiveShadow = true; g.add(m); return m;
+      m.position.set(x * SIDE, y, z); m.receiveShadow = true; g.add(m); return m; // x mirrored onto the chosen flank
     };
     // --- straight runway ---
     slab(halfW * 2 + 5, halfL * 2 + 4, 0x6f9e57, 0, 0, 0.10);          // grass shoulder
@@ -800,27 +802,28 @@ export class Scene3D {
     const handPlaced = AIRPORT.buildings && AIRPORT.buildings.length;
     if (!handPlaced) {
     // --- finger pier reaching into the apron; aircraft dock nose-in along it ---
-    const sc = AIRPORT.termScale, faceApron = -Math.PI / 2; // model +Z -> parent -X (apron/runway side)
+    // facing toward the apron/runway side; mirrored with the flank so models still face the runway
+    const sc = AIRPORT.termScale, faceApron = -Math.PI / 2 * SIDE;
     const pier = makePier(); pier.scale.setScalar(sc);
-    pier.position.set(AIRPORT.pierOff, 0, apCz); pier.rotation.y = faceApron; g.add(pier);
-    // airliners docked at the pier, noses toward the runway (-X)
+    pier.position.set(AIRPORT.pierOff * SIDE, 0, apCz); pier.rotation.y = faceApron; g.add(pier);
+    // airliners docked at the pier, noses toward the runway
     const gates = 3;
     for (let i = 0; i < gates; i++) {
       const pl = makeAirliner(); pl.scale.setScalar(AIRPORT.planeScale);
-      pl.position.set(AIRPORT.pierOff - 9, 0, apCz - apHL * 0.5 + i * (apHL / (gates - 1)));
+      pl.position.set((AIRPORT.pierOff - 9) * SIDE, 0, apCz - apHL * 0.5 + i * (apHL / (gates - 1)));
       pl.rotation.y = faceApron; g.add(pl);
     }
     // --- terminal rotated 90°: the control tower (tallest part) points at the apron,
     //     the slab + concourse run inland ---
     const term = makeTerminal(); term.scale.setScalar(sc);
-    term.position.set(AIRPORT.termOff, 0, apCz); term.rotation.y = 0; g.add(term);
+    term.position.set(AIRPORT.termOff * SIDE, 0, apCz); term.rotation.y = SIDE < 0 ? Math.PI : 0; g.add(term);
     // --- car park inline on the terminal's left side (−Z) ---
     const carZ = apCz - 14;
     slab(20, 13, 0x6d6f74, AIRPORT.carparkOff, carZ, 0.12);
-    addCars(g, AIRPORT.carparkOff, carZ, 18, 12);
+    addCars(g, AIRPORT.carparkOff * SIDE, carZ, 18, 12);
     // --- hangar group, well clear of the car park, the whole row tilted ~30° off the grid ---
     const hg = new THREE.Group();
-    hg.position.set(AIRPORT.hangarOff + 8, 0, carZ - 22); hg.rotation.y = faceApron + Math.PI / 6;
+    hg.position.set((AIRPORT.hangarOff + 8) * SIDE, 0, carZ - 22); hg.rotation.y = faceApron + Math.PI / 6;
     for (let i = 0; i < 2; i++) {                       // wide open-door hangars side by side
       const h = makeHangar(); h.scale.setScalar(sc);
       h.position.set((i - 0.5) * 13, 0, 0); hg.add(h);
@@ -839,7 +842,7 @@ export class Scene3D {
     g.add(hg);
     // --- on the terminal's far (+Z) side, past an open space: a long low wide hall ---
     const hall = makeLowHall(34, 5, 14); hall.scale.setScalar(sc);
-    hall.position.set(24, 0, apCz + 20); hall.rotation.y = faceApron; g.add(hall);
+    hall.position.set(24 * SIDE, 0, apCz + 20); hall.rotation.y = faceApron; g.add(hall);
 
     // --- service road running in front of the buildings, linked through to the hangars ---
     const roadX = 16, roadZ0 = apCz + 28, roadZ1 = carZ - 24;
@@ -851,7 +854,7 @@ export class Scene3D {
     // an aircraft parked on its own apron beside the low hall
     slab(11, 12, 0xb9b4a6, 14, apCz + 20, 0.12);
     const plHall = makeAirliner(); plHall.scale.setScalar(AIRPORT.planeScale);
-    plHall.position.set(14, 0, apCz + 20); plHall.rotation.y = -Math.PI / 2; g.add(plHall);
+    plHall.position.set(14 * SIDE, 0, apCz + 20); plHall.rotation.y = faceApron; g.add(plHall);
     } // end procedural cluster
 
     if (handPlaced) this._placeStructures(AIRPORT.buildings, 'airportBuildings');
@@ -867,7 +870,9 @@ export class Scene3D {
       const lx = (ox * cosr - oz * sinr) / SC, lz = (ox * sinr + oz * cosr) / SC;
       const onRunway = Math.abs(lx) < halfW + 2 && Math.abs(lz) < halfL;
       const onTaxi = Math.abs(lx - txOff) < txHW + 2 && Math.abs(lz) < halfL;
-      const onComplex = !handPlaced && lx > 1 && lx < AIRPORT.termOff + 38 && lz > apCz - 62 && lz < apCz + 42;
+      const onComplex = !handPlaced &&
+        (SIDE > 0 ? (lx > 1 && lx < AIRPORT.termOff + 38) : (lx < -1 && lx > -(AIRPORT.termOff + 38))) &&
+        lz > apCz - 62 && lz < apCz + 42;
       if (onRunway || onTaxi || onComplex) this.airportMask[y][x] = true;
     }
     if (handPlaced) this._maskAirportBuildings(AIRPORT.buildings);
@@ -2521,11 +2526,10 @@ export class Scene3D {
       ? (r < 0.32 ? 'car' : r < 0.44 ? 'taxi' : r < 0.64 ? 'trishaw' : r < 0.8 ? 'bike' : r < 0.92 ? 'lorry' : 'bus')
       : (r < 0.46 ? 'car' : r < 0.6 ? 'taxi' : r < 0.76 ? 'bike' : r < 0.88 ? 'lorry' : 'bus');
     const { mesh, len } = makeVehicle(kind, gen);
-    // sized to fit the drawn carriageway: a road renders at renderHW=0.34 (≈0.68
-    // wide), so each direction is ~0.34. At this scale even the widest vehicle (a
-    // bus, ~2.2 across) is ~0.33 wide, so every vehicle stays within its lane
-    // instead of spilling across the centre-line or onto the verge.
-    const VS = 0.15; mesh.scale.setScalar(VS);
+    // big enough to read clearly on the road at gameplay zoom, yet kept within the
+    // drawn carriageway (renderHW=0.34 → ~0.68 wide): a car lands ~0.48 across and a
+    // bus fills the carriageway, instead of spilling far onto the verge as before.
+    const VS = 0.26; mesh.scale.setScalar(VS);
     this.scene.add(mesh);
     const speed = { car: 6, taxi: 6, bike: 7, trishaw: 3, lorry: 4.5, bus: 4 }[kind];
     const ag = {

@@ -170,6 +170,10 @@ export async function applyTrace(t, opts = {}) {
   const did = [];
 
   // ---- roads ----
+  // Per-apply fidelity overrides: opts.simplify (DP tolerance) and opts.mergeMid
+  // (interior weld radius) let a "100% faithful" apply keep tighter to the raw
+  // trace than the defaults, without changing the defaults for other callers.
+  const SIMP = opts.simplify ?? SIMPLIFY, MMID = opts.mergeMid ?? MERGE_MID, MRG = opts.merge ?? MERGE;
   let outNodes = cur.ROAD_NODES_1966, outEdges = cur.ROAD_EDGES_1966.map(e => [e[0], e[1], e[2] ? 1 : 0, e[3] || 2, e[4] ? 1 : 0]);
   if (roadsIn.length || (opts.mergeRoads && bulldozeIn.length)) {
     const merge = !!opts.mergeRoads;
@@ -193,7 +197,7 @@ export async function applyTrace(t, opts = {}) {
     // weld to an existing node within radius `r` (defaults to the endpoint radius);
     // the spatial grid stays keyed at the larger MERGE cell so a 3×3 scan still finds
     // any neighbour within MERGE (and the smaller MERGE_MID is a subset of that).
-    const nodeAt = (p, r = MERGE) => {
+    const nodeAt = (p, r = MRG) => {
       const cx = Math.floor(p[0] / MERGE), cz = Math.floor(p[1] / MERGE);
       for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) {
         const arr = grid.get((cx + dx) + ',' + (cz + dz));
@@ -212,11 +216,11 @@ export async function applyTrace(t, opts = {}) {
       // INTERIOR points weld at the tiny MERGE_MID (so the curve keeps its shape and is
       // NOT snapped onto a coarse grid). No decimation, no smoothing — the road follows
       // the trace exactly. opts.exact skips the de-jitter pass so the line maps 1:1.
-      const simp = simplify(road.pts.map(toWorld), SIMPLIFY);
+      const simp = simplify(road.pts.map(toWorld), SIMP);
       const kept = opts.exact ? simp : deSpike(simp, 150);   // drop near-reversal jitter spikes (unless exact)
-      let prev = nodeAt(kept[0], MERGE);
+      let prev = nodeAt(kept[0], MRG);
       for (let i = 1; i < kept.length; i++) {
-        const id = nodeAt(kept[i], i === kept.length - 1 ? MERGE : MERGE_MID);
+        const id = nodeAt(kept[i], i === kept.length - 1 ? MRG : MMID);
         addEdge(prev, id, road.oneway, road.dirt); prev = id;
       }
     }

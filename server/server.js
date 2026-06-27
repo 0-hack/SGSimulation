@@ -127,9 +127,13 @@ if (process.env.TRACE_EDIT !== '0') {
   app.post('/api/trace/apply', async (req, res) => {
     try {
       const { applyTrace } = await import('../scripts/apply_trace.mjs');
-      // live edits ADD traced roads to the network (non-destructive); other
-      // layers (coast/sands/…) replace their whole feature as usual.
-      const did = await applyTrace(req.body || {}, { mergeRoads: true });
+      const body = req.body || {};
+      // Apply FAITHFULLY (map exactly as drawn, no smoothing/de-jitter). When the
+      // tracer sends the WHOLE map (body.full — its Export/Save now includes the
+      // existing network too), REPLACE the road network with it; otherwise ADD the
+      // traced roads to the existing network (incremental, non-destructive).
+      const opts = body.full ? { faithful: true } : { faithful: true, mergeRoads: true };
+      const did = await applyTrace(body, opts);
       res.json({ ok: true, did });
     } catch (e) { res.status(400).json({ ok: false, error: e.message }); }
   });

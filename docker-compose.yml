@@ -12,8 +12,15 @@ services:
       - "3000:3000"          # host:container — change the left number to remap
     environment:
       - PORT=3000
+      - TRACE_EDIT=1         # enable the tracer's "💾 Save to map" (writes the base map)
     volumes:
       - sgdata:/app/data     # persists data/worlds.db across restarts
+      # Live-edit the map: serve public/ from the host AND let "💾 Save to map"
+      # write roads straight back to your repo (persists across rebuilds + git-
+      # trackable). Remove this line for an immutable production image. If saves
+      # fail with EACCES, the host file must be writable by uid 1000 (the node
+      # user) — e.g.  sudo chown -R 1000:1000 public  (or run: chmod -R a+w public).
+      - ./public:/app/public
     restart: unless-stopped
 
 volumes:

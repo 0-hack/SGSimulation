@@ -149,7 +149,15 @@ export async function setLandmarks(list) {
 // Apply a trace object to the game source files. Returns a list of what changed.
 // opts.mergeRoads: ADD the traced roads to the existing network (snapping to it)
 // instead of replacing — used for non-destructive live corrections.
+// FAITHFUL preset: map a trace to the network EXACTLY as drawn — no de-jitter,
+// no self-loop removal, minimal simplification, and a small endpoint weld that
+// only fuses genuinely-coincident junctions (so roads drawn apart stay apart and
+// small roads are not snapped onto their neighbours). Used by the live tracer's
+// "Add to game" / Export-and-apply path. Explicit opts still override each field.
+export const FAITHFUL = { exact: true, simplify: 0.06, mergeMid: 0.12, merge: 0.5 };
+
 export async function applyTrace(t, opts = {}) {
+  if (opts.faithful) opts = { ...FAITHFUL, ...opts };
   const roadsIn = (t.roads || []).map(r => Array.isArray(r) ? { pts: r, oneway: false } : r).filter(r => r.pts.length >= 2);
   const bulldozeIn = (t.bulldoze || []).map(a => a.pts || a).filter(p => p.length >= 1);
   const mainlandIn = (t.mainland || t.coast || []).filter(p => p.length >= 3);
@@ -210,17 +218,24 @@ export async function applyTrace(t, opts = {}) {
     const seen = new Set(edges.map(e => (e[0] < e[1] ? e[0] + ':' + e[1] : e[1] + ':' + e[0])));
     const newEdges = [];
     const addEdge = (a, b, ow, dirt) => { if (a === b) return; const k = a < b ? a + ':' + b : b + ':' + a; if (seen.has(k)) return; seen.add(k); const e = [a, b, ow ? 1 : 0, 2, dirt ? 1 : 0]; edges.push(e); newEdges.push(e); };
+    // A road tagged `base:true` is the existing network re-exported by the tracer
+    // (one segment per edge). It must rebuild 1:1, so it welds only at BASE_WELD —
+    // below the network's node spacing — and is never simplified/de-jittered. That
+    // way a FULL-map export reproduces the existing roads exactly while freshly
+    // DRAWN roads still weld their junctions at the generous endpoint radius.
+    const BASE_WELD = 0.02;
     for (const road of roadsIn) {
       // simplify each stroke (keep corners/curves, drop oversampling), then weld it
       // into the shared graph: ENDPOINTS weld at MERGE (so junctions/T-junctions join),
       // INTERIOR points weld at the tiny MERGE_MID (so the curve keeps its shape and is
       // NOT snapped onto a coarse grid). No decimation, no smoothing — the road follows
       // the trace exactly. opts.exact skips the de-jitter pass so the line maps 1:1.
-      const simp = simplify(road.pts.map(toWorld), SIMP);
-      const kept = opts.exact ? simp : deSpike(simp, 150);   // drop near-reversal jitter spikes (unless exact)
-      let prev = nodeAt(kept[0], MRG);
+      const ew = road.base ? BASE_WELD : MRG, iw = road.base ? BASE_WELD : MMID;
+      const simp = simplify(road.pts.map(toWorld), road.base ? 0 : SIMP);
+      const kept = opts.exact || road.base ? simp : deSpike(simp, 150);   // drop near-reversal jitter spikes (unless exact/base)
+      let prev = nodeAt(kept[0], ew);
       for (let i = 1; i < kept.length; i++) {
-        const id = nodeAt(kept[i], i === kept.length - 1 ? MRG : MMID);
+        const id = nodeAt(kept[i], i === kept.length - 1 ? ew : iw);
         addEdge(prev, id, road.oneway, road.dirt); prev = id;
       }
     }

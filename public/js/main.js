@@ -8,6 +8,7 @@ import {
   polyArea, reclaimAreaCost, addReclaimArea,
 } from './engine.js';
 import { Scene3D } from './scene3d.js';
+import { refreshRoadsLive } from './roadsLive.js';
 import { api } from './api.js';
 import {
   updateHud, renderBuild, renderPolicy, renderDash, renderNews,
@@ -184,10 +185,14 @@ function showGameShell(playing = true) {
   }
 }
 
-function startNew() {
+async function startNew() {
   const name = $('m-nation').value.trim() || 'New Singapura';
   const owner = $('m-owner').value.trim() || 'Anonymous';
   localStorage.setItem(LS_NAME, owner);
+  // Pull the freshest base map before seeding, so a road edit saved via the tracer
+  // ("Save to map") shows up in this new game without needing a browser reload.
+  // First-ever game also builds Scene3D after this, so its mask/decor are fresh too.
+  await refreshRoadsLive();
   G.state = newGame({ name, owner });
   G.cloud = null;
   G.readOnly = false;

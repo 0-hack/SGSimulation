@@ -5,7 +5,7 @@ import {
   HISTORICAL_EVENTS, RANDOM_EVENTS, SANDBOX, FLEET_TIMELINE,
 } from './data.js';
 import { onLand, inReservoir, inRiver } from './shape.js';
-import { ROAD_NODES_1966, ROAD_EDGES_1966 } from './roads1966.js';
+import { ROADS_LIVE } from './roadsLive.js';
 
 // Is grid cell (x,y) on Singapore land (mainland or islands), not reservoir/river?
 function isLandCell(x, y) {
@@ -106,8 +106,8 @@ function cellWorld(x, y) {
 // the slim, no-stop-line rendering. Seeded only once.
 function injectTracedRoads(roads) {
   const base = roads.nodes.length;
-  for (const [x, z] of ROAD_NODES_1966) roads.nodes.push({ x, z, y: 0 });
-  for (const [a, b, ow, cls, dirt] of ROAD_EDGES_1966)
+  for (const [x, z] of ROADS_LIVE.nodes) roads.nodes.push({ x, z, y: 0 });
+  for (const [a, b, ow, cls, dirt] of ROADS_LIVE.edges)
     roads.edges.push({
       a: a + base, b: b + base, ctrl: null,
       type: 'road', lanes: ow ? 1 : 2, elevated: false,

@@ -8,7 +8,7 @@ import { BUILDINGS, GRID_SIZE, WORLD_SIZE, ROAD_TYPES, fleetEra } from './data.j
 import { smoothRoute } from './engine.js';
 import { SG_OUTLINE, SG_ISLANDS, SG_FOREIGN, SG_SANDS, SG_RESERVOIRS, pointInPolygon, landMask, inReservoir, reservoirArea, inRiver, reservoirBranches, riverBranches } from './shape.js';
 import { CUSTOM_HOUSES, CUSTOM_RAILWAYS, CUSTOM_SANDS, CUSTOM_LANDMARKS, SEED_1965 } from './custom1966.js';
-import { ROAD_NODES_1966, ROAD_EDGES_1966 } from './roads1966.js';
+import { ROADS_LIVE } from './roadsLive.js';
 
 // Build one part of a designed landmark (shared shape set with design.html).
 function makeLandmarkPart(p, toonMat) {
@@ -949,8 +949,8 @@ export class Scene3D {
         if (dc < dist[gy][gx]) { dist[gy][gx] = dc; dir[gy][gx] = ang; }
       }
     };
-    for (const e of (ROAD_EDGES_1966 || [])) {
-      const a = ROAD_NODES_1966[e[0]], b = ROAD_NODES_1966[e[1]]; if (!a || !b) continue;
+    for (const e of (ROADS_LIVE.edges || [])) {
+      const a = ROADS_LIVE.nodes[e[0]], b = ROADS_LIVE.nodes[e[1]]; if (!a || !b) continue;
       const ax = a[0], az = a[1], bx = b[0], bz = b[1];
       const ang = Math.atan2(bx - ax, bz - az);    // bearing so a block's local +Z runs ALONG the street
       const steps = Math.max(1, Math.ceil(Math.hypot(bx - ax, bz - az) / 1.5)); // fine sampling: mark every carriageway cell
@@ -1108,9 +1108,9 @@ export class Scene3D {
       count++;
       return true;
     };
-    for (const e of (ROAD_EDGES_1966 || [])) {
+    for (const e of (ROADS_LIVE.edges || [])) {
       if (count >= MAX) break;
-      const a = ROAD_NODES_1966[e[0]], b = ROAD_NODES_1966[e[1]]; if (!a || !b) continue;
+      const a = ROADS_LIVE.nodes[e[0]], b = ROADS_LIVE.nodes[e[1]]; if (!a || !b) continue;
       const ax = a[0], az = a[1], bx = b[0], bz = b[1];
       if (!inDistrict((ax + bx) / 2, (az + bz) / 2)) continue;
       const L = Math.hypot(bx - ax, bz - az); if (L < STEP) continue;

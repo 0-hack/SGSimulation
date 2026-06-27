@@ -21,6 +21,7 @@ COPY --from=build /app/node_modules ./node_modules
 COPY package.json ./
 COPY server ./server
 COPY public ./public
+COPY scripts ./scripts   # the tracer's "Save to map" endpoint imports scripts/apply_trace.mjs at runtime
 
 # Persisted SQLite database lives here; mount a volume to keep saves.
 RUN mkdir -p /app/data && chown -R node:node /app

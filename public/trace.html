@@ -120,6 +120,9 @@ const blank = () => ({ roads: [], bulldoze: [], mainland: [], reservoirs: [], ra
 let data = blank();
 // What's ALREADY in the game, per layer (read-only reference shown under "show").
 let game = { roads: [], mainland: [], reservoirs: [], railway: [], sands: [], airport: [] };
+// Marks an existing-feature layer whose overlay was edited by Erase, so the next
+// Save rewrites that layer (with the survivors) even if nothing new was drawn in it.
+let overlayDirty = {};
 let active = 'roads', roadType = 'road', freehand = true, mode = 'draw';   // roadType: road | single | dirt
 let vis = {}; KEYS.forEach(k => vis[k] = true); vis.guide = true;
 let opacity = 0.55, brush = 16, bType = 'terminal', bRot = 0, bHgt = 1.0;
@@ -302,6 +305,7 @@ function loadGameData() {
       // SG_SANDS beaches stay untouched), so keep them apart for the save union below.
       _sandsCustom: (cu.CUSTOM_SANDS || []).filter((p) => p && p.length >= 3),
     };
+    overlayDirty = {}; // fresh overlay — drop any pending erase flags
     draw(); updateStat();
   }).catch(() => {
     // fallback: the read-only endpoint
@@ -415,6 +419,19 @@ function eraseFromLine(pts, c, r) {
   }
   flush(); return res;
 }
+function pointInPoly(pt, poly) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const xi = poly[i][0], yi = poly[i][1], xj = poly[j][0], yj = poly[j][1];
+    if (((yi > pt[1]) !== (yj > pt[1])) && (pt[0] < (xj - xi) * (pt[1] - yi) / (yj - yi) + xi)) inside = !inside;
+  }
+  return inside;
+}
+// Does the erase brush touch this feature? (near any vertex, or inside a closed one)
+function brushHitsPoly(poly, gp, radG, closed) {
+  for (const v of poly) if (Math.hypot(v[0] - gp[0], v[1] - gp[1]) <= radG) return true;
+  return closed && pointInPoly(gp, poly);
+}
 // Erase anything within the brush radius, across every VISIBLE layer (hide a
 // layer to protect it). Lines are split where they cross the brush; buildings/
 // houses are removed when the brush touches their footprint.
@@ -437,6 +454,19 @@ function eraseAt(p) {
       for (const seg of segs) { seg.oneway = pts.oneway; seg.dirt = pts.dirt; out.push(seg); } } // keep the road type (eraseFromLine makes bare arrays)
     game.roads = out;
     if (cut) data.bulldoze.push({ pts: [[gp[0], gp[1]]] });
+  }
+  // Deleting EXISTING coast/reservoir/sands/railway: scrub over them while the layer
+  // is visible. Removes the whole feature the brush touches (you don't partially
+  // erase a lake) and flags the layer so the Save rewrites it without that feature.
+  // The single largest Coast loop (the mainland) is protected so a stray scrub can't
+  // wipe the whole island. Sands removal targets the editable CUSTOM_SANDS.
+  for (const k of ['mainland', 'reservoirs', 'railway', 'sands']) {
+    if (!vis[k] || !game[k] || !game[k].length) continue;
+    const mainIdx = k === 'mainland' ? game[k].indexOf(game[k].reduce((a, b) => (b.length > a.length ? b : a))) : -1;
+    const closed = !!LAYERS[k].closed;
+    let cut = false;
+    game[k] = game[k].filter((poly, i) => { if (i !== mainIdx && brushHitsPoly(poly, gp, radG, closed)) { cut = true; return false; } return true; });
+    if (cut) { overlayDirty[k] = true; if (k === 'sands') game._sandsCustom = (game._sandsCustom || []).filter((poly) => !brushHitsPoly(poly, gp, radG, closed)); }
   }
   sel = null; resumable = null; draw(); updateStat();
 }
@@ -497,7 +527,8 @@ function fullTrace() {
   const t = { version: 3, bg, roads: allMapRoads(), bulldoze: [], full: true };
   const existing = { mainland: game.mainland, reservoirs: game.reservoirs, railway: game.railway, sands: game._sandsCustom, airport: game.airport };
   for (const k of ['mainland', 'reservoirs', 'railway', 'sands', 'airport']) {
-    if (data[k] && data[k].length) t[k] = [...(existing[k] || []), ...data[k]];
+    // include a layer you DREW in, or one you ERASED a feature from (overlayDirty)
+    if ((data[k] && data[k].length) || overlayDirty[k]) t[k] = [...(existing[k] || []), ...(data[k] || [])];
   }
   return t;
 }
@@ -531,7 +562,7 @@ $('applygame').onclick = async () => {
     if (!j.ok) throw new Error('Server: ' + (j.error || 'apply failed'));
     // The drawn roads + erasures are now IN the game; clear the working layer so the
     // blue lines don't double up over the refreshed overlay (undo restores them).
-    if (KEYS.some((k) => data[k].length) || data.bulldoze.length) { snapshot(); data = blank(); }
+    if (KEYS.some((k) => data[k].length) || data.bulldoze.length || Object.keys(overlayDirty).length) { snapshot(); data = blank(); overlayDirty = {}; }
     loadGameData(); // pull the just-written network back as the overlay
     toast('Saved to map: ' + (j.did.join(' · ') || 'no changes') + ' — refresh the game to see it');
   } catch (e) { toast(e.message, true); }

@@ -1255,8 +1255,17 @@ export class Scene3D {
   _buildSands(list) {
     if (this.sandGroup) this.scene.remove(this.sandGroup);
     const g = new THREE.Group(); this.scene.add(g); this.sandGroup = g;
-    const W2 = (p) => new THREE.Vector3((p[0] - 0.5) * WORLD, 0, (0.5 - p[1]) * WORLD);
-    for (const poly of (list || [])) { if (poly.length < 2) continue; this._addRibbon(g, poly.map(W2), 7, 0xeadbab, 0.05); }
+    // Fill the traced polygon as a flat sand patch (same as the baked SG_SANDS
+    // foreshore) so a sand area covers exactly what was drawn — NOT a fixed-width
+    // ribbon, which made a thin stroke balloon into a wide band.
+    const mat = new THREE.MeshToonMaterial({ color: 0xeadbab, gradientMap: toonGradient() });
+    for (const poly of (list || [])) {
+      if (poly.length < 3) continue;
+      const shape = new THREE.Shape();
+      poly.forEach(([nx, ny], i) => { const x = (nx - 0.5) * WORLD, y = (ny - 0.5) * WORLD; i ? shape.lineTo(x, y) : shape.moveTo(x, y); });
+      const geo = new THREE.ShapeGeometry(shape); geo.rotateX(-Math.PI / 2);
+      const m = new THREE.Mesh(geo, mat); m.position.y = 0.055; m.receiveShadow = true; g.add(m);
+    }
   }
 
   // Railway lines: a ballast strip with two steel rails and timber sleepers.

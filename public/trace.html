@@ -298,6 +298,9 @@ function loadGameData() {
       railway: cu.CUSTOM_RAILWAYS || [],
       sands: [...(sh.SG_SANDS || []), ...(cu.CUSTOM_SANDS || [])].filter((p) => p && p.length >= 3),
       airport: [],
+      // The sands the tracer can WRITE BACK live only in CUSTOM_SANDS (the map-baked
+      // SG_SANDS beaches stay untouched), so keep them apart for the save union below.
+      _sandsCustom: (cu.CUSTOM_SANDS || []).filter((p) => p && p.length >= 3),
     };
     draw(); updateStat();
   }).catch(() => {
@@ -483,7 +486,21 @@ function allMapRoads() {
   const drawn = (data.roads || []).map(r => ({ pts: (r.pts || r).map(p => [p[0], p[1]]), oneway: !!r.oneway, dirt: !!r.dirt, base: !!r.base }));
   return [...fromGame, ...drawn];
 }
-const fullTrace = () => ({ version: 3, bg, ...data, roads: allMapRoads(), bulldoze: [], full: true });
+// A complete map snapshot for Export / Save-to-map. Roads = existing + drawn
+// (allMapRoads). The other features (coast, reservoir, railway, sands, airport)
+// are each REPLACED wholesale on apply, so a layer you traced must also carry the
+// EXISTING features — otherwise saving one new reservoir would wipe all the others.
+// A layer you didn't draw in is omitted entirely, leaving it untouched. Sands
+// writes back only to CUSTOM_SANDS, so it unions with that (the baked SG_SANDS
+// beaches stay put), not the full sands overlay.
+function fullTrace() {
+  const t = { version: 3, bg, roads: allMapRoads(), bulldoze: [], full: true };
+  const existing = { mainland: game.mainland, reservoirs: game.reservoirs, railway: game.railway, sands: game._sandsCustom, airport: game.airport };
+  for (const k of ['mainland', 'reservoirs', 'railway', 'sands', 'airport']) {
+    if (data[k] && data[k].length) t[k] = [...(existing[k] || []), ...data[k]];
+  }
+  return t;
+}
 $('export').onclick = () => { finishCur();
   const blob = new Blob([JSON.stringify(fullTrace())], { type: 'application/json' });
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'sg1966-trace.json'; a.click(); draw(); updateStat();
@@ -514,7 +531,7 @@ $('applygame').onclick = async () => {
     if (!j.ok) throw new Error('Server: ' + (j.error || 'apply failed'));
     // The drawn roads + erasures are now IN the game; clear the working layer so the
     // blue lines don't double up over the refreshed overlay (undo restores them).
-    if (data.roads.length || data.bulldoze.length) { snapshot(); data.roads = []; data.bulldoze = []; }
+    if (KEYS.some((k) => data[k].length) || data.bulldoze.length) { snapshot(); data = blank(); }
     loadGameData(); // pull the just-written network back as the overlay
     toast('Saved to map: ' + (j.did.join(' · ') || 'no changes') + ' — refresh the game to see it');
   } catch (e) { toast(e.message, true); }

@@ -192,10 +192,27 @@ export class Scene3D {
 
   // ---- setup ----------------------------------------------------------------
   _initRenderer() {
+    // Cross-browser WebGL setup. three.js always asks getContext() for ONE fixed
+    // attribute set (alpha:true, antialias, etc.); Safari/iOS can reject that exact
+    // combo and three then throws "...with your selected attributes", which used to
+    // read to the player as "WebGL not supported". So create the context OURSELVES —
+    // trying WebGL2 then WebGL1, preferred attrs then a bare context — and hand the
+    // first one that works to three. This makes it run wherever WebGL exists at all.
+    const tryCtx = (attrs) => {
+      for (const name of ['webgl2', 'webgl', 'experimental-webgl']) {
+        try { const c = this.canvas.getContext(name, attrs); if (c) return c; } catch (e) { /* try next */ }
+      }
+      return null;
+    };
+    const gl = tryCtx({ alpha: false, antialias: true, depth: true, stencil: false, powerPreference: 'default', failIfMajorPerformanceCaveat: false })
+            || tryCtx({ alpha: false, antialias: false })
+            || tryCtx(undefined);
     try {
-      this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: true });
+      this.renderer = gl
+        ? new THREE.WebGLRenderer({ canvas: this.canvas, context: gl })
+        : new THREE.WebGLRenderer({ canvas: this.canvas, antialias: true, failIfMajorPerformanceCaveat: false });
     } catch (err) {
-      throw new Error('WebGL is required to render the 3D city: ' + err.message);
+      throw new Error('Could not start WebGL in this browser. In Safari, make sure WebGL is enabled and Lockdown Mode is off (Safari 15+ recommended). Details: ' + err.message);
     }
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     this.renderer.shadowMap.enabled = true;

@@ -165,6 +165,41 @@ function showMenu() {
   if (localStorage.getItem(LS_SAVE)) $('btn-continue').classList.remove('hidden');
 }
 
+// Probe each WebGL flavour on a FRESH canvas (a canvas locks to one context type
+// once created) and report the GPU when available — so a failure tells us whether
+// WebGL is genuinely unavailable vs. some other init error.
+function webglProbe() {
+  const lines = [];
+  for (const n of ['webgl2', 'webgl', 'experimental-webgl']) {
+    const c = document.createElement('canvas'); let s = 'null', e = '';
+    try {
+      const g = c.getContext(n);
+      if (g) { s = 'OK'; try { const d = g.getExtension('WEBGL_debug_renderer_info'); s = 'OK — ' + (d ? g.getParameter(d.UNMASKED_RENDERER_WEBGL) : g.getParameter(g.RENDERER)); } catch (_) {} }
+    } catch (ex) { e = ex.message; }
+    lines.push(n + ': ' + s + (e ? ' (' + e + ')' : ''));
+  }
+  return lines.join('\n');
+}
+// Show the 3D-init failure ON the page (copyable/screenshot-able) with a WebGL
+// probe and Safari guidance, instead of a dead-end "needs WebGL" alert.
+function reportSceneError(err) {
+  const diag = webglProbe();
+  try { console.error('3D init failed:', err); console.error('WebGL probe:\n' + diag); } catch (_) {}
+  const off = /null/.test(diag.split('\n')[0]) && /null/.test(diag);
+  let box = document.getElementById('gl-error');
+  if (!box) { box = document.createElement('div'); box.id = 'gl-error'; document.body.appendChild(box); }
+  box.style.cssText = 'position:fixed;left:12px;right:12px;bottom:12px;max-height:64vh;overflow:auto;z-index:99999;background:#241015;color:#ffe;border:1px solid #c2566b;border-radius:10px;padding:14px 16px;font:12px/1.55 ui-monospace,Menlo,monospace;white-space:pre-wrap';
+  box.textContent =
+    'The 3D view could not start.\n\n' +
+    'Error: ' + ((err && err.message) || err) + '\n\n' +
+    'WebGL on this browser:\n' + diag + '\n\n' +
+    (off
+      ? 'WebGL appears DISABLED here. In Safari: Settings ▸ Advanced ▸ "Show features for web developers", then Develop ▸ Feature Flags — make sure WebGL/WebGL 2.0 is ON; turn OFF Lockdown Mode for this site; use Safari 15+. On iPhone/iPad use Safari (not an in-app browser). Then reload.'
+      : 'WebGL is available, so this is a different init error — please screenshot this whole box and send it.') +
+    '\n\n(tap to dismiss)';
+  box.onclick = () => box.remove();
+}
+
 function showGameShell(playing = true) {
   $('menu').classList.add('hidden');
   $('game').classList.remove('hidden');
@@ -174,7 +209,7 @@ function showGameShell(playing = true) {
       G.view = new Scene3D($('city'), { onTileTap: onTileTap, onGroundTap: onGroundTap });
       window.__sgview = G.view; // exposed for debugging / disaster FX hooks
     } catch (err) {
-      alert('This game needs a browser with WebGL/3D support.\n\n' + err.message);
+      reportSceneError(err);
       showMenu();
       return;
     }

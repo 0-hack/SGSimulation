@@ -140,6 +140,14 @@ function boot() {
   const m = location.pathname.match(/^\/world\/([\w-]+)/);
   if (m) { showGameShell(false); visitWorld(m[1]); }
 
+  // Record the base-map signature; and if a New Game reloaded the page to pick up
+  // a coast/reservoir/sands edit, resume that New Game now that the scene is fresh.
+  fetchMapSig().then((s) => {
+    mapSig = s;
+    let pending = null; try { pending = sessionStorage.getItem('sg-newgame'); sessionStorage.removeItem('sg-newgame'); } catch {}
+    if (pending) { try { const p = JSON.parse(pending); if (p.name) $('m-nation').value = p.name; if (p.owner) $('m-owner').value = p.owner; } catch {} startNew(); }
+  });
+
   requestAnimationFrame(loop);
 }
 
@@ -185,6 +193,12 @@ function showGameShell(playing = true) {
   }
 }
 
+// Signature of the non-road base map (coast/reservoir/sands/railway) at the time
+// the page loaded. New Game compares against the live one to know whether those
+// features were edited (tracer "Save to map") and the 3D scene needs rebuilding.
+let mapSig = null;
+async function fetchMapSig() { try { const r = await fetch('/api/trace/mapsig'); return (await r.json()).sig || ''; } catch { return ''; } }
+
 async function startNew() {
   const name = $('m-nation').value.trim() || 'New Singapura';
   const owner = $('m-owner').value.trim() || 'Anonymous';
@@ -193,6 +207,14 @@ async function startNew() {
   // ("Save to map") shows up in this new game without needing a browser reload.
   // First-ever game also builds Scene3D after this, so its mask/decor are fresh too.
   await refreshRoadsLive();
+  // Roads refresh live above, but coast/reservoir/sands/railway are baked into the
+  // 3D scene once at creation. If they were edited since load, reload the page to
+  // rebuild the scene cleanly, resuming this New Game right after (see boot()).
+  const sig = await fetchMapSig();
+  if (mapSig !== null && sig && sig !== mapSig) {
+    try { sessionStorage.setItem('sg-newgame', JSON.stringify({ name, owner })); } catch {}
+    location.reload(); return;
+  }
   G.state = newGame({ name, owner });
   G.cloud = null;
   G.readOnly = false;

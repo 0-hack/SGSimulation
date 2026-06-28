@@ -117,6 +117,20 @@ app.get('/api/trace/current', async (_req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// A signature of the NON-road base map (coast, reservoir, sands, railway). The 3D
+// scene builds these once at creation, so the game uses it to detect a base-map
+// edit (tracer "Save to map") on New Game and reload to rebuild — roads refresh
+// without a reload, so they're deliberately excluded here. Read-only, always on.
+app.get('/api/trace/mapsig', async (_req, res) => {
+  try {
+    const u = '?u=' + Date.now();
+    const sh = await import('../public/js/shape.js' + u);
+    const cu = await import('../public/js/custom1966.js' + u);
+    const rd = await import('../public/js/roads1966.js' + u);
+    res.json({ sig: hash(JSON.stringify([sh.SG_OUTLINE, sh.SG_ISLANDS, sh.SG_SANDS, cu.CUSTOM_SANDS, cu.CUSTOM_RAILWAYS, rd.RESERVOIRS_1966])) });
+  } catch (e) { res.json({ sig: '' }); }
+});
+
 // NOTE: 3D-designed landmarks are now PER-PLAYER (stored in the player's browser
 // and inside their saved game) — see public/js/landmarks.js. No server write is
 // involved, so there's nothing to gate and nothing shared between players.

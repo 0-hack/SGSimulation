@@ -185,7 +185,7 @@ function webglProbe() {
 function reportSceneError(err) {
   const diag = webglProbe();
   try { console.error('3D init failed:', err); console.error('WebGL probe:\n' + diag); } catch (_) {}
-  const off = /null/.test(diag.split('\n')[0]) && /null/.test(diag);
+  const off = !/OK/.test(diag); // no WebGL flavour succeeded at all
   let box = document.getElementById('gl-error');
   if (!box) { box = document.createElement('div'); box.id = 'gl-error'; document.body.appendChild(box); }
   box.style.cssText = 'position:fixed;left:12px;right:12px;bottom:12px;max-height:64vh;overflow:auto;z-index:99999;background:#241015;color:#ffe;border:1px solid #c2566b;border-radius:10px;padding:14px 16px;font:12px/1.55 ui-monospace,Menlo,monospace;white-space:pre-wrap';

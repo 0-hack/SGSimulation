@@ -294,7 +294,7 @@ export async function applyTrace(t, opts = {}) {
   }
 
   let reservoirs = cur.RESERVOIRS_1966;
-  if (reservoirsIn.length) { reservoirs = chainLoops(reservoirsIn).map(p => decimateN(p, 0.0015)).filter(p => p.length >= 3); did.push(`reservoirs -> ${reservoirs.length} traced`); }
+  if (reservoirsIn.length) { reservoirs = chainLoops(reservoirsIn, 0.05).map(p => decimateN(p, 0.0015)).filter(p => p.length >= 3); did.push(`reservoirs -> ${reservoirs.length} traced`); }
 
   if (roadsIn.length || reservoirsIn.length || (opts.mergeRoads && bulldozeIn.length)) {
     const body = `// 1966 Singapore road network + reservoirs. NODES: [x,z] world.
@@ -319,7 +319,7 @@ export const RESERVOIRS_1966 = ${JSON.stringify(reservoirs)};
       // small detailed island never usurps the mainland.
       const polyArea = (p) => { let a = 0; for (let i = 0, j = p.length - 1; i < p.length; j = i++) a += (p[j][0] + p[i][0]) * (p[j][1] - p[i][1]); return Math.abs(a) / 2; };
       // stitch edited-coast arcs back into loops, then the largest by AREA is the mainland
-      const loops = chainLoops(mainlandIn).map(p => decimateN(p, 0.0015)).filter(p => p.length >= 3).sort((a, b) => polyArea(b) - polyArea(a));
+      const loops = chainLoops(mainlandIn, 0.12).map(p => decimateN(p, 0.0015)).filter(p => p.length >= 3).sort((a, b) => polyArea(b) - polyArea(a));
       s = replExport(s, 'SG_OUTLINE', '[' + loops[0].map(([x, y]) => `[${x}, ${y}]`).join(', ') + ']');
       did.push(`coast -> SG_OUTLINE (${loops[0].length} pts)`);
       const isles = loops.slice(1).concat(islandsIn.map(p => decimateN(p, 0.0015)));
@@ -353,7 +353,7 @@ export const RESERVOIRS_1966 = ${JSON.stringify(reservoirs)};
     const polyN = p => '[' + decimateN(p, 0.003).map(([x, y]) => `[${x},${y}]`).join(',') + ']';
     if (housesIn.length) { const hstr = housesIn.map(b => `{ type: '${b.type}', cx: ${r3(b.cx)}, cy: ${r3(b.cy)}, w: ${r4(b.w)}, h: ${r4(b.h)}, rot: ${r3((b.rot || 0) * Math.PI / 180)}, hgt: ${r2(b.hgt || 1)} }`).join(', '); replC('CUSTOM_HOUSES', `[${hstr}]`); did.push(`houses -> ${housesIn.length}`); }
     if (railwayIn.length) { replC('CUSTOM_RAILWAYS', '[' + railwayIn.map(polyN).join(', ') + ']'); did.push(`railway -> ${railwayIn.length}`); }
-    if (sandsIn.length) { const sandLoops = chainLoops(sandsIn).filter(p => p.length >= 3); replC('CUSTOM_SANDS', '[' + sandLoops.map(polyN).join(', ') + ']'); did.push(`sands -> ${sandLoops.length}`); }
+    if (sandsIn.length) { const sandLoops = chainLoops(sandsIn, 0.05).filter(p => p.length >= 3); replC('CUSTOM_SANDS', '[' + sandLoops.map(polyN).join(', ') + ']'); did.push(`sands -> ${sandLoops.length}`); }
     writeFileSync(customURL, cs);
   }
   return did;

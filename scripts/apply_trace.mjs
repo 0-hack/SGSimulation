@@ -190,7 +190,7 @@ export async function applyTrace(t, opts = {}) {
   const bulldozeIn = (t.bulldoze || []).map(a => a.pts || a).filter(p => p.length >= 1);
   const mainlandIn = (t.mainland || t.coast || []).filter(p => p.length >= 2); // >=2: edited-coast arcs are stitched into loops below
   const islandsIn = (t.islands || []).filter(p => p.length >= 3);
-  const reservoirsIn = (t.reservoirs || t.resv || []).filter(p => p.length >= 3);
+  const reservoirsIn = (t.reservoirs || t.resv || []).filter(p => p.length >= 2); // >=2: edited-lake arcs stitched below
   const foreignIn = (t.foreign || []).filter(p => p.length >= 3);
   const airportIn = (t.airport || []).map(a => a.pts || a).filter(p => p.length >= 2);
   const buildingsIn = (t.buildings || []).filter(b => b && b.type && b.w > 0 && b.h > 0);
@@ -294,7 +294,7 @@ export async function applyTrace(t, opts = {}) {
   }
 
   let reservoirs = cur.RESERVOIRS_1966;
-  if (reservoirsIn.length) { reservoirs = reservoirsIn.map(p => decimateN(p, 0.0015)); did.push(`reservoirs -> ${reservoirs.length} traced`); }
+  if (reservoirsIn.length) { reservoirs = chainLoops(reservoirsIn).map(p => decimateN(p, 0.0015)).filter(p => p.length >= 3); did.push(`reservoirs -> ${reservoirs.length} traced`); }
 
   if (roadsIn.length || reservoirsIn.length || (opts.mergeRoads && bulldozeIn.length)) {
     const body = `// 1966 Singapore road network + reservoirs. NODES: [x,z] world.
@@ -353,7 +353,7 @@ export const RESERVOIRS_1966 = ${JSON.stringify(reservoirs)};
     const polyN = p => '[' + decimateN(p, 0.003).map(([x, y]) => `[${x},${y}]`).join(',') + ']';
     if (housesIn.length) { const hstr = housesIn.map(b => `{ type: '${b.type}', cx: ${r3(b.cx)}, cy: ${r3(b.cy)}, w: ${r4(b.w)}, h: ${r4(b.h)}, rot: ${r3((b.rot || 0) * Math.PI / 180)}, hgt: ${r2(b.hgt || 1)} }`).join(', '); replC('CUSTOM_HOUSES', `[${hstr}]`); did.push(`houses -> ${housesIn.length}`); }
     if (railwayIn.length) { replC('CUSTOM_RAILWAYS', '[' + railwayIn.map(polyN).join(', ') + ']'); did.push(`railway -> ${railwayIn.length}`); }
-    if (sandsIn.length) { replC('CUSTOM_SANDS', '[' + sandsIn.map(polyN).join(', ') + ']'); did.push(`sands -> ${sandsIn.length}`); }
+    if (sandsIn.length) { const sandLoops = chainLoops(sandsIn).filter(p => p.length >= 3); replC('CUSTOM_SANDS', '[' + sandLoops.map(polyN).join(', ') + ']'); did.push(`sands -> ${sandLoops.length}`); }
     writeFileSync(customURL, cs);
   }
   return did;

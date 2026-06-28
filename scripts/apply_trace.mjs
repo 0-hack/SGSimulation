@@ -286,7 +286,11 @@ export const RESERVOIRS_1966 = ${JSON.stringify(reservoirs)};
     const arr = polys => '[' + polys.map(p => '[' + p.map(([x, y]) => `[${x}, ${y}]`).join(', ') + ']').join(',\n  ') + ']';
     const replExport = (txt, name, value) => { const re = new RegExp(`export const ${name} = \\[[\\s\\S]*?\\];`); if (!re.test(txt)) throw new Error(`could not find export ${name} in shape.js`); return txt.replace(re, () => `export const ${name} = ${value};`); };
     if (mainlandIn.length) {
-      const loops = mainlandIn.map(p => decimateN(p, 0.0015)).sort((a, b) => b.length - a.length);
+      // The mainland is the loop with the largest AREA (not the most points), so a
+      // re-traced coastline becomes the island even if drawn with few points, and a
+      // small detailed island never usurps the mainland.
+      const polyArea = (p) => { let a = 0; for (let i = 0, j = p.length - 1; i < p.length; j = i++) a += (p[j][0] + p[i][0]) * (p[j][1] - p[i][1]); return Math.abs(a) / 2; };
+      const loops = mainlandIn.map(p => decimateN(p, 0.0015)).sort((a, b) => polyArea(b) - polyArea(a));
       s = replExport(s, 'SG_OUTLINE', '[' + loops[0].map(([x, y]) => `[${x}, ${y}]`).join(', ') + ']');
       did.push(`coast -> SG_OUTLINE (${loops[0].length} pts)`);
       const isles = loops.slice(1).concat(islandsIn.map(p => decimateN(p, 0.0015)));

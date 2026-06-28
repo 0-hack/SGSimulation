@@ -462,11 +462,15 @@ function eraseAt(p) {
   // wipe the whole island. Sands removal targets the editable CUSTOM_SANDS.
   for (const k of ['mainland', 'reservoirs', 'railway', 'sands']) {
     if (!vis[k] || !game[k] || !game[k].length) continue;
-    const mainIdx = k === 'mainland' ? game[k].indexOf(game[k].reduce((a, b) => (b.length > a.length ? b : a))) : -1;
-    const closed = !!LAYERS[k].closed;
+    // The mainland is one huge loop; treat ONLY its edge as a hit (vertex-near) so an
+    // interior scrub can't wipe the whole island, but brushing the coastline removes
+    // the outline so you can re-trace a new one. Smaller closed features (islands,
+    // reservoirs) also count when the brush is inside them.
+    const mainPoly = k === 'mainland' ? game[k].reduce((a, b) => (b.length > a.length ? b : a)) : null;
+    const hit = (poly) => brushHitsPoly(poly, gp, radG, !!LAYERS[k].closed && poly !== mainPoly);
     let cut = false;
-    game[k] = game[k].filter((poly, i) => { if (i !== mainIdx && brushHitsPoly(poly, gp, radG, closed)) { cut = true; return false; } return true; });
-    if (cut) { overlayDirty[k] = true; if (k === 'sands') game._sandsCustom = (game._sandsCustom || []).filter((poly) => !brushHitsPoly(poly, gp, radG, closed)); }
+    game[k] = game[k].filter((poly) => { if (hit(poly)) { cut = true; return false; } return true; });
+    if (cut) { overlayDirty[k] = true; if (k === 'sands') game._sandsCustom = (game._sandsCustom || []).filter((poly) => !hit(poly)); }
   }
   sel = null; resumable = null; draw(); updateStat();
 }

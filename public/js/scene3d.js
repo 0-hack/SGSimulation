@@ -192,20 +192,30 @@ export class Scene3D {
 
   // ---- setup ----------------------------------------------------------------
   _initRenderer() {
-    // Cross-browser WebGL setup. three.js always asks getContext() for ONE fixed
-    // attribute set (alpha:true, antialias, etc.); Safari/iOS can reject that exact
-    // combo and three then throws "...with your selected attributes", which used to
-    // read to the player as "WebGL not supported". So create the context OURSELVES —
-    // trying WebGL2 then WebGL1, preferred attrs then a bare context — and hand the
-    // first one that works to three. This makes it run wherever WebGL exists at all.
+    // Safari/iOS quirk: a WebGL context's getContextAttributes() can return null,
+    // and three.js then does `gl.getContextAttributes().alpha` and throws "null is
+    // not an object" — which looked like "WebGL not supported" even though WebGL
+    // works fine. Patch it on the prototype to never return null.
+    const FALLBACK_ATTRS = { alpha: true, depth: true, stencil: false, antialias: true, premultipliedAlpha: true, preserveDrawingBuffer: false, powerPreference: 'default', failIfMajorPerformanceCaveat: false, desynchronized: false, xrCompatible: false };
+    for (const Ctor of [typeof WebGL2RenderingContext !== 'undefined' ? WebGL2RenderingContext : null,
+                        typeof WebGLRenderingContext !== 'undefined' ? WebGLRenderingContext : null]) {
+      const proto = Ctor && Ctor.prototype;
+      if (proto && proto.getContextAttributes && !proto.__gcaPatched) {
+        const orig = proto.getContextAttributes;
+        proto.getContextAttributes = function () { return orig.call(this) || FALLBACK_ATTRS; };
+        proto.__gcaPatched = true;
+      }
+    }
+    // Also create the context ourselves (WebGL2 then WebGL1, forgiving attrs, then a
+    // bare context) and hand it to three, so one rejected attribute combo can't fail.
     const tryCtx = (attrs) => {
       for (const name of ['webgl2', 'webgl', 'experimental-webgl']) {
         try { const c = this.canvas.getContext(name, attrs); if (c) return c; } catch (e) { /* try next */ }
       }
       return null;
     };
-    const gl = tryCtx({ alpha: false, antialias: true, depth: true, stencil: false, powerPreference: 'default', failIfMajorPerformanceCaveat: false })
-            || tryCtx({ alpha: false, antialias: false })
+    const gl = tryCtx({ alpha: true, antialias: true, depth: true, stencil: false, powerPreference: 'default', failIfMajorPerformanceCaveat: false })
+            || tryCtx({ alpha: true, antialias: false })
             || tryCtx(undefined);
     try {
       this.renderer = gl

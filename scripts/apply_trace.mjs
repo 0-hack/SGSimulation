@@ -78,6 +78,34 @@ function deSpike(pts, maxTurn = 150) {
   }
   return pts;
 }
+// Stitch open polyline pieces back into closed loops by joining nearest endpoints —
+// used when an edited coastline arrives as arcs (the un-erased spans) plus the newly
+// drawn replacement span. Already-closed loops (islands) pass straight through.
+function chainLoops(polys, tol = 0.06) {
+  const closedLoop = (p) => p.length >= 3 && dist(p[0], p[p.length - 1]) < 0.01;
+  const closed = [], open = [];
+  for (const p of polys) (closedLoop(p) ? closed : open).push(p.slice());
+  const used = new Array(open.length).fill(false), loops = [...closed];
+  for (let i = 0; i < open.length; i++) {
+    if (used[i]) continue;
+    let chain = open[i].slice(); used[i] = true;
+    for (let guard = 0; guard <= open.length; guard++) {
+      const end = chain[chain.length - 1];
+      let best = -1, bestD = tol, rev = false;
+      for (let j = 0; j < open.length; j++) {
+        if (used[j]) continue;
+        const ds = dist(end, open[j][0]), de = dist(end, open[j][open[j].length - 1]);
+        if (ds < bestD) { bestD = ds; best = j; rev = false; }
+        if (de < bestD) { bestD = de; best = j; rev = true; }
+      }
+      if (best < 0) break;
+      const seg = rev ? open[best].slice().reverse() : open[best];
+      chain.push(...seg.slice(1)); used[best] = true;
+    }
+    loops.push(chain);
+  }
+  return loops;
+}
 function decimateN(pts, minD) {
   if (pts.length < 3) return pts.map(([x, y]) => [r3(x), r3(y)]);
   const out = [pts[0]]; let last = pts[0];
@@ -160,7 +188,7 @@ export async function applyTrace(t, opts = {}) {
   if (opts.faithful) opts = { ...FAITHFUL, ...opts };
   const roadsIn = (t.roads || []).map(r => Array.isArray(r) ? { pts: r, oneway: false } : r).filter(r => r.pts.length >= 2);
   const bulldozeIn = (t.bulldoze || []).map(a => a.pts || a).filter(p => p.length >= 1);
-  const mainlandIn = (t.mainland || t.coast || []).filter(p => p.length >= 3);
+  const mainlandIn = (t.mainland || t.coast || []).filter(p => p.length >= 2); // >=2: edited-coast arcs are stitched into loops below
   const islandsIn = (t.islands || []).filter(p => p.length >= 3);
   const reservoirsIn = (t.reservoirs || t.resv || []).filter(p => p.length >= 3);
   const foreignIn = (t.foreign || []).filter(p => p.length >= 3);
@@ -290,7 +318,8 @@ export const RESERVOIRS_1966 = ${JSON.stringify(reservoirs)};
       // re-traced coastline becomes the island even if drawn with few points, and a
       // small detailed island never usurps the mainland.
       const polyArea = (p) => { let a = 0; for (let i = 0, j = p.length - 1; i < p.length; j = i++) a += (p[j][0] + p[i][0]) * (p[j][1] - p[i][1]); return Math.abs(a) / 2; };
-      const loops = mainlandIn.map(p => decimateN(p, 0.0015)).sort((a, b) => polyArea(b) - polyArea(a));
+      // stitch edited-coast arcs back into loops, then the largest by AREA is the mainland
+      const loops = chainLoops(mainlandIn).map(p => decimateN(p, 0.0015)).filter(p => p.length >= 3).sort((a, b) => polyArea(b) - polyArea(a));
       s = replExport(s, 'SG_OUTLINE', '[' + loops[0].map(([x, y]) => `[${x}, ${y}]`).join(', ') + ']');
       did.push(`coast -> SG_OUTLINE (${loops[0].length} pts)`);
       const isles = loops.slice(1).concat(islandsIn.map(p => decimateN(p, 0.0015)));

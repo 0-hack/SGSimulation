@@ -214,7 +214,7 @@ function draw() {
     if (!vis[k] || !game[k] || !game[k].length) continue;
     if (k === 'roads') { for (const p of game.roads) { const st = roadStyle(p, true); ctx.strokeStyle = st.c; ctx.lineWidth = st.w; strokePoly(p, false); } continue; }
     ctx.strokeStyle = LAYERS[k].c; ctx.lineWidth = k === 'mainland' ? 2.4 : 2;
-    for (const p of game[k]) strokePoly(p, !!LAYERS[k].closed);
+    for (const p of game[k]) strokePoly(p, !!LAYERS[k].closed && isClosedPoly(p)); // erased coast arcs draw OPEN
   }
   ctx.globalAlpha = 1;
   for (const k of ['sands', 'reservoirs', 'mainland', 'railway', 'airport', 'roads']) {
@@ -432,6 +432,7 @@ function brushHitsPoly(poly, gp, radG, closed) {
   for (const v of poly) if (Math.hypot(v[0] - gp[0], v[1] - gp[1]) <= radG) return true;
   return closed && pointInPoly(gp, poly);
 }
+const isClosedPoly = (p) => p.length > 2 && Math.hypot(p[0][0] - p[p.length - 1][0], p[0][1] - p[p.length - 1][1]) < 0.008;
 // Erase anything within the brush radius, across every VISIBLE layer (hide a
 // layer to protect it). Lines are split where they cross the brush; buildings/
 // houses are removed when the brush touches their footprint.
@@ -462,12 +463,19 @@ function eraseAt(p) {
   // wipe the whole island. Sands removal targets the editable CUSTOM_SANDS.
   for (const k of ['mainland', 'reservoirs', 'railway', 'sands']) {
     if (!vis[k] || !game[k] || !game[k].length) continue;
-    // The mainland is one huge loop; treat ONLY its edge as a hit (vertex-near) so an
-    // interior scrub can't wipe the whole island, but brushing the coastline removes
-    // the outline so you can re-trace a new one. Smaller closed features (islands,
-    // reservoirs) also count when the brush is inside them.
-    const mainPoly = k === 'mainland' ? game[k].reduce((a, b) => (b.length > a.length ? b : a)) : null;
-    const hit = (poly) => brushHitsPoly(poly, gp, radG, !!LAYERS[k].closed && poly !== mainPoly);
+    if (k === 'mainland' || k === 'railway') {
+      // Coast/railway are LINES: erase like a road — cut only the brushed span and
+      // keep the rest. The surviving coastline arcs are stitched back into a closed
+      // loop on Save (apply_trace's chainLoops); railway pieces stay as lines.
+      const out = []; let cut = false;
+      for (const poly of game[k]) { const segs = eraseFromLine(poly, gp, radG);
+        if (segs.length !== 1 || segs[0].length !== poly.length) cut = true;
+        for (const seg of segs) if (seg.length >= 2) out.push(seg); }
+      if (cut) { game[k] = out; overlayDirty[k] = true; }
+      continue;
+    }
+    // reservoirs/sands are filled blobs: remove the whole feature the brush touches.
+    const hit = (poly) => brushHitsPoly(poly, gp, radG, !!LAYERS[k].closed);
     let cut = false;
     game[k] = game[k].filter((poly) => { if (hit(poly)) { cut = true; return false; } return true; });
     if (cut) { overlayDirty[k] = true; if (k === 'sands') game._sandsCustom = (game._sandsCustom || []).filter((poly) => !hit(poly)); }

@@ -68,10 +68,9 @@ try {
   ok(r.rotChanged && r.meshSynced, 'dragging swivels the building and keeps mesh + state angle in sync');
   ok(r.noTapMove, 'a rotate-drag does not move or commit the building');
 
-  // ---- 3) PRECISE DEMOLISH TARGETING (the random-removal fix) ----------------
+  // ---- 3) DEMOLISH: precise targeting + multi-select + toggle + timed teardown
   const d = await p.evaluate(() => {
     const v = window.__sgview, S = window.__sg;
-    // two parallel roads 5 units apart, through a known spot
     const C = v.worldOfCell(Math.round(v.land.length * 0.5), Math.round(v.land.length * 0.5));
     const roads = v.state.roads; const base = roads.nodes.length;
     roads.nodes.push({ x: C.x - 20, z: C.z, y: 0 }, { x: C.x + 20, z: C.z, y: 0 });         // road A
@@ -80,28 +79,59 @@ try {
     const eB = roads.edges.length; roads.edges.push({ a: base + 2, b: base + 3, type: 'road', lanes: 2 });
     v.rebuildRoadNet();
     const cellOf = (w) => ({ x: Math.floor((w.x / 1600 + 0.5) * v.land.length), y: Math.floor((0.5 - w.z / 1600) * v.land.length) });
-    const nearA = { x: C.x, z: C.z + 1 };       // 1u from A, 4u from B
-    const nearB = { x: C.x, z: C.z + 4 };       // 1u from B, 4u from A
-    const tA = S.findDemoTarget(cellOf(nearA), nearA);
-    const tB = S.findDemoTarget(cellOf(nearB), nearB);
+    const nearA = { x: C.x, z: C.z + 1 }, nearB = { x: C.x, z: C.z + 4 }, far = { x: C.x, z: C.z + 14 };
+    const tA = S.findDemoTarget(cellOf(nearA), nearA), tB = S.findDemoTarget(cellOf(nearB), nearB);
     const hitsA = tA && tA.kind === 'road' && tA.i === eA;
     const hitsB = tB && tB.kind === 'road' && tB.i === eB;
-    // far point (8u from either) hits NOTHING (old code would have grabbed nearest within 6u)
-    const far = { x: C.x, z: C.z + 14 };
-    const tFar = S.findDemoTarget(cellOf(far), far);
-    const farMiss = !tFar;
-    // now actually remove exactly road B via the demolish tap path
-    const before = roads.edges.length;
+    const farMiss = !S.findDemoTarget(cellOf(far), far);
+    // multi-select: tap road A then road B -> two selected; tap B again -> toggled off
     S.setBulldoze(true);
+    S.onTileTap(cellOf(nearA).x, cellOf(nearA).y, nearA);
     S.onTileTap(cellOf(nearB).x, cellOf(nearB).y, nearB);
-    const removedOne = roads.edges.length === before - 1;
-    const removedRight = !roads.edges.some((e, i) => i === eA ? false : false) && roads.edges[eA]; // A still present
+    const selectedTwo = S.demoSel.size === 2;
+    S.onTileTap(cellOf(nearB).x, cellOf(nearB).y, nearB);   // tap the red one again -> undo
+    const toggledOff = S.demoSel.size === 1 && S.demoSel.has(S.demoKey(tA));
+    // re-add B, then commit -> nothing removed yet (timed), both still present
+    S.onTileTap(cellOf(nearB).x, cellOf(nearB).y, nearB);
+    const before = roads.edges.length;
+    S.commitDemolish();
+    const queuedNotGone = roads.edges.length === before && roads.edges[eA].demolish && roads.edges[eB].demolish;
+    const selCleared = S.demoSel.size === 0;
+    S.tick(6);                                              // a few days pass -> teardown completes
+    const bothGone = v.state.roads.edges.length === before - 2;
     S.setBulldoze(false);
-    return { hitsA, hitsB, farMiss, removedOne, aStillThere: !!roads.edges[eA] };
+    return { hitsA, hitsB, farMiss, selectedTwo, toggledOff, queuedNotGone, selCleared, bothGone };
   });
   ok(d.hitsA && d.hitsB, 'demolish targets the road actually under the cursor (A vs B distinguished)');
   ok(d.farMiss, 'a point away from all roads targets NOTHING (no fat 6-unit grab radius)');
-  ok(d.removedOne && d.aStillThere, 'tapping removes EXACTLY the targeted road, leaving the neighbour intact');
+  ok(d.selectedTwo, 'tapping multiple roads accumulates them in the demolish selection');
+  ok(d.toggledOff, 'tapping a selected (red) item again removes it from the selection (undo)');
+  ok(d.queuedNotGone && d.selCleared, '✓ Done queues a TIMED teardown — nothing is removed instantly');
+  ok(d.bothGone, 'after a few days the queued roads are actually torn down');
+
+  // ---- 3b) BUILDING teardown is timed and stops functioning immediately ------
+  const d2 = await p.evaluate(() => {
+    const v = window.__sgview, S = window.__sg, N = v.land.length;
+    const clear = (x, y) => v.isLand(x, y) && !v.buildings.has(`${x},${y}`) && !v.isRoadAt(x, y) && !(v.heritageMask && v.heritageMask[y][x]) && !v.state.grid[y][x];
+    const cy = Math.round(N * 0.48); let cx = -1;
+    for (let x = Math.round(N * 0.40); x < N * 0.55; x++) if (clear(x, cy)) { cx = x; break; }
+    // force a finished building into the grid + scene
+    v.state.grid[cy][cx] = { k: 'hdb_flat' };
+    v.onBuilt(cx, cy, 'hdb_flat');
+    const inScene = v.buildings.has(`${cx},${cy}`);
+    S.setBulldoze(true);
+    S.onTileTap(cx, cy, v.worldOfCell(cx, cy));             // select the building
+    const sel = S.demoSel.size === 1;
+    S.commitDemolish();
+    const marked = !!(v.state.grid[cy][cx] && v.state.grid[cy][cx].demolish);  // teardown timer set, still standing
+    S.tick(30);                                            // wait it out
+    const gone = !v.state.grid[cy][cx] && !v.buildings.has(`${cx},${cy}`);     // cell cleared + mesh removed
+    S.setBulldoze(false);
+    return { inScene, sel, marked, gone };
+  });
+  ok(d2.inScene && d2.sel, 'a building can be selected for demolition');
+  ok(d2.marked, '✓ Done marks the building for a timed teardown (it stands while coming down)');
+  ok(d2.gone, 'after the teardown days the building is fully removed from the grid and scene');
 
   // ---- 4) BUILD AT THE KERB --------------------------------------------------
   const k = await p.evaluate(() => {

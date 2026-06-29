@@ -75,6 +75,7 @@ export function newGame({ name = 'New Singapore', owner = 'Anonymous' } = {}) {
     reclaimedAreas: [],       // { poly, cells } finished free-shaped reclaimed land (smooth coastline)
     economy: { inflation: 0.02, priceIndex: 1, currency: 1 }, // dynamic inflation / price level / SGD strength
     constructing: [],         // [x,y] cells whose building is still being built
+    demolishing: [],          // [x,y] cells whose building is being torn down (timed teardown)
     landmarks: [],            // 3D-designed landmarks saved into THIS world (per-player; for build menu + visitors)
     projects: [],             // active guided national projects the player is building toward
     projectsDone: [],         // ids of completed national projects
@@ -160,10 +161,13 @@ export function ensureGrid(state) {
   if (!Array.isArray(state.railways)) state.railways = [];
   if (!Array.isArray(state.airstrips)) state.airstrips = [];
   if (!state.economy) state.economy = { inflation: 0.02, priceIndex: 1, currency: 1 };
-  // Rebuild the active-construction list from the grid (robust across saves).
+  // Rebuild the active-construction & demolition lists from the grid (robust across saves).
   state.constructing = [];
+  state.demolishing = [];
   for (let y = 0; y < GRID_SIZE; y++) for (let x = 0; x < GRID_SIZE; x++) {
-    const c = state.grid?.[y]?.[x]; if (c && c.build && c.build.left > 0) state.constructing.push([x, y]);
+    const c = state.grid?.[y]?.[x]; if (!c) continue;
+    if (c.build && c.build.left > 0) state.constructing.push([x, y]);
+    if (c.demolish && c.demolish.left > 0) state.demolishing.push([x, y]);
   }
   if (!state.roads.islands) state.roads.islands = [];
   // back-fill the traced 1966 roads into saves that predate them (so existing
@@ -240,6 +244,61 @@ export function demolish(state, x, y) {
   state.grid[y][x] = null;
   state.treasury -= 2; // demolition cost
   return true;
+}
+
+// Tearing a building down takes time too — roughly half as long as it took to
+// build (a wreck is faster than a build), min 2 days.
+export function demolishDays(b) { return clamp(Math.round(buildDays(b) * 0.5), 2, 24); }
+
+// Queue a batch of demolitions, charging a small teardown fee per item. Buildings
+// get cell.demolish={total,left} and stop counting in derive() immediately (they
+// are being torn down); infra entries get entry.demolish={total,left}. The actual
+// removal happens over time in advanceDemolition().
+// items: [{kind:'building',x,y} | {kind:'road'|'rail'|'air', ref}]
+export function queueDemolish(state, items) {
+  state.demolishing = state.demolishing || [];
+  let fee = 0;
+  for (const it of (items || [])) {
+    if (it.kind === 'building') {
+      const c = state.grid?.[it.y]?.[it.x]; if (!c || c.demolish) continue;
+      const days = c.build ? Math.max(2, Math.round((c.build.total || 4) * 0.4)) : demolishDays(BUILDINGS[c.k]);
+      c.demolish = { total: days, left: days };
+      state.demolishing.push([it.x, it.y]);
+      fee += 2;
+    } else if (it.ref && !it.ref.demolish) {
+      it.ref.demolish = { total: 4, left: 4 };
+      fee += 1;
+    }
+  }
+  state.treasury -= fee;
+  return fee;
+}
+
+// Advance every teardown by one day; remove what has finished. Buildings clear to
+// an empty cell; infra entries are filtered out of their arrays. Sets a counter
+// the view watches so it can rebuild the road/rail/runway meshes once on change.
+function advanceDemolition(state) {
+  if (state.demolishing && state.demolishing.length) {
+    const still = [];
+    for (const [x, y] of state.demolishing) {
+      const c = state.grid?.[y]?.[x];
+      if (!c || !c.demolish) continue;
+      c.demolish.left -= 1;
+      if (c.demolish.left <= 0) state.grid[y][x] = null; else still.push([x, y]);
+    }
+    state.demolishing = still;
+  }
+  let infraDone = false;
+  const sweep = (arr) => {
+    if (!arr || !arr.length) return arr;
+    let any = false;
+    for (const e of arr) if (e && e.demolish) { e.demolish.left -= 1; if (e.demolish.left <= 0) { e._demoDone = true; any = true; infraDone = true; } }
+    return any ? arr.filter((e) => !(e && e._demoDone)) : arr;
+  };
+  if (state.roads) state.roads.edges = sweep(state.roads.edges);
+  state.railways = sweep(state.railways);
+  state.airstrips = sweep(state.airstrips);
+  if (infraDone) state._infraDemoDone = (state._infraDemoDone || 0) + 1;
 }
 
 // ---------------------------------------------------------------------------
@@ -624,6 +683,7 @@ export function derive(state) {
       const b = BUILDINGS[cell.k];
       if (!b) continue;
       if (cell.build && cell.build.left > 0) continue; // still under construction — no output yet
+      if (cell.demolish) continue;                     // being torn down — no longer functioning
       counts[cell.k] = (counts[cell.k] || 0) + 1;
       homes += b.homes || 0;
       jobs += b.jobs || 0;
@@ -959,6 +1019,7 @@ export function tickDay(state) {
   state.date = addDay(state.date);
   state.daysElapsed = (state.daysElapsed || 0) + 1;
   advanceConstruction(state); // tick building sites toward completion
+  advanceDemolition(state);   // tick teardowns; clear finished demolitions
   advanceReclamation(state);  // tick land reclamation (sea rising into land)
   advanceRoadworks(state);    // tick drawn roads/railways toward completion
 

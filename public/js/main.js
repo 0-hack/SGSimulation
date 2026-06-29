@@ -1,6 +1,6 @@
 // Main controller: boots the menu, runs the game loop, wires the UI & cloud.
 import {
-  newGame, tickDay, build, demolish, canPlace, derive,
+  newGame, tickDay, build, demolish, queueDemolish, canPlace, derive,
   resolveEvent, snapshot, refreshSummary, ensureGrid, packState, issueBond, repayDebt,
   projectProgress, checkProjects,
   reclaimLand, reclaimCost, buildingCost, priced,
@@ -66,7 +66,8 @@ const G = {
   hudTimer: 0,
   build: { cat: 'residential', selected: null, bulldoze: false, theme: null, rot: 0 },
   adjust: null,                 // { x, y, key, theme, rot, wx, wz } — a placed-but-not-yet-committed object being positioned (wx/wz = exact world spot)
-  demoTarget: null,             // what the Demolish tool is currently aimed at (building/heritage/road/rail/air)
+  demoSel: new Map(),           // Demolish multi-select: key -> target ({kind,x,y|i,poly,label}). Committed (timed) on Done.
+  demoHover: null,              // the Demolish target currently under the cursor (shown red alongside the selection)
   pieceRot: 0,                  // running orientation of the road piece being aimed (for the dial)
   road: { tool: null, type: 'road', elevated: false, pending: [] },
   reclaim: { active: false },  // land-reclamation tool: tap sea to fill land
@@ -99,10 +100,11 @@ function boot() {
   $('sheet-close').onclick = closeSheet;
   document.querySelector('#sheet .sheet-backdrop').onclick = closeSheet;
 
-  // ✓ Done: confirm the object you're positioning, else exit place mode.
-  $('tool-banner-stop').onclick = () => { if (G.adjust) commitAdjust(); else cancelTools(); };
-  // 🗑 Remove: discard the object you're positioning (nothing was charged yet).
-  $('tool-banner-remove').onclick = () => { if (G.adjust) cancelAdjust('Removed.'); };
+  // ✓ Done: confirm the object you're positioning / commit the demolish selection,
+  // else exit place mode.
+  $('tool-banner-stop').onclick = () => { if (G.adjust) commitAdjust(); else if (G.build.bulldoze && G.demoSel.size) commitDemolish(); else cancelTools(); };
+  // 🗑 Remove: discard the object you're positioning, or clear the demolish selection.
+  $('tool-banner-remove').onclick = () => { if (G.adjust) cancelAdjust('Removed.'); else if (G.build.bulldoze && G.demoSel.size) { clearDemoSelection(); toast('Selection cleared.'); } };
   $('tool-banner-rotate').onclick = () => {
     if (G.adjust) rotateAdjust(Math.PI / 4);              // 45° snap (drag/dial give any angle)
     else if (G.view && G.view.pieceMode) rotatePieceBy(Math.PI / 4);
@@ -116,6 +118,7 @@ function boot() {
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
     if (e.key === 'Escape' && G._pendingCommit) { closeCommit(true); toast('Discarded.'); e.preventDefault(); return; }
     if (e.key === 'Escape' && G.adjust) { cancelAdjust('Cancelled.'); e.preventDefault(); return; }
+    if (e.key === 'Escape' && G.build.bulldoze && G.demoSel.size) { clearDemoSelection(); toast('Selection cleared.'); e.preventDefault(); return; }
     if (e.key === 'Escape' && activeTool()) { cancelTools(); toast('Stopped placing.'); e.preventDefault(); }
     if (e.key === 'r' || e.key === 'R') {
       if (G.adjust) { rotateAdjust(Math.PI / 4); e.preventDefault(); }
@@ -326,7 +329,7 @@ function loop(ts) {
     if (ticks > 0) {
       G.dirty = true;
       G.hudTimer += dt;
-      if (G.view) { G.view.syncConstruction(G.state); G.view.syncReclamation(G.state); G.view.syncRoadworks(G.state); // advance sites/land/routes
+      if (G.view) { G.view.syncConstruction(G.state); G.view.syncDemolition(G.state); G.view.syncReclamation(G.state); G.view.syncRoadworks(G.state); // advance sites/teardowns/land/routes
         if ((G.state.roadworks || []).length < rwBefore) { G.view.rebuildRoadNet(); G.view._buildPlayerRailways(G.state); G.view._buildPlayerAirstrips(G.state); } } // a route finished -> render it for real
       updateHud(G.state, G.readOnly);
       updateShortages();
@@ -456,19 +459,15 @@ function onTileTap(x, y, world) {
   if (G.readOnly) { toast('You are visiting — building is disabled here.'); return; }
   const b = G.build;
   if (b.bulldoze) {
-    // Remove EXACTLY what the cursor is over — recomputed from the precise tap point
-    // (so a touch with no prior hover is still exact), else the hovered target.
-    const t = findDemoTarget({ x, y }, world) || G.demoTarget;
-    if (!t) { toast('Nothing to demolish here.'); return; }
-    if (t.kind === 'building') {
-      const here = G.state.grid[t.y]?.[t.x];
-      if (here && demolish(G.state, t.x, t.y)) { G.view.onDemolished(t.x, t.y); if (here.heritage) G.view.removeHeritageVisual(t.x, t.y); afterEdit(); toast(`Demolished ${t.label}.`); }
-    } else if (t.kind === 'heritage') {
-      if (G.view.removeHeritageVisual && G.view.removeHeritageVisual(t.x, t.y)) { afterEdit(); toast(`Demolished ${t.label || 'building'}.`); }
-    } else {
-      removeInfraTarget(t);
-    }
-    G.demoTarget = null; G.view.showDemoHighlight(null);
+    // Multi-select: a tap TOGGLES the item under the cursor in/out of the teardown
+    // selection (tap a red one again to undo). Nothing is removed until ✓ Done.
+    const t = findDemoTarget({ x, y }, world);
+    if (!t) { toast('Nothing here to select — tap a building or road.'); return; }
+    const key = demoKey(t);
+    if (G.demoSel.has(key)) G.demoSel.delete(key);          // tap a selected (red) item again -> undo
+    else G.demoSel.set(key, { ...t, key });
+    refreshDemoVisual();
+    updateToolBanner();
     return;
   }
   // While positioning a placed object, a tap MOVES it to the exact spot (sub-cell).
@@ -594,14 +593,15 @@ function updateToolBanner() {
     const name = BUILDINGS[G.adjust.key]?.name || 'object';
     $('tool-banner-text').innerHTML = `<b>⏸ Positioning · ${name}</b><br><span class="tb-sub">Drag it to rotate · tap a new spot to move · dial / ↻ for snaps · 🗑 Remove · ✓ Done</span>`;
   } else if (G.build.bulldoze) {
-    $('tool-banner-text').innerHTML = `<b>🚜 Demolish</b><br><span class="tb-sub">Hover a building or road to target it, then tap</span>`;
+    updateDemoBanner();   // shows the live selection count + hovered target
   } else {
     const rotHint = G.build.selected ? ' · drag to rotate after placing' : '';
     $('tool-banner-text').innerHTML = `<b>⏸ Edit mode · ${t.label}</b><br><span class="tb-sub">Time paused — tap the map to ${t.verb}${rotHint}</span>`;
   }
+  const demoReady = G.build.bulldoze && G.demoSel.size > 0;
   $('tool-banner-rotate').classList.toggle('hidden', !(adjusting || piece || G.build.selected));
-  $('tool-banner-remove').classList.toggle('hidden', !adjusting);
-  const stop = $('tool-banner-stop'); if (stop) stop.textContent = adjusting ? '✓ Done' : '✕ Done';
+  $('tool-banner-remove').classList.toggle('hidden', !(adjusting || demoReady));   // 🗑 = clear the selection
+  const stop = $('tool-banner-stop'); if (stop) stop.textContent = (adjusting || demoReady) ? '✓ Done' : '✕ Done';
   updateRotDial();   // show the live-facing dial alongside the rotate button
   el.classList.remove('hidden');
 }
@@ -631,6 +631,12 @@ function rotDialState() {
 }
 // Drop the pending object without UI/toast — used when the tool/selection changes.
 function clearAdjustSilently() { if (G.adjust) { if (G.view) G.view.clearAdjust(); G.adjust = null; } }
+// Empty the Demolish selection (no teardown happens) and clear its red highlights.
+function clearDemoSelection() {
+  G.demoSel.clear(); G.demoHover = null;
+  if (G.view) G.view.demoSetSelection([]);
+  updateToolBanner();
+}
 function updateRotDial() {
   const dial = $('tool-banner-dial'); if (!dial) return;
   const st = rotDialState();
@@ -677,6 +683,7 @@ function setEditPause(on) {
 }
 function cancelTools() {
   clearAdjustSilently();
+  if (G.demoSel.size || G.demoHover) clearDemoSelection();
   G.build.selected = null; G.build.bulldoze = false; G.reclaim.active = false;
   G.road.tool = null; G.road.pending = [];
   closeCommit(true);
@@ -716,15 +723,33 @@ function placeRoundabout(x, z) {
 function findDemoTarget(cell, world) {
   if (cell) {
     const here = G.state.grid[cell.y] && G.state.grid[cell.y][cell.x];
-    if (here) {
+    if (here && !here.demolish) {                          // already being torn down -> nothing to select
       const name = here.heritage ? (here.name || BUILDINGS[here.k]?.name) : BUILDINGS[here.k]?.name;
       return { kind: 'building', x: cell.x, y: cell.y, label: name || 'building' };
     }
-    const h = G.view.heritageAt && G.view.heritageAt(cell.x, cell.y);
-    if (h) return { kind: 'heritage', x: cell.x, y: cell.y, label: h };
+    if (!here) { const h = G.view.heritageAt && G.view.heritageAt(cell.x, cell.y); if (h) return { kind: 'heritage', x: cell.x, y: cell.y, label: h }; }
   }
   if (world) return findInfraTarget(world.x, world.z);
   return null;
+}
+// A stable key for a demolish target (so the selection can toggle it).
+function demoKey(t) {
+  return t.kind === 'building' ? `b:${t.x},${t.y}` : t.kind === 'heritage' ? `h:${t.x},${t.y}` : `${t.kind}:${t.i}`;
+}
+// The live state-object behind an infra target (for queueing its timed teardown).
+function infraRef(t) {
+  if (t.kind === 'road') return G.state.roads.edges[t.i];
+  if (t.kind === 'rail') return G.state.railways[t.i];
+  if (t.kind === 'air') return G.state.airstrips[t.i];
+  return null;
+}
+// Push the full red highlight (everything selected, plus the hovered item) to the
+// scene so you can see exactly what a ✓ Done will tear down.
+function refreshDemoVisual() {
+  if (!G.view) return;
+  const arr = [...G.demoSel.values()];
+  if (G.demoHover && !G.demoSel.has(G.demoHover.key)) arr.push(G.demoHover);
+  G.view.demoSetSelection(arr);
 }
 // Nearest road / railway / MRT viaduct / runway to (x,z), within its own tight hit
 // radius. Returns { kind, i, poly, label } — poly is the world polyline so the
@@ -755,23 +780,34 @@ function findInfraTarget(x, z) {
   });
   return best;
 }
-// Remove exactly the infrastructure piece the player targeted (by array index).
-function removeInfraTarget(t) {
-  if (t.kind === 'road') { G.state.roads.edges.splice(t.i, 1); G.view.rebuildRoadNet(); toast('Road removed.'); }
-  else if (t.kind === 'rail') { const e = G.state.railways[t.i]; G.state.railways.splice(t.i, 1); G.view._buildPlayerRailways(G.state); toast(e && e.mrt ? 'MRT viaduct removed.' : 'Railway removed.'); }
-  else if (t.kind === 'air') { G.state.airstrips.splice(t.i, 1); G.view._buildPlayerAirstrips(G.state); toast('Runway removed.'); }
-  else return false;
+// ✓ Done in Demolish mode: commit the whole red selection as TIMED teardowns
+// (they come down over a few days, like construction in reverse), then clear the
+// selection. Heritage landmarks (decorative, outside the economy) come down at once.
+function commitDemolish() {
+  if (!G.demoSel.size) { cancelTools(); return; }
+  const items = [];
+  for (const t of G.demoSel.values()) {
+    if (t.kind === 'building') items.push({ kind: 'building', x: t.x, y: t.y });
+    else if (t.kind === 'heritage') { if (G.view.removeHeritageVisual) G.view.removeHeritageVisual(t.x, t.y); }
+    else { const ref = infraRef(t); if (ref) items.push({ kind: t.kind, ref }); }
+  }
+  const n = G.demoSel.size;
+  if (items.length) queueDemolish(G.state, items);
+  G.demoSel.clear(); G.demoHover = null;
+  G.view.demoSetSelection([]);          // drop the selection tint; the teardown visuals take over
+  G.view.syncDemolition(G.state);       // start the teardown immediately
   afterEdit();
-  return true;
+  toast(`Demolishing ${n} item${n > 1 ? 's' : ''} — they come down over a few days. 🚜`);
+  updateToolBanner();
 }
-// Cursor moved in Demolish mode: figure out the target, highlight it on the map,
-// and name it in the banner so the player sees what a tap will remove.
+// Cursor moved in Demolish mode: track what's under it and show it red alongside
+// the existing selection, so you can see what a tap will toggle.
 function onDemolishHover(cell, world) {
   if (G.readOnly || !G.build.bulldoze) return;
   const t = findDemoTarget(cell, world);
-  G.demoTarget = t;
-  G.view.showDemoHighlight(t);
-  updateDemoBanner(t);
+  G.demoHover = t ? { ...t, key: demoKey(t) } : null;
+  refreshDemoVisual();
+  updateDemoBanner();
 }
 // Drag-rotated the pending building with the cursor — mirror the angle into the
 // game state + the toolbar dial so everything stays in sync.
@@ -780,15 +816,15 @@ function onAdjustRotate(rad) {
   G.adjust.rot = ((rad % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
   updateRotDial();
 }
-function updateDemoBanner(t) {
+function updateDemoBanner() {
   if (!G.build.bulldoze || G.adjust) return;
   const txt = $('tool-banner-text'); if (!txt) return;
-  if (t) {
-    const isB = t.kind === 'building' || t.kind === 'heritage';
-    txt.innerHTML = `<b>🚜 Demolish · ${t.label}</b><br><span class="tb-sub">Tap to remove the highlighted ${isB ? 'building' : t.label.toLowerCase()}</span>`;
-  } else {
-    txt.innerHTML = `<b>🚜 Demolish</b><br><span class="tb-sub">Hover a building or road to target it, then tap</span>`;
-  }
+  const n = G.demoSel.size, hov = G.demoHover;
+  const head = n ? `🚜 Demolish · ${n} selected` : '🚜 Demolish';
+  let sub;
+  if (hov) { const sel = G.demoSel.has(hov.key); sub = `${sel ? 'Tap again to keep' : 'Tap to select'} ${hov.label}` + (n ? ' · ✓ Done to tear down' : ''); }
+  else sub = n ? 'Tap more to add/remove · ✓ Done tears them down over time' : 'Tap buildings & roads to select them, then ✓ Done';
+  txt.innerHTML = `<b>${head}</b><br><span class="tb-sub">${sub}</span>`;
 }
 // Distance from point (x,z) to segment a-b ({x,z}).
 function segPointDistW(x, z, a, b) {
@@ -1005,13 +1041,13 @@ function refreshPanel() {
       },
       toggleBulldoze: () => {
         clearAdjustSilently();
+        G.demoSel.clear(); G.demoHover = null;
         G.build.bulldoze = !G.build.bulldoze;
         G.build.selected = null; G.reclaim.active = false; G.view.setPaintMode(false);
         G.road.tool = null; G.view.setRoadMode(false); G.view.showRoadPreview([]);
-        G.demoTarget = null;
         G.view.setBulldoze(G.build.bulldoze);
         refreshPanel();
-        if (G.build.bulldoze) { closeSheet(); toast('Demolish mode: hover a building or road to target it, then tap to remove it. ✕ Done / Esc to stop.'); }
+        if (G.build.bulldoze) { closeSheet(); toast('Demolish: tap buildings & roads to select them (they turn red), tap again to unselect, then ✓ Done to tear them down over time. Esc to stop.'); }
         updateToolBanner();
       },
     }));
@@ -1292,12 +1328,14 @@ window.addEventListener('beforeunload', () => { if (!G.readOnly) saveLocal(); })
 
 // Minimal hook for automated tests to drive the place-then-adjust flow directly.
 window.__sg = {
-  onTileTap, rotateAdjust, commitAdjust, findDemoTarget, onDemolishHover, onAdjustRotate,
+  onTileTap, rotateAdjust, commitAdjust, findDemoTarget, onDemolishHover, onAdjustRotate, commitDemolish, demoKey,
   cancelAdjust: (m) => cancelAdjust(m),
   selectBuilding: (k) => { clearAdjustSilently(); G.build.selected = k; G.build.bulldoze = false; if (G.view) G.view.setPreview(k, G.build.theme); updateToolBanner(); },
-  setBulldoze: (on) => { clearAdjustSilently(); G.build.selected = null; G.build.bulldoze = !!on; G.demoTarget = null; if (G.view) G.view.setBulldoze(!!on); updateToolBanner(); },
+  setBulldoze: (on) => { clearAdjustSilently(); G.demoSel.clear(); G.demoHover = null; G.build.selected = null; G.build.bulldoze = !!on; if (G.view) G.view.setBulldoze(!!on); updateToolBanner(); },
+  tick: (n = 1) => { for (let i = 0; i < n; i++) tickDay(G.state); if (G.view) { G.view.syncConstruction(G.state); G.view.syncDemolition(G.state); } },
   get adjust() { return G.adjust; },
-  get demoTarget() { return G.demoTarget; },
+  get demoSel() { return G.demoSel; },
+  get state() { return G.state; },
   get build() { return G.build; },
 };
 

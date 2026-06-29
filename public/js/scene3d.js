@@ -1638,7 +1638,7 @@ export class Scene3D {
     };
     c.addEventListener('pointerup', end);
     c.addEventListener('pointercancel', end);
-    c.addEventListener('pointerleave', () => { if (this.ghost) this.ghost.visible = false; this._hideHoverTile(); this._hideDemoLine(); this._clearSnapMarker(); this._hideDrawCursor(); if (this.pieceMode) this.clearRoadPreview(); });
+    c.addEventListener('pointerleave', () => { if (this.ghost) this.ghost.visible = false; this._hideHoverTile(); if (this.bulldoze && this.onDemolishHover) this.onDemolishHover(null, null); this._clearSnapMarker(); this._hideDrawCursor(); if (this.pieceMode) this.clearRoadPreview(); });
     c.addEventListener('wheel', (e) => {
       e.preventDefault();
       this.cam.radius = THREE.MathUtils.clamp(this.cam.radius * (e.deltaY < 0 ? 0.92 : 1.08), this.MIN_R, this.MAX_R);
@@ -2076,28 +2076,93 @@ export class Scene3D {
   // Highlight exactly what the Demolish tool will remove under the cursor, so you
   // can SEE the target before tapping: a red tile for a building, or a thick red
   // ribbon tracing the road / railway / runway. `target` is the game's verdict.
-  showDemoHighlight(target) {
-    if (!target) { this._hideHoverTile(); this._hideDemoLine(); return; }
-    if (target.kind === 'building' || target.kind === 'heritage') {
-      this._hideDemoLine();
-      this._updateHoverTile(target.x, target.y, false);   // red = will be removed
-    } else {
-      this._hideHoverTile();
-      this._showDemoLine(target.poly);
+  // ---- Demolish selection (multi-select teardown) --------------------------
+  // Reconcile the RED "will be torn down" highlight with the game's current
+  // selection + hovered target. A building tints its own mesh red; a road / rail /
+  // runway gets a red ribbon traced along it; a heritage landmark gets a red tile.
+  // The game calls this on every hover / selection change with the full wanted set.
+  demoSetSelection(targets) {
+    const want = new Map(); for (const t of (targets || [])) if (t && t.key) want.set(t.key, t);
+    if (!this._demoShown) this._demoShown = new Map();
+    for (const [key, t] of this._demoShown) { if (!want.has(key)) { this._demoUnshow(t); this._demoShown.delete(key); } }
+    for (const [key, t] of want) { if (!this._demoShown.has(key)) { this._demoShow(t); this._demoShown.set(key, t); } }
+  }
+  clearDemoSelection() { this.demoSetSelection([]); }
+  _demoShow(t) {
+    if (t.kind === 'building') this._setBuildingRed(t.x, t.y, true);
+    else if (t.kind === 'heritage') this._demoTile(t.key, t.x, t.y, true);
+    else this._demoRibbon(t.key, t.poly, true);
+  }
+  _demoUnshow(t) {
+    if (t.kind === 'building') this._setBuildingRed(t.x, t.y, false);
+    else if (t.kind === 'heritage') this._demoTile(t.key, null, null, false);
+    else this._demoRibbon(t.key, null, false);
+  }
+  // Reversibly tint a placed building's whole mesh red (clones materials once,
+  // stashing the originals so it can be restored when deselected).
+  _setBuildingRed(x, y, on) {
+    const e = this.buildings.get(`${x},${y}`); if (!e || !e.group) return;
+    e.group.traverse((o) => {
+      if (!o.material) return;
+      if (on) {
+        if (!o.userData._origMat) { o.userData._origMat = o.material; o.material = o.material.clone(); }
+        if (o.material.color) o.material.color.setHex(0xe23b2a);
+        if (o.material.emissive) o.material.emissive.setHex(0x3a0a06);
+      } else if (o.userData._origMat) {
+        o.material = o.userData._origMat; o.userData._origMat = null;
+      }
+    });
+  }
+  _demoRibbon(key, poly, on) {
+    if (!this._demoRibbons) { this._demoRibbons = new Map(); this._demoRibbonGroup = new THREE.Group(); this.scene.add(this._demoRibbonGroup); }
+    const existing = this._demoRibbons.get(key);
+    if (!on) { if (existing) { this._demoRibbonGroup.remove(existing); existing.geometry.dispose(); this._demoRibbons.delete(key); } return; }
+    if (existing || !poly || poly.length < 2) return;
+    const pts = poly.map((p) => new THREE.Vector3(p.x, this._heightAt(p.x, p.z) + 0.5, p.z));
+    const geo = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), Math.max(6, pts.length * 2), 1.3, 7, false);
+    const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0xff4632, transparent: true, opacity: 0.6, depthTest: false }));
+    m.renderOrder = 7; this._demoRibbonGroup.add(m); this._demoRibbons.set(key, m);
+  }
+  _demoTile(key, x, y, on) {
+    if (!this._demoTiles) { this._demoTiles = new Map(); this._demoTileGroup = new THREE.Group(); this.scene.add(this._demoTileGroup); }
+    const existing = this._demoTiles.get(key);
+    if (!on) { if (existing) { this._demoTileGroup.remove(existing); this._demoTiles.delete(key); } return; }
+    if (existing) return;
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(TILE * 0.94, TILE * 0.94),
+      new THREE.MeshBasicMaterial({ color: 0xff4632, transparent: true, opacity: 0.42, depthWrite: false }));
+    m.rotation.x = -Math.PI / 2; const c = cellToWorld(x, y); m.position.set(c.x, this.terrainHeight(x, y) + 0.16, c.z);
+    this._demoTileGroup.add(m); this._demoTiles.set(key, m);
+  }
+  // Advance the visible teardown of buildings (red + shrinking with progress) and
+  // pop them when the engine finishes the demolition; rebuild infra once when the
+  // engine removes a demolished road / rail / runway.
+  syncDemolition(state) {
+    if (!state) return;
+    if (!this._teardown) this._teardown = new Set();
+    const active = new Set();
+    for (const [x, y] of (state.demolishing || [])) {
+      const id = `${x},${y}`; active.add(id);
+      const c = state.grid[y] && state.grid[y][x]; if (!c || !c.demolish) continue;
+      const e = this.buildings.get(id);
+      if (e && e.group) {
+        this._setBuildingRed(x, y, true);
+        const p = Math.max(0.04, c.demolish.left / Math.max(1, c.demolish.total)); // crumbles down as it's torn
+        e.group.scale.set(MODEL_SCALE, MODEL_SCALE * (e.tall ? this.devFactor : 1) * p, MODEL_SCALE);
+      }
+      this._teardown.add(id);
+    }
+    for (const id of [...this._teardown]) {
+      if (active.has(id)) continue;
+      this._teardown.delete(id);
+      const [x, y] = id.split(',').map(Number);
+      this._setBuildingRed(x, y, false);
+      this.onDemolished(x, y);                  // dust + remove + greenery returns
+    }
+    if ((state._infraDemoDone || 0) !== (this._infraDemoSeen || 0)) {
+      this._infraDemoSeen = state._infraDemoDone || 0;
+      this.rebuildRoadNet(); this._buildPlayerRailways(state); this._buildPlayerAirstrips(state);
     }
   }
-  _showDemoLine(poly) {
-    if (!poly || poly.length < 2) { this._hideDemoLine(); return; }
-    const pts = poly.map((p) => new THREE.Vector3(p.x, this._heightAt(p.x, p.z) + 0.5, p.z));
-    const curve = new THREE.CatmullRomCurve3(pts);
-    const geo = new THREE.TubeGeometry(curve, Math.max(6, pts.length * 2), 1.3, 7, false);
-    if (!this._demoLine) {
-      const mat = new THREE.MeshBasicMaterial({ color: 0xff4632, transparent: true, opacity: 0.65, depthTest: false });
-      this._demoLine = new THREE.Mesh(geo, mat); this._demoLine.renderOrder = 7; this.scene.add(this._demoLine);
-    } else { this._demoLine.geometry.dispose(); this._demoLine.geometry = geo; }
-    this._demoLine.visible = true;
-  }
-  _hideDemoLine() { if (this._demoLine) this._demoLine.visible = false; }
   // While in draw mode (and not mid-stroke), light up the nearest existing road
   // end the cursor/pencil is near, so the player knows they can start there.
   _drawHover(p) {
@@ -2371,7 +2436,7 @@ export class Scene3D {
   setBulldoze(on) {
     this.bulldoze = on; this.previewKey = null;
     this._makeGhost(null);
-    if (!on) { this._hideHoverTile(); this._hideDemoLine(); }   // leaving Demolish clears its target highlight
+    if (!on) { this._hideHoverTile(); this.clearDemoSelection(); }   // leaving Demolish clears all red highlights
   }
 
   _makeGhost(key) {

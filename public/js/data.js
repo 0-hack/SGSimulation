@@ -37,11 +37,15 @@ export const CATEGORIES = [
 // Routes the player can draw, by transport mode: Road (cars), Railway (trains),
 // Airport (planes). `width` drives traffic/lane spacing; `renderHW` (when set) is
 // the drawn carriageway half-width — Road matches the slim 1966 survey-map roads.
+// `buildClear` is how close (world units, from the road centreline) a building may
+// stand: a tight kerb-fronting clearance so you can pack a dense city right up to
+// the street, NOT the old fat ~3.5-unit footpath buffer that sterilised ~1.4 tiles
+// of land on each side of every thin road.
 export const ROAD_TYPES = {
-  road:    { name: 'Road',    icon: '🚗', lanes: 2, width: 1.8, renderHW: 0.34, speed: 12, cost: 6,  asphalt: '#3a3e45' },
-  railway: { name: 'Railway', icon: '🚆', lanes: 1, width: 2.6, speed: 0,  cost: 30, asphalt: '#5b5040', rail: true },
-  mrt:     { name: 'MRT',     icon: '🚇', lanes: 1, width: 2.4, speed: 0,  cost: 45, asphalt: '#9aa6b0', rail: true, mrt: true, alwaysElevated: true },
-  airport: { name: 'Airport', icon: '✈️', lanes: 1, width: 9,   speed: 0,  cost: 80, asphalt: '#35383d', air: true },
+  road:    { name: 'Road',    icon: '🚗', lanes: 2, width: 1.8, renderHW: 0.34, buildClear: 1.5, speed: 12, cost: 6,  asphalt: '#3a3e45' },
+  railway: { name: 'Railway', icon: '🚆', lanes: 1, width: 2.6, buildClear: 2.4, speed: 0,  cost: 30, asphalt: '#5b5040', rail: true },
+  mrt:     { name: 'MRT',     icon: '🚇', lanes: 1, width: 2.4, buildClear: 2.2, speed: 0,  cost: 45, asphalt: '#9aa6b0', rail: true, mrt: true, alwaysElevated: true },
+  airport: { name: 'Airport', icon: '✈️', lanes: 1, width: 9,   buildClear: 8,   speed: 0,  cost: 80, asphalt: '#35383d', air: true },
 };
 
 // ---------------------------------------------------------------------------

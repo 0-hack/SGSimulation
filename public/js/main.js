@@ -65,7 +65,8 @@ const G = {
   lastFrame: 0,
   hudTimer: 0,
   build: { cat: 'residential', selected: null, bulldoze: false, theme: null, rot: 0 },
-  adjust: null,                 // { x, y, key, theme, rot } — a placed-but-not-yet-committed object being positioned
+  adjust: null,                 // { x, y, key, theme, rot, wx, wz } — a placed-but-not-yet-committed object being positioned (wx/wz = exact world spot)
+  demoTarget: null,             // what the Demolish tool is currently aimed at (building/heritage/road/rail/air)
   pieceRot: 0,                  // running orientation of the road piece being aimed (for the dial)
   road: { tool: null, type: 'road', elevated: false, pending: [] },
   reclaim: { active: false },  // land-reclamation tool: tap sea to fill land
@@ -103,9 +104,9 @@ function boot() {
   // 🗑 Remove: discard the object you're positioning (nothing was charged yet).
   $('tool-banner-remove').onclick = () => { if (G.adjust) cancelAdjust('Removed.'); };
   $('tool-banner-rotate').onclick = () => {
-    if (G.adjust) rotateAdjust(Math.PI / 12);
+    if (G.adjust) rotateAdjust(Math.PI / 4);              // 45° snap (drag/dial give any angle)
     else if (G.view && G.view.pieceMode) rotatePieceBy(Math.PI / 4);
-    else if (G.build.selected) rotateBuild(Math.PI / 12); // 15° per tap (pre-aims the ghost)
+    else if (G.build.selected) rotateBuild(Math.PI / 4);  // 45° per tap (pre-aims the ghost)
   };
   // commit bar for a drawn route / reclaim area
   $('dc-build').onclick = () => { const fn = G._pendingCommit; closeCommit(false); if (fn) fn(); };
@@ -117,11 +118,14 @@ function boot() {
     if (e.key === 'Escape' && G.adjust) { cancelAdjust('Cancelled.'); e.preventDefault(); return; }
     if (e.key === 'Escape' && activeTool()) { cancelTools(); toast('Stopped placing.'); e.preventDefault(); }
     if (e.key === 'r' || e.key === 'R') {
-      if (G.adjust) { rotateAdjust(Math.PI / 12); e.preventDefault(); }
+      if (G.adjust) { rotateAdjust(Math.PI / 4); e.preventDefault(); }
       else if (G.view && G.view.pieceMode) { rotatePieceBy(Math.PI / 4); e.preventDefault(); }
-      else if (G.build.selected) { rotateBuild(Math.PI / 12); e.preventDefault(); }
+      else if (G.build.selected) { rotateBuild(Math.PI / 4); e.preventDefault(); }
     }
   });
+  // The facing dial in the banner is draggable for fine angle (Sims-style),
+  // complementing drag-to-rotate on the building itself.
+  setupRotDialDrag();
 
   // speed buttons + adjustable rate chip
   document.querySelectorAll('.spd').forEach((b) => {
@@ -206,7 +210,7 @@ function showGameShell(playing = true) {
   $('toolbar').classList.remove('hidden');
   if (!G.view) {
     try {
-      G.view = new Scene3D($('city'), { onTileTap: onTileTap, onGroundTap: onGroundTap });
+      G.view = new Scene3D($('city'), { onTileTap: onTileTap, onGroundTap: onGroundTap, onDemolishHover: onDemolishHover, onAdjustRotate: onAdjustRotate });
       window.__sgview = G.view; // exposed for debugging / disaster FX hooks
     } catch (err) {
       reportSceneError(err);
@@ -448,36 +452,38 @@ function onReclaimArea(pts) {
   });
 }
 
-function onTileTap(x, y) {
+function onTileTap(x, y, world) {
   if (G.readOnly) { toast('You are visiting — building is disabled here.'); return; }
   const b = G.build;
   if (b.bulldoze) {
-    const here = G.state.grid[y]?.[x];
-    if (here) {                                    // a real grid building (player-built OR an economy landmark)
-      const name = here.heritage ? (here.name || BUILDINGS[here.k]?.name) : BUILDINGS[here.k]?.name;
-      if (demolish(G.state, x, y)) { G.view.onDemolished(x, y); if (here.heritage) G.view.removeHeritageVisual(x, y); afterEdit(); toast(`Demolished ${name || 'building'}.`); }
-      return;
+    // Remove EXACTLY what the cursor is over — recomputed from the precise tap point
+    // (so a touch with no prior hover is still exact), else the hovered target.
+    const t = findDemoTarget({ x, y }, world) || G.demoTarget;
+    if (!t) { toast('Nothing to demolish here.'); return; }
+    if (t.kind === 'building') {
+      const here = G.state.grid[t.y]?.[t.x];
+      if (here && demolish(G.state, t.x, t.y)) { G.view.onDemolished(t.x, t.y); if (here.heritage) G.view.removeHeritageVisual(t.x, t.y); afterEdit(); toast(`Demolished ${t.label}.`); }
+    } else if (t.kind === 'heritage') {
+      if (G.view.removeHeritageVisual && G.view.removeHeritageVisual(t.x, t.y)) { afterEdit(); toast(`Demolished ${t.label || 'building'}.`); }
+    } else {
+      removeInfraTarget(t);
     }
-    if (G.view.removeHeritageVisual && G.view.removeHeritageVisual(x, y)) { afterEdit(); toast('Demolished.'); return; } // decorative town shophouse (not in the economy)
-    // no building here — try transport infrastructure (road / railway / MRT viaduct / runway)
-    const w = G.view.worldOfCell(x, y);
-    if (w && demolishInfraAt(w.x, w.z)) return;
-    toast('Nothing to demolish here.');
+    G.demoTarget = null; G.view.showDemoHighlight(null);
     return;
   }
-  // While positioning a placed object, a tap MOVES it to the new spot (shift).
+  // While positioning a placed object, a tap MOVES it to the exact spot (sub-cell).
   if (G.adjust) {
-    let tx = x, ty = y;
-    if (G.adjust.key === 'mrt') { const s = G.view._nearestTrackCell(x, y, 4, true); if (s && placementOk(s.x, s.y)) { tx = s.x; ty = s.y; alignAdjustToViaduct(tx, ty); } }
+    let tx = x, ty = y, wx = world && world.x, wz = world && world.z;
+    if (G.adjust.key === 'mrt') { const s = G.view._nearestTrackCell(x, y, 4, true); if (s && placementOk(s.x, s.y)) { tx = s.x; ty = s.y; wx = undefined; wz = undefined; alignAdjustToViaduct(tx, ty); } }
     if (!placementOk(tx, ty)) { toast('Can\'t put it there.'); return; }
-    G.adjust.x = tx; G.adjust.y = ty; G.view.moveAdjust(tx, ty);
+    G.adjust.x = tx; G.adjust.y = ty; G.adjust.wx = wx; G.adjust.wz = wz; G.view.moveAdjust(tx, ty, wx, wz);
     return;
   }
   const heritage = G.view.heritageAt && G.view.heritageAt(x, y);
   if (b.selected) {
-    // MRT stations snap onto the MRT line you've drawn, so the two link up.
-    let tx = x, ty = y;
-    if (b.selected === 'mrt') { const s = G.view._nearestTrackCell(x, y, 4, true); if (s && placementOk(s.x, s.y)) { tx = s.x; ty = s.y; } }
+    // MRT stations snap onto the MRT line you've drawn (cell-locked, no free offset).
+    let tx = x, ty = y, wx = world && world.x, wz = world && world.z;
+    if (b.selected === 'mrt') { const s = G.view._nearestTrackCell(x, y, 4, true); if (s && placementOk(s.x, s.y)) { tx = s.x; ty = s.y; wx = undefined; wz = undefined; } }
     if (!placementOk(tx, ty)) {
       if (G.view.heritageAt && G.view.heritageAt(tx, ty)) toast(`🏛 ${G.view.heritageAt(tx, ty)} — a 1965 landmark already stands here.`);
       else if (!G.view.isLand(tx, ty)) toast('You can only build on land. 🏝️');
@@ -489,11 +495,11 @@ function onTileTap(x, y) {
     const theme = BUILDINGS[b.selected].customizable ? b.theme : null;
     let rot = b.rot || 0;
     if (b.selected === 'mrt') { const w = G.view.worldOfCell(tx, ty); const info = G.view._viaductInfoAt(w.x, w.z, 2.5 * 2.2); if (info) rot = info.bearing; } // face along the track
-    G.adjust = { x: tx, y: ty, key: b.selected, theme, rot };
-    G.view.enterAdjust(tx, ty, b.selected, theme, G.adjust.rot);
+    G.adjust = { x: tx, y: ty, key: b.selected, theme, rot, wx, wz };
+    G.view.enterAdjust(tx, ty, b.selected, theme, G.adjust.rot, wx, wz);
     updateToolBanner();
     const linked = b.selected === 'mrt' && (tx !== x || ty !== y) ? ' Linked to the MRT line.' : '';
-    toast(`Positioning ${BUILDINGS[b.selected].name}.${linked} ↻ Rotate · tap to move · ✓ Done.`);
+    toast(`Positioning ${BUILDINGS[b.selected].name}.${linked} Drag it to rotate · tap to move · ✓ Done.`);
   } else {
     // inspect
     const cell = G.state.grid[y][x];
@@ -533,7 +539,14 @@ function commitAdjust() {
   }
   const theme = BUILDINGS[a.key].customizable ? a.theme : null;
   build(G.state, a.x, a.y, a.key, theme);
-  if (G.state.grid[a.y][a.x]) G.state.grid[a.y][a.x].r = a.rot || 0;   // keep the chosen orientation
+  const cell = G.state.grid[a.y][a.x];
+  if (cell) {
+    cell.r = a.rot || 0;                                  // keep the chosen orientation
+    if (a.wx != null && a.wz != null) {                   // keep the chosen sub-cell spot (free placement)
+      const ctr = G.view.worldOfCell(a.x, a.y);
+      cell.ox = a.wx - ctr.x; cell.oz = a.wz - ctr.z;
+    }
+  }
   G.view.clearAdjust();
   G.view.syncConstruction(G.state);   // it now tops out over time
   G.adjust = null;
@@ -579,9 +592,11 @@ function updateToolBanner() {
   const piece = G.road.tool === 'straight' || G.road.tool === 'curveL' || G.road.tool === 'curveR';
   if (adjusting) {
     const name = BUILDINGS[G.adjust.key]?.name || 'object';
-    $('tool-banner-text').innerHTML = `<b>⏸ Positioning · ${name}</b><br><span class="tb-sub">↻ Rotate · tap a new spot to move · 🗑 Remove · ✓ Done to confirm</span>`;
+    $('tool-banner-text').innerHTML = `<b>⏸ Positioning · ${name}</b><br><span class="tb-sub">Drag it to rotate · tap a new spot to move · dial / ↻ for snaps · 🗑 Remove · ✓ Done</span>`;
+  } else if (G.build.bulldoze) {
+    $('tool-banner-text').innerHTML = `<b>🚜 Demolish</b><br><span class="tb-sub">Hover a building or road to target it, then tap</span>`;
   } else {
-    const rotHint = G.build.selected ? ' · ⟳ / R rotates 15°, then tap to place' : '';
+    const rotHint = G.build.selected ? ' · drag to rotate after placing' : '';
     $('tool-banner-text').innerHTML = `<b>⏸ Edit mode · ${t.label}</b><br><span class="tb-sub">Time paused — tap the map to ${t.verb}${rotHint}</span>`;
   }
   $('tool-banner-rotate').classList.toggle('hidden', !(adjusting || piece || G.build.selected));
@@ -626,6 +641,32 @@ function updateRotDial() {
   if (face) face.style.transform = `rotate(${deg}deg)`;   // top-down footprint turns with the building
   const d = $('tool-banner-deg'); if (d) d.textContent = deg + '°';
 }
+// Make the facing dial a draggable control: scrub it to set any angle precisely,
+// for whatever is currently being aimed (pending object, selected building, or
+// road piece). Pairs with drag-to-rotate on the building for quick + fine control.
+function setupRotDialDrag() {
+  const dial = $('tool-banner-dial'); if (!dial) return;
+  let dragging = false;
+  const angleAt = (e) => {
+    const r = dial.getBoundingClientRect();
+    return Math.atan2(e.clientY - (r.top + r.height / 2), e.clientX - (r.left + r.width / 2));
+  };
+  const apply = (e) => {
+    const rad = ((angleAt(e) % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+    if (G.adjust) { G.adjust.rot = rad; G.view.setAdjustRotation(rad); }
+    else if (G.view && G.view.pieceMode) { rotatePieceBy(rad - (G.pieceRot || 0)); return; }
+    else if (G.build.selected) { G.build.rot = rad; if (G.view) G.view.setBuildRotation(rad); }
+    else return;
+    updateRotDial();
+  };
+  dial.addEventListener('pointerdown', (e) => { if (!rotDialState().show) return; dragging = true; try { dial.setPointerCapture(e.pointerId); } catch {} apply(e); e.preventDefault(); e.stopPropagation(); });
+  dial.addEventListener('pointermove', (e) => { if (dragging) { apply(e); e.preventDefault(); } });
+  const stop = (e) => { if (dragging) { dragging = false; try { dial.releasePointerCapture(e.pointerId); } catch {} } };
+  dial.addEventListener('pointerup', stop);
+  dial.addEventListener('pointercancel', stop);
+  dial.style.cursor = 'grab';
+  dial.title = 'Drag to set the facing angle';
+}
 // Enter/leave edit mode: pause time (the loop checks G.editPause), freeze the
 // world animation, and flag the UI so it's obvious editing is on.
 function setEditPause(on) {
@@ -666,26 +707,88 @@ function placeRoundabout(x, z) {
   afterEdit();
   toast('Roundabout built.');
 }
-// Demolish the nearest piece of transport infrastructure to a world point: a road,
-// a railway/MRT viaduct, or an airport runway. Used by the standard Demolish tool.
-function demolishInfraAt(x, z) {
-  const polyMin = (pts) => { let m = 1e9; for (let i = 0; i < pts.length - 1; i++) m = Math.min(m, segPointDistW(x, z, pts[i], pts[i + 1])); return m; };
-  let best = null, bestD = 6;
+// ---- Demolish targeting ----------------------------------------------------
+// What will the Demolish tool remove for a given cursor? A building (or heritage
+// landmark) on the tile under the cursor wins — you're pointing AT it. Otherwise
+// the nearest piece of transport infrastructure to the EXACT cursor point, but
+// only within a TIGHT per-type radius (on or just beside the carriageway), so you
+// hit the road you're actually over — not a random nearby one two tiles away.
+function findDemoTarget(cell, world) {
+  if (cell) {
+    const here = G.state.grid[cell.y] && G.state.grid[cell.y][cell.x];
+    if (here) {
+      const name = here.heritage ? (here.name || BUILDINGS[here.k]?.name) : BUILDINGS[here.k]?.name;
+      return { kind: 'building', x: cell.x, y: cell.y, label: name || 'building' };
+    }
+    const h = G.view.heritageAt && G.view.heritageAt(cell.x, cell.y);
+    if (h) return { kind: 'heritage', x: cell.x, y: cell.y, label: h };
+  }
+  if (world) return findInfraTarget(world.x, world.z);
+  return null;
+}
+// Nearest road / railway / MRT viaduct / runway to (x,z), within its own tight hit
+// radius. Returns { kind, i, poly, label } — poly is the world polyline so the
+// scene can trace a red highlight over the exact piece that will be removed.
+function findInfraTarget(x, z) {
+  let best = null, bestD = Infinity;
+  const consider = (kind, i, poly, hit, label) => {
+    if (!poly || poly.length < 2) return;
+    let d = 1e9; for (let k = 0; k < poly.length - 1; k++) d = Math.min(d, segPointDistW(x, z, poly[k], poly[k + 1]));
+    if (d <= hit && d < bestD) { bestD = d; best = { kind, i, poly, label }; }
+  };
   const roads = G.state.roads;
   roads.edges.forEach((e, i) => {
-    let d = 1e9;
-    if (e.poly && e.poly.length) { for (const p of e.poly) d = Math.min(d, Math.hypot(p.x - x, p.z - z)); }
-    else { const a = roads.nodes[e.a], b = roads.nodes[e.b]; if (a && b) { const mx = e.ctrl ? e.ctrl.x : (a.x + b.x) / 2, mz = e.ctrl ? e.ctrl.z : (a.z + b.z) / 2; for (const [px, pz] of [[a.x, a.z], [mx, mz], [b.x, b.z]]) d = Math.min(d, Math.hypot(px - x, pz - z)); } }
-    if (d < bestD) { bestD = d; best = { kind: 'road', i }; }
+    const T = ROAD_TYPES[e.type] || ROAD_TYPES.road;
+    const hit = (T.renderHW || T.width / 2) + 1.6;        // on or just beside the tarmac
+    let poly;
+    if (e.poly && e.poly.length) poly = e.poly;
+    else { const a = roads.nodes[e.a], b = roads.nodes[e.b]; if (!a || !b) return; poly = e.ctrl ? [a, e.ctrl, b] : [a, b]; }
+    consider('road', i, poly, hit, 'Road');
   });
-  (G.state.railways || []).forEach((e, i) => { const pts = (e.pts || e).map((p) => ({ x: p[0], z: p[1] })); if (pts.length >= 2) { const d = polyMin(pts); if (d < bestD) { bestD = d; best = { kind: 'rail', i, mrt: !!e.mrt }; } } });
-  (G.state.airstrips || []).forEach((e, i) => { const pts = (e.pts || e).map((p) => ({ x: p[0], z: p[1] })); if (pts.length >= 2) { const d = polyMin(pts); if (d < bestD) { bestD = d; best = { kind: 'air', i }; } } });
-  if (!best) return false;
-  if (best.kind === 'road') { roads.edges.splice(best.i, 1); G.view.rebuildRoadNet(); toast('Road removed.'); }
-  else if (best.kind === 'rail') { G.state.railways.splice(best.i, 1); G.view._buildPlayerRailways(G.state); toast(best.mrt ? 'MRT viaduct removed.' : 'Railway removed.'); }
-  else { G.state.airstrips.splice(best.i, 1); G.view._buildPlayerAirstrips(G.state); toast('Runway removed.'); }
+  (G.state.railways || []).forEach((e, i) => {
+    const pts = (e.pts || e).map((p) => ({ x: p[0], z: p[1] }));
+    consider('rail', i, pts, (e.mrt ? ROAD_TYPES.mrt.width : ROAD_TYPES.railway.width) / 2 + 1.8, e.mrt ? 'MRT viaduct' : 'Railway');
+  });
+  (G.state.airstrips || []).forEach((e, i) => {
+    const pts = (e.pts || e).map((p) => ({ x: p[0], z: p[1] }));
+    consider('air', i, pts, ROAD_TYPES.airport.width / 2 + 2, 'Runway');
+  });
+  return best;
+}
+// Remove exactly the infrastructure piece the player targeted (by array index).
+function removeInfraTarget(t) {
+  if (t.kind === 'road') { G.state.roads.edges.splice(t.i, 1); G.view.rebuildRoadNet(); toast('Road removed.'); }
+  else if (t.kind === 'rail') { const e = G.state.railways[t.i]; G.state.railways.splice(t.i, 1); G.view._buildPlayerRailways(G.state); toast(e && e.mrt ? 'MRT viaduct removed.' : 'Railway removed.'); }
+  else if (t.kind === 'air') { G.state.airstrips.splice(t.i, 1); G.view._buildPlayerAirstrips(G.state); toast('Runway removed.'); }
+  else return false;
   afterEdit();
   return true;
+}
+// Cursor moved in Demolish mode: figure out the target, highlight it on the map,
+// and name it in the banner so the player sees what a tap will remove.
+function onDemolishHover(cell, world) {
+  if (G.readOnly || !G.build.bulldoze) return;
+  const t = findDemoTarget(cell, world);
+  G.demoTarget = t;
+  G.view.showDemoHighlight(t);
+  updateDemoBanner(t);
+}
+// Drag-rotated the pending building with the cursor — mirror the angle into the
+// game state + the toolbar dial so everything stays in sync.
+function onAdjustRotate(rad) {
+  if (!G.adjust) return;
+  G.adjust.rot = ((rad % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+  updateRotDial();
+}
+function updateDemoBanner(t) {
+  if (!G.build.bulldoze || G.adjust) return;
+  const txt = $('tool-banner-text'); if (!txt) return;
+  if (t) {
+    const isB = t.kind === 'building' || t.kind === 'heritage';
+    txt.innerHTML = `<b>🚜 Demolish · ${t.label}</b><br><span class="tb-sub">Tap to remove the highlighted ${isB ? 'building' : t.label.toLowerCase()}</span>`;
+  } else {
+    txt.innerHTML = `<b>🚜 Demolish</b><br><span class="tb-sub">Hover a building or road to target it, then tap</span>`;
+  }
 }
 // Distance from point (x,z) to segment a-b ({x,z}).
 function segPointDistW(x, z, a, b) {
@@ -905,9 +1008,10 @@ function refreshPanel() {
         G.build.bulldoze = !G.build.bulldoze;
         G.build.selected = null; G.reclaim.active = false; G.view.setPaintMode(false);
         G.road.tool = null; G.view.setRoadMode(false); G.view.showRoadPreview([]);
+        G.demoTarget = null;
         G.view.setBulldoze(G.build.bulldoze);
         refreshPanel();
-        if (G.build.bulldoze) { closeSheet(); toast('Demolish mode: tap any building to remove it. ✕ Done / Esc to stop.'); }
+        if (G.build.bulldoze) { closeSheet(); toast('Demolish mode: hover a building or road to target it, then tap to remove it. ✕ Done / Esc to stop.'); }
         updateToolBanner();
       },
     }));
@@ -1188,10 +1292,13 @@ window.addEventListener('beforeunload', () => { if (!G.readOnly) saveLocal(); })
 
 // Minimal hook for automated tests to drive the place-then-adjust flow directly.
 window.__sg = {
-  onTileTap, rotateAdjust, commitAdjust,
+  onTileTap, rotateAdjust, commitAdjust, findDemoTarget, onDemolishHover, onAdjustRotate,
   cancelAdjust: (m) => cancelAdjust(m),
   selectBuilding: (k) => { clearAdjustSilently(); G.build.selected = k; G.build.bulldoze = false; if (G.view) G.view.setPreview(k, G.build.theme); updateToolBanner(); },
+  setBulldoze: (on) => { clearAdjustSilently(); G.build.selected = null; G.build.bulldoze = !!on; G.demoTarget = null; if (G.view) G.view.setBulldoze(!!on); updateToolBanner(); },
   get adjust() { return G.adjust; },
+  get demoTarget() { return G.demoTarget; },
+  get build() { return G.build; },
 };
 
 boot();

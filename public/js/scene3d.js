@@ -154,10 +154,12 @@ const AIRPORT = {
 };
 
 export class Scene3D {
-  constructor(canvas, { onTileTap, onGroundTap } = {}) {
+  constructor(canvas, { onTileTap, onGroundTap, onDemolishHover, onAdjustRotate } = {}) {
     this.canvas = canvas;
     this.onTileTap = onTileTap;
     this.onGroundTap = onGroundTap;       // freeform road drawing taps
+    this.onDemolishHover = onDemolishHover; // cursor moved in Demolish mode -> classify+highlight target
+    this.onAdjustRotate = onAdjustRotate;   // drag-rotated the pending building -> sync angle to UI
     this.roadMode = false;
     this.edgePts = []; this.edgeLen = []; this.edgeMeta = []; this.edgeN1 = []; this.edgeN2 = []; this.edgeMid = []; this.navAdj = []; this.navNodes = [];
     this.state = null;
@@ -1531,6 +1533,12 @@ export class Scene3D {
       if (this.paintMode && this.onPaint && !this._panDrag && this._pointers.size === 1) {
         this._painting = true; this._paintSeen = new Set(); this._paintAt(pos(e));
       }
+      // Sims-style rotate: grabbing the pending building and dragging swivels it to
+      // face the cursor (instead of orbiting the camera). Only when pressing on it.
+      this._rotDrag = false;
+      if (this._adjust && !this._panDrag && this._pointers.size === 1 && this._overAdjust(pos(e))) {
+        this._rotDrag = true;
+      }
     });
     c.addEventListener('contextmenu', (e) => e.preventDefault()); // free the right button for panning
     c.addEventListener('pointermove', (e) => {
@@ -1566,6 +1574,11 @@ export class Scene3D {
         return;
       }
       if (this._painting) { this._paintAt(p); return; }     // drag paints cells (reclamation)
+      if (this._rotDrag && this._adjust) {                  // swivel the pending building to face the cursor
+        const g = this._raycastGround(p);
+        if (g) { const ang = Math.atan2(g.x - this._adjust.wx, g.z - this._adjust.wz); this.setAdjustRotation(ang); if (this.onAdjustRotate) this.onAdjustRotate(ang); }
+        return;
+      }
       if (this._panDrag) { this._pan(dx, dy); this._hover(p); return; } // drag to shift the view
       this.cam.theta -= dx * 0.005;
       this.cam.phi = THREE.MathUtils.clamp(this.cam.phi - dy * 0.005, TOP_DOWN_PHI, 1.28);
@@ -1573,6 +1586,7 @@ export class Scene3D {
     });
     const end = (e) => {
       const p = pos(e);
+      const wasRot = this._rotDrag; this._rotDrag = false;   // a rotate-grab is never a tap
       if (this._drawing) { // finish a route/area stroke
         // make sure the point where the finger/mouse lifts is part of the route, and
         // SNAP that final point onto a road/rail/runway end if we're releasing on one
@@ -1601,7 +1615,7 @@ export class Scene3D {
         return;
       }
       const quick = performance.now() - this._downTime < 400;
-      if (!this._moved && quick && this._pointers.size <= 1) {
+      if (!this._moved && quick && this._pointers.size <= 1 && !wasRot) {
         if (this.pieceMode && this.onPieceChain) {           // stage a Lego piece into the pending chain
           this._piecePreview(p);                              // make sure the ghost matches the tap point
           if (this._piecePts && this._piecePts.length >= 2) {
@@ -1613,8 +1627,9 @@ export class Scene3D {
           const g = this._raycastGround(p);
           if (g) this.onGroundTap(g.x, g.z);
         } else {
-          const cell = this._raycastCell(p);
-          if (cell && this.onTileTap) this.onTileTap(cell.x, cell.y);
+          const g = this._groundPoint(p);
+          const cell = g ? this._cellOfWorld(g) : null;
+          if (cell && this.onTileTap) this.onTileTap(cell.x, cell.y, g);  // exact sub-cell point too
         }
       }
       this._pointers.delete(e.pointerId);
@@ -1623,7 +1638,7 @@ export class Scene3D {
     };
     c.addEventListener('pointerup', end);
     c.addEventListener('pointercancel', end);
-    c.addEventListener('pointerleave', () => { if (this.ghost) this.ghost.visible = false; this._hideHoverTile(); this._clearSnapMarker(); this._hideDrawCursor(); if (this.pieceMode) this.clearRoadPreview(); });
+    c.addEventListener('pointerleave', () => { if (this.ghost) this.ghost.visible = false; this._hideHoverTile(); this._hideDemoLine(); this._clearSnapMarker(); this._hideDrawCursor(); if (this.pieceMode) this.clearRoadPreview(); });
     c.addEventListener('wheel', (e) => {
       e.preventDefault();
       this.cam.radius = THREE.MathUtils.clamp(this.cam.radius * (e.deltaY < 0 ? 0.92 : 1.08), this.MIN_R, this.MAX_R);
@@ -1752,13 +1767,14 @@ export class Scene3D {
     return hit ? { x: hit.point.x, z: hit.point.z } : null;
   }
   _raycastGround(p) { return this._groundPoint(p); }
-  _raycastCell(p) {
-    const g = this._groundPoint(p);
+  // World point -> the grid cell that contains it (the occupancy cell), or null off-grid.
+  _cellOfWorld(g) {
     if (!g) return null;
     const gx = Math.floor((g.x / WORLD + 0.5) * N), gy = Math.floor((0.5 - g.z / WORLD) * N);
     if (gx < 0 || gy < 0 || gx >= N || gy >= N) return null;
     return { x: gx, y: gy };
   }
+  _raycastCell(p) { return this._cellOfWorld(this._groundPoint(p)); }
   // Paint the cell under screen point p (once per cell per drag).
   _paintAt(p) {
     const cell = this._raycastCell(p); if (!cell || !this.onPaint) return;
@@ -1967,7 +1983,10 @@ export class Scene3D {
     for (let e = 0; e < this.edgePts.length; e++) {
       const pts = this.edgePts[e]; if (!pts || pts.length < 2) continue;
       const T = ROAD_TYPES[this.edgeMeta[e]?.type] || ROAD_TYPES.road;
-      const margin = T.width / 2 + 2.6;          // carriageway + footpath clearance
+      // Tight kerb clearance (per road type) so you can build right beside the
+      // street — not the old fat carriageway+footpath buffer that blocked ~1.4
+      // tiles each side and made a dense roadside city impossible.
+      const margin = (T.buildClear != null) ? T.buildClear : (T.width / 2 + 2.6);
       for (let i = 0; i < pts.length - 1; i++) {
         if (segPointDist(c.x, c.z, pts[i].x, pts[i].z, pts[i + 1].x, pts[i + 1].z) < margin) return true;
       }
@@ -2015,12 +2034,18 @@ export class Scene3D {
       return;
     }
     if (!this.previewKey && !this.bulldoze) { if (this.ghost) this.ghost.visible = false; this._hideHoverTile(); return; }
-    const cell = this._raycastCell(p);
-    this.hoverCell = cell;
-    this._updateGhost();
+    const g = this._raycastGround(p);                 // exact sub-cell cursor point
+    const cell = this._cellOfWorld(g);
+    this.hoverCell = cell; this.hoverWorld = g;
+    // DEMOLISH: hand the exact cursor point to the game, which decides what's under
+    // it (building vs road/rail/runway), highlights it, and names it. Keeping that
+    // decision in one place (the game) is what stops the "removes a random nearby
+    // thing" bug — the click later removes EXACTLY what was highlighted here.
+    if (this.bulldoze) { if (this.onDemolishHover) this.onDemolishHover(cell, g); return; }
+    this._updateGhost();                              // building ghost follows the cursor freely (sub-cell)
     if (cell) {
       const occupied = this.buildings.has(`${cell.x},${cell.y}`);
-      const ok = this.bulldoze ? occupied : (this.isLand(cell.x, cell.y) && !occupied && !this.isRoadAt(cell.x, cell.y));
+      const ok = this.isLand(cell.x, cell.y) && !occupied && !this.isRoadAt(cell.x, cell.y);
       this._updateHoverTile(cell.x, cell.y, ok);
     } else this._hideHoverTile();
   }
@@ -2048,6 +2073,31 @@ export class Scene3D {
     this._tileHi.visible = true;
   }
   _hideHoverTile() { if (this._tileHi) this._tileHi.visible = false; }
+  // Highlight exactly what the Demolish tool will remove under the cursor, so you
+  // can SEE the target before tapping: a red tile for a building, or a thick red
+  // ribbon tracing the road / railway / runway. `target` is the game's verdict.
+  showDemoHighlight(target) {
+    if (!target) { this._hideHoverTile(); this._hideDemoLine(); return; }
+    if (target.kind === 'building' || target.kind === 'heritage') {
+      this._hideDemoLine();
+      this._updateHoverTile(target.x, target.y, false);   // red = will be removed
+    } else {
+      this._hideHoverTile();
+      this._showDemoLine(target.poly);
+    }
+  }
+  _showDemoLine(poly) {
+    if (!poly || poly.length < 2) { this._hideDemoLine(); return; }
+    const pts = poly.map((p) => new THREE.Vector3(p.x, this._heightAt(p.x, p.z) + 0.5, p.z));
+    const curve = new THREE.CatmullRomCurve3(pts);
+    const geo = new THREE.TubeGeometry(curve, Math.max(6, pts.length * 2), 1.3, 7, false);
+    if (!this._demoLine) {
+      const mat = new THREE.MeshBasicMaterial({ color: 0xff4632, transparent: true, opacity: 0.65, depthTest: false });
+      this._demoLine = new THREE.Mesh(geo, mat); this._demoLine.renderOrder = 7; this.scene.add(this._demoLine);
+    } else { this._demoLine.geometry.dispose(); this._demoLine.geometry = geo; }
+    this._demoLine.visible = true;
+  }
+  _hideDemoLine() { if (this._demoLine) this._demoLine.visible = false; }
   // While in draw mode (and not mid-stroke), light up the nearest existing road
   // end the cursor/pencil is near, so the player knows they can start there.
   _drawHover(p) {
@@ -2321,6 +2371,7 @@ export class Scene3D {
   setBulldoze(on) {
     this.bulldoze = on; this.previewKey = null;
     this._makeGhost(null);
+    if (!on) { this._hideHoverTile(); this._hideDemoLine(); }   // leaving Demolish clears its target highlight
   }
 
   _makeGhost(key) {
@@ -2340,23 +2391,33 @@ export class Scene3D {
   }
   // ---- place-then-adjust: a PENDING object sits on the ground (not yet committed)
   // so the player can rotate / move / remove it and SEE it before confirming -------
-  enterAdjust(x, y, key, theme, rot) {
+  enterAdjust(x, y, key, theme, rot, wx, wz) {
     this.clearAdjust();
     const g = makeBuilding(key, theme); g.scale.setScalar(MODEL_SCALE);
     const c = cellToWorld(x, y), hy = this.terrainHeight(x, y);
-    g.position.set(c.x, hy, c.z); g.rotation.y = rot || 0; this.scene.add(g);
+    const px = (wx != null) ? wx : c.x, pz = (wz != null) ? wz : c.z;   // exact sub-cell spot
+    g.position.set(px, hy, pz); g.rotation.y = rot || 0; this.scene.add(g);
     const ring = new THREE.Mesh(new THREE.RingGeometry(TILE * 0.55, TILE * 0.82, 28),
       new THREE.MeshBasicMaterial({ color: 0x8fe05a, transparent: true, opacity: 0.9, side: THREE.DoubleSide }));
-    ring.rotation.x = -Math.PI / 2; ring.position.set(c.x, hy + 0.14, c.z); this.scene.add(ring);
-    this._adjust = { x, y, key, theme, rot: rot || 0, mesh: g, ring };
+    ring.rotation.x = -Math.PI / 2; ring.position.set(px, hy + 0.14, pz); this.scene.add(ring);
+    this._adjust = { x, y, key, theme, rot: rot || 0, wx: px, wz: pz, mesh: g, ring };
     if (this.ghost) this.ghost.visible = false;
   }
   setAdjustRotation(rot) { if (this._adjust) { this._adjust.rot = rot; this._adjust.mesh.rotation.y = rot; } }
-  moveAdjust(x, y) {
+  moveAdjust(x, y, wx, wz) {
     if (!this._adjust) return;
     const c = cellToWorld(x, y), hy = this.terrainHeight(x, y);
-    this._adjust.mesh.position.set(c.x, hy, c.z); this._adjust.ring.position.set(c.x, hy + 0.14, c.z);
-    this._adjust.x = x; this._adjust.y = y;
+    const px = (wx != null) ? wx : c.x, pz = (wz != null) ? wz : c.z;
+    this._adjust.mesh.position.set(px, hy, pz); this._adjust.ring.position.set(px, hy + 0.14, pz);
+    this._adjust.x = x; this._adjust.y = y; this._adjust.wx = px; this._adjust.wz = pz;
+  }
+  // Is the cursor over (or right next to) the pending building? Used to start a
+  // drag-rotate instead of orbiting the camera.
+  _overAdjust(p) {
+    if (!this._adjust) return false;
+    const g = this._groundPoint(p); if (!g) return false;
+    const dx = g.x - this._adjust.wx, dz = g.z - this._adjust.wz;
+    return (dx * dx + dz * dz) < (TILE * 1.4) * (TILE * 1.4);
   }
   clearAdjust() {
     if (!this._adjust) return;
@@ -2383,13 +2444,13 @@ export class Scene3D {
   }
   _updateGhost() {
     if (this._adjust) { if (this.ghost) this.ghost.visible = false; return; }  // pending object shown instead
-    if (!this.ghost || !this.hoverCell) { if (this.ghost) this.ghost.visible = false; return; }
+    if (!this.ghost || !this.hoverCell || !this.hoverWorld) { if (this.ghost) this.ghost.visible = false; return; }
     const { x, y } = this.hoverCell;
-    const c = cellToWorld(x, y);
-    this.ghost.position.set(c.x, this.terrainHeight(x, y), c.z);
+    const w = this.hoverWorld;                          // exact sub-cell cursor point (free placement)
+    this.ghost.position.set(w.x, this.terrainHeight(x, y), w.z);
     this.ghost.rotation.y = this.buildRot || 0; // preview the player's chosen orientation
     this.ghost.visible = true;
-    const ok = this.isLand(x, y) && !this.buildings.has(`${x},${y}`);
+    const ok = this.isLand(x, y) && !this.buildings.has(`${x},${y}`) && !this.isRoadAt(x, y);
     this.ghost.traverse((o) => { if (o.material) o.material.color.set(ok ? 0x9be15d : 0xff5a5a); });
   }
 
@@ -2445,9 +2506,11 @@ export class Scene3D {
     if (this.buildings.has(id)) this.removeBuilding(x, y);
     if (this.sites.has(id)) this._removeSite(id);
     const c = cellToWorld(x, y);
-    const wrap = new THREE.Group();
-    wrap.position.set(c.x, this.terrainHeight(x, y), c.z);
     const rcell = this.state?.grid?.[y]?.[x];
+    const ox = (rcell && typeof rcell.ox === 'number') ? rcell.ox : 0;   // free sub-cell offset
+    const oz = (rcell && typeof rcell.oz === 'number') ? rcell.oz : 0;
+    const wrap = new THREE.Group();
+    wrap.position.set(c.x + ox, this.terrainHeight(x, y), c.z + oz);
     wrap.rotation.y = (rcell && typeof rcell.r === 'number') ? rcell.r : (Math.floor(Math.random() * 4)) * Math.PI / 2;
     wrap.scale.setScalar(MODEL_SCALE); // whole site (building + crane) sized to the live cell
     this.scene.add(wrap);
@@ -2494,8 +2557,10 @@ export class Scene3D {
     if (!b) return; // unknown building key (e.g. a landmark def missing) — skip
     const group = makeBuilding(key, theme);
     const c = cellToWorld(x, y);
-    group.position.set(c.x, this.terrainHeight(x, y), c.z);
     const rcell = this.state?.grid?.[y]?.[x];
+    const ox = (rcell && typeof rcell.ox === 'number') ? rcell.ox : 0;   // free sub-cell offset
+    const oz = (rcell && typeof rcell.oz === 'number') ? rcell.oz : 0;
+    group.position.set(c.x + ox, this.terrainHeight(x, y), c.z + oz);
     group.rotation.y = (rcell && typeof rcell.r === 'number') ? rcell.r : (Math.floor(Math.random() * 4)) * Math.PI / 2;
     group.castShadow = true;
     this.scene.add(group);

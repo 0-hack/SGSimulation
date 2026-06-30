@@ -192,6 +192,9 @@ export class Scene3D {
     this.weather = { type: 'sunny', cloud: 0.15, rain: 0, wind: 0.3, windDir: 0.6 };
     this._wTarget = { cloud: 0.15, rain: 0, wind: 0.3 };
     this._weatherTimer = 0;
+    this._fires = [];            // active fires (flame + smoke) — see _updateFire
+    this._dryness = 0.35;        // 0..1 how parched the land is; rises in dry sun, falls in rain (drives fire risk)
+    this._igniteTimer = 8;
     this.devFactor = 1;          // skyline grows with national development
 
     this._initRenderer();
@@ -3398,11 +3401,17 @@ export class Scene3D {
       cl.position.set((Math.random() - 0.5) * WORLD * 2, 80 + Math.random() * 30, (Math.random() - 0.5) * WORLD * 2);
       this.scene.add(cl); this.clouds.push(cl);
     }
-    const count = 1500, geo = new THREE.BufferGeometry(), p = new Float32Array(count * 3);
-    for (let i = 0; i < count; i++) { p[i * 3] = (Math.random() - 0.5) * 260; p[i * 3 + 1] = Math.random() * 150; p[i * 3 + 2] = (Math.random() - 0.5) * 260; }
+    // Rain belongs to CLOUDS, not the camera: each drop is tied to a cloud and falls
+    // beneath it (recycling under the cloud as it drifts), so rain follows the heavy
+    // clouds across the sky instead of always pouring on wherever you look.
+    const count = 1800, geo = new THREE.BufferGeometry(), p = new Float32Array(count * 3);
+    this._rainCloud = new Int16Array(count);
+    for (let i = 0; i < count; i++) { p[i * 3] = 0; p[i * 3 + 1] = -9999; p[i * 3 + 2] = 0; this._rainCloud[i] = i % this.clouds.length; }
     geo.setAttribute('position', new THREE.BufferAttribute(p, 3));
-    this.rain = new THREE.Points(geo, new THREE.PointsMaterial({ color: 0xbcd6ee, size: 1.2, transparent: true, opacity: 0, depthWrite: false }));
+    this.rain = new THREE.Points(geo, new THREE.PointsMaterial({ color: 0xbcd6ee, size: 1.3, transparent: true, opacity: 0, depthWrite: false }));
     this.rain.visible = false; this.scene.add(this.rain);
+    this._cloudBaseCol = new THREE.Color(0xffffff);
+    this._bolts = []; this._boltTimer = 4 + Math.random() * 6; this._flash = 0; this._windDrift = 0;
     this._weatherTimer = 6 + Math.random() * 12;
     this._pickWeather();
   }
@@ -3415,7 +3424,7 @@ export class Scene3D {
       storm: { cloud: 0.95, rain: 1, wind: 0.9 },
     }[type];
     this.weather.type = type; this._wTarget = { ...W };
-    this.weather.windDir += (Math.random() - 0.5) * 1.6;
+    this.weather.windDir += (Math.random() - 0.5) * 0.5;   // a gentle nudge; the slow drift below does the rest
     this._weatherTimer = 8 + Math.random() * 22; // in-game days
   }
   _updateWeather(dt) {
@@ -3428,36 +3437,192 @@ export class Scene3D {
 
     this.fog.far = this.fogFar; // baseline (haze may lower it later)
 
-    // clouds drift with the wind
-    const wx = Math.cos(w.windDir), wz = Math.sin(w.windDir), sp = 6 + w.wind * 40;
-    this.cloudMat.opacity = THREE.MathUtils.clamp(w.cloud * 0.85, 0, 0.85);
+    // WIND drifts slowly and randomly (a lazy, bounded wobble on the bearing), so the
+    // whole cloudscape eases from one heading to another over minutes, never snapping.
+    this._windDrift = THREE.MathUtils.clamp(this._windDrift * 0.97 + (Math.random() - 0.5) * 0.02, -0.3, 0.3);
+    w.windDir += this._windDrift * dt;
+    const wx = Math.cos(w.windDir), wz = Math.sin(w.windDir), sp = 4 + w.wind * 20;  // gentle drift
+    // heavy weather greys the clouds (and the more it rains, the darker they get)
+    const dark = THREE.MathUtils.clamp(w.cloud * 0.45 + w.rain * 0.5, 0, 0.78);
+    this.cloudMat.color.copy(this._cloudBaseCol).lerp(new THREE.Color(0x59616b), dark);
+    this.cloudMat.opacity = THREE.MathUtils.clamp(w.cloud * 0.9, 0, 0.92);
     for (const cl of this.clouds) {
       cl.position.x += wx * sp * dt; cl.position.z += wz * sp * dt;
-      const lim = WORLD * 1.1;
+      const lim = WORLD * 1.15;
       if (cl.position.x > lim) cl.position.x = -lim; if (cl.position.x < -lim) cl.position.x = lim;
       if (cl.position.z > lim) cl.position.z = -lim; if (cl.position.z < -lim) cl.position.z = lim;
     }
     // overcast dims the sun and greys the sky gradient
     this.sun.intensity *= (1 - w.cloud * 0.55);
-    if (this.skyTop) {
-      const grey = new THREE.Color(0xb7bdc2);
-      this.skyTop.lerp(grey, w.cloud * 0.5);
-      this.skyBot.lerp(grey, w.cloud * 0.5);
-    }
-    // rain
+    const grey = new THREE.Color(0xb7bdc2), white = new THREE.Color(0xeaf0f6);
+    if (this.skyTop) { this.skyTop.lerp(grey, w.cloud * 0.5); this.skyBot.lerp(grey, w.cloud * 0.5); }
+
+    // RAIN — each drop falls beneath the cloud it belongs to (only clouds near the
+    // view actually drop visible rain), so the rain travels with the heavy clouds
+    // rather than always pouring straight down on the camera.
     const eff = Math.max(w.rain, this._floodRain ? 1 : 0);
-    const vis = eff > 0.02; this.rain.visible = vis;
-    if (vis) {
-      this.rain.material.opacity = Math.min(0.75, eff * 0.85);
-      const arr = this.rain.geometry.attributes.position.array;
-      const fall = 150 * (0.6 + eff), sx = wx * w.wind * 70, sz = wz * w.wind * 70;
+    const arr = this.rain.geometry.attributes.position.array;
+    let anyRain = false;
+    if (eff > 0.02) {
+      const RAIN_R = 380, fall = 130 * (0.7 + eff), sx = wx * w.wind * 26, sz = wz * w.wind * 26;
       const tx = this.target.x, tz = this.target.z;
       for (let i = 0; i < arr.length; i += 3) {
-        arr[i] += sx * dt; arr[i + 1] -= fall * dt; arr[i + 2] += sz * dt;
-        if (arr[i + 1] < 0) { arr[i + 1] = 120 + Math.random() * 40; arr[i] = tx + (Math.random() - 0.5) * 260; arr[i + 2] = tz + (Math.random() - 0.5) * 260; }
+        const cl = this.clouds[this._rainCloud[i / 3]]; if (!cl) { arr[i + 1] = -9999; continue; }
+        const near = Math.hypot(cl.position.x - tx, cl.position.z - tz) < RAIN_R;
+        if (!near) { arr[i + 1] = -9999; continue; }                      // this cloud is off-view: no drops shown
+        if (arr[i + 1] <= 0 || arr[i + 1] > cl.position.y + 6) {          // (re)spawn just under the cloud
+          arr[i] = cl.position.x + (Math.random() - 0.5) * 58; arr[i + 1] = cl.position.y - 4 - Math.random() * 8; arr[i + 2] = cl.position.z + (Math.random() - 0.5) * 58;
+        } else { arr[i] += sx * dt; arr[i + 1] -= fall * dt; arr[i + 2] += sz * dt; }
+        anyRain = true;
       }
       this.rain.geometry.attributes.position.needsUpdate = true;
+      this.rain.material.opacity = Math.min(0.75, eff * 0.85);
     }
+    this.rain.visible = anyRain;
+
+    // LIGHTNING — in a real storm (heavy rain + wind) the sky flashes and a bolt
+    // jumps from a cloud to the ground, briefly lighting the whole scene.
+    if (eff > 0.55 && w.wind > 0.45) {
+      this._boltTimer -= dt;
+      if (this._boltTimer <= 0) { this._boltTimer = 2.5 + Math.random() * 8; this._flash = 1; this._spawnBolt(); }
+    }
+    if (this._flash > 0) {
+      this._flash = Math.max(0, this._flash - dt * 4.5);
+      if (this.hemi) this.hemi.intensity += this._flash * 1.7;            // the whole scene lights up
+      if (this.skyTop) { this.skyTop.lerp(white, this._flash * 0.6); this.skyBot.lerp(white, this._flash * 0.6); }
+    }
+    for (let i = this._bolts.length - 1; i >= 0; i--) {
+      const b = this._bolts[i]; b.life -= dt; b.mesh.material.opacity = Math.max(0, b.life / b.dur);
+      if (b.life <= 0) { this.scene.remove(b.mesh); b.mesh.geometry.dispose(); this._bolts.splice(i, 1); }
+    }
+  }
+  // A jagged lightning bolt from a near storm cloud down to the ground (fades fast).
+  _spawnBolt() {
+    const near = this.clouds.filter((c) => Math.hypot(c.position.x - this.target.x, c.position.z - this.target.z) < 420);
+    const cl = (near.length ? near : this.clouds)[Math.floor(Math.random() * (near.length || this.clouds.length))];
+    if (!cl) return;
+    const x0 = cl.position.x + (Math.random() - 0.5) * 40, z0 = cl.position.z + (Math.random() - 0.5) * 40, y0 = cl.position.y;
+    const pts = []; let x = x0, z = z0;
+    const steps = 9;
+    for (let i = 0; i <= steps; i++) { const y = y0 * (1 - i / steps); pts.push(new THREE.Vector3(x, y, z)); x += (Math.random() - 0.5) * 14; z += (Math.random() - 0.5) * 14; }
+    const g = new THREE.BufferGeometry().setFromPoints(pts);
+    const m = new THREE.Line(g, new THREE.LineBasicMaterial({ color: 0xfdfdff, transparent: true, opacity: 1 }));
+    m.renderOrder = 9; this.scene.add(m); this._bolts.push({ mesh: m, life: 0.22, dur: 0.22 });
+  }
+
+  // ---- fire & smoke ---------------------------------------------------------
+  // Hot, dry weather over "unventilated" ground with no greenery to cool it lets the
+  // land catch alight: a dry forest, plants or a crowded building start to smoke and
+  // burn, and the fire can jump to its neighbours. Greenery nearby and rain hold it
+  // back; rain puts it out. Players SEE the smoke columns and flames.
+  _updateFire(dt) {
+    const w = this.weather;
+    // dryness eases toward a weather-set target: parched in clear hot sun, damp in
+    // rain/cloud. (Singapore is humid, so it dries out slowly and wets fast.)
+    const dryTarget = THREE.MathUtils.clamp(0.92 - w.rain * 1.5 - w.cloud * 0.55, 0.08, 0.95);
+    this._dryness += (dryTarget - this._dryness) * Math.min(1, dt * (w.rain > 0.1 ? 0.3 : 0.02));
+
+    this._igniteTimer -= dt;
+    if (this._igniteTimer <= 0) {
+      this._igniteTimer = 1.5 + Math.random() * 3;
+      if (this._dryness > 0.6 && this._fires.length < 5 && this.state && Math.random() < (this._dryness - 0.55) * 1.3) {
+        const c = this._fireCandidate(); if (c) this._igniteFire(c.x, c.z, c.kind, c.key);
+      }
+    }
+
+    const wx = Math.cos(w.windDir), wz = Math.sin(w.windDir);
+    for (let i = this._fires.length - 1; i >= 0; i--) {
+      const f = this._fires[i];
+      f.life -= dt * (w.rain > 0.3 ? 4 + w.rain * 7 : 1);          // rain douses it fast
+      const k = Math.max(0, f.life / f.dur), flick = 0.7 + 0.3 * Math.sin(performance.now() / 55 + f.seed);
+      if (f.flame) { f.flame.scale.setScalar((0.6 + 0.4 * flick) * (0.4 + 0.6 * k) * f.scale); f.flame.rotation.y += dt * 3.5; }
+      if (f.light) f.light.intensity = (1.3 + flick) * k;
+      const sp = f.smoke.geometry.attributes.position.array;
+      for (let j = 0; j < sp.length; j += 3) {
+        sp[j] += (wx * (4 + w.wind * 16) + (Math.random() - 0.5) * 2.5) * dt;
+        sp[j + 1] += (11 + Math.random() * 7) * dt;
+        sp[j + 2] += (wz * (4 + w.wind * 16) + (Math.random() - 0.5) * 2.5) * dt;
+        if (sp[j + 1] > f.baseY + 50) { sp[j] = f.x + (Math.random() - 0.5) * 3; sp[j + 1] = f.baseY + Math.random() * 3; sp[j + 2] = f.z + (Math.random() - 0.5) * 3; }
+      }
+      f.smoke.geometry.attributes.position.needsUpdate = true;
+      f.smoke.material.opacity = 0.5 * Math.min(1, k * 1.6 + 0.25);
+      f.spread -= dt;
+      if (f.spread <= 0 && k > 0.4 && this._dryness > 0.62 && this._fires.length < 6) {
+        f.spread = 2 + Math.random() * 3;
+        const n = this._fireNeighbour(f); if (n) this._igniteFire(n.x, n.z, n.kind, n.key);
+      }
+      if (f.life <= 0) this._extinguish(i);
+    }
+  }
+  // How much living greenery surrounds a point (0 = bare/unventilated, 1 = leafy).
+  _greeneryNear(x, z) {
+    if (!this.natureCells) return 0;
+    let n = 0; const R2 = 16 * 16;
+    for (const [, g] of this.natureCells) { if (!g.visible) continue; const dx = g.position.x - x, dz = g.position.z - z; if (dx * dx + dz * dz < R2 && ++n >= 4) break; }
+    return THREE.MathUtils.clamp(n / 4, 0, 1);
+  }
+  // Pick something near the view to ignite, weighted by fire risk: dry forest & plants
+  // burn readily; a crowded building with no greenery around it (poorly ventilated) is
+  // the next most at-risk.
+  _fireCandidate() {
+    const R = Math.max(150, this.cam.radius * 1.25), tx = this.target.x, tz = this.target.z, pool = [];
+    if (this.natureCells) for (const [key, g] of this.natureCells) {
+      if (!g.visible || g.userData._fire) continue;
+      if (Math.hypot(g.position.x - tx, g.position.z - tz) > R) continue;
+      pool.push({ x: g.position.x, z: g.position.z, kind: 'tree', key, risk: 0.55 });
+    }
+    for (const [key, e] of this.buildings) {
+      if (!e.group || e.group.userData._fire) continue;
+      const px = e.group.position.x, pz = e.group.position.z;
+      if (Math.hypot(px - tx, pz - tz) > R) continue;
+      pool.push({ x: px, z: pz, kind: 'building', key, risk: 0.25 + (1 - this._greeneryNear(px, pz)) * 0.6 });
+    }
+    if (this.state && this.state.plants) this.state.plants.forEach((pl, pi) => { if (Math.hypot(pl.x - tx, pl.z - tz) <= R) pool.push({ x: pl.x, z: pl.z, kind: 'plant', key: pi, risk: 0.5 }); });
+    if (!pool.length) return null;
+    let tot = 0; for (const c of pool) tot += c.risk; let r = Math.random() * tot;
+    for (const c of pool) { r -= c.risk; if (r <= 0) return c; }
+    return pool[pool.length - 1];
+  }
+  _fireNeighbour(f) {
+    const R = 14;
+    if (this.natureCells) for (const [key, g] of this.natureCells) { if (g.visible && !g.userData._fire && Math.hypot(g.position.x - f.x, g.position.z - f.z) < R) return { x: g.position.x, z: g.position.z, kind: 'tree', key }; }
+    for (const [key, e] of this.buildings) { if (e.group && !e.group.userData._fire && Math.hypot(e.group.position.x - f.x, e.group.position.z - f.z) < R) return { x: e.group.position.x, z: e.group.position.z, kind: 'building', key }; }
+    return null;
+  }
+  // Light a fire at (x,z): flickering flames + a warm point light + a rising smoke column.
+  igniteFireAt(x, z, kind = 'tree', key = null) { return this._igniteFire(x, z, kind, key); }
+  _igniteFire(x, z, kind, key) {
+    if (!this._fireGroup) { this._fireGroup = new THREE.Group(); this.scene.add(this._fireGroup); }
+    const baseY = this._meshTriY(x, z);
+    const grp = new THREE.Group(); grp.position.set(x, baseY, z); this._fireGroup.add(grp);
+    const flame = new THREE.Group();
+    for (const [c, s, h] of [[0xff7b1a, 1.0, 4.2], [0xffd23a, 0.58, 2.6]]) {
+      const cone = new THREE.Mesh(new THREE.ConeGeometry(0.9 * s, h, 7), new THREE.MeshBasicMaterial({ color: c, transparent: true, opacity: 0.92, depthWrite: false }));
+      cone.position.y = h / 2; flame.add(cone);
+    }
+    flame.renderOrder = 8; grp.add(flame);
+    const light = new THREE.PointLight(0xff7a2a, 1.6, 64, 2); light.position.y = 3; grp.add(light);
+    const N = 26, spos = new Float32Array(N * 3);
+    for (let i = 0; i < N; i++) { spos[i * 3] = x + (Math.random() - 0.5) * 3; spos[i * 3 + 1] = baseY + Math.random() * 44; spos[i * 3 + 2] = z + (Math.random() - 0.5) * 3; }
+    const sg = new THREE.BufferGeometry(); sg.setAttribute('position', new THREE.BufferAttribute(spos, 3));
+    const smoke = new THREE.Points(sg, new THREE.PointsMaterial({ color: 0x4a4a4a, size: 5, transparent: true, opacity: 0.5, depthWrite: false }));
+    this._fireGroup.add(smoke);
+    const dur = 8 + Math.random() * 10;
+    this._fires.push({ x, z, baseY, kind, key, flame, light, smoke, grp, life: dur, dur, seed: Math.random() * 9, scale: kind === 'building' ? 1.7 : kind === 'tree' ? 1.2 : 0.7, spread: 2.5 });
+    if (kind === 'tree' && this.natureCells) { const g = this.natureCells.get(key); if (g) g.userData._fire = true; }
+    if (kind === 'building') { const e = this.buildings.get(key); if (e && e.group) e.group.userData._fire = true; }
+    this._spawnDust(x, z, 0x5a5a5a, 8);
+    return this._fires[this._fires.length - 1];
+  }
+  _extinguish(i) {
+    const f = this._fires[i]; if (!f) return;
+    if (f.kind === 'tree' && this.natureCells) { const g = this.natureCells.get(f.key); if (g) { g.visible = false; g.userData._fire = false; (this._removedTrees || (this._removedTrees = new Set())).add(f.key); } }   // burned this session; regrows on reload
+    else if (f.kind === 'plant' && this.removePlantNear) this.removePlantNear(f.x, f.z, 2.0);
+    else if (f.kind === 'building') { const e = this.buildings.get(f.key); if (e && e.group) e.group.userData._fire = false; }
+    if (f.grp && this._fireGroup) this._fireGroup.remove(f.grp);
+    if (f.smoke && this._fireGroup) { this._fireGroup.remove(f.smoke); f.smoke.geometry.dispose(); }
+    this._spawnDust(f.x, f.z, 0x8a8a8a, 16);
+    this._fires.splice(i, 1);
   }
 
   // ---- disasters ------------------------------------------------------------
@@ -3596,7 +3761,18 @@ export class Scene3D {
     // (scene.background gradient + fog colour are committed at the end of render,
     //  after weather/haze have had a chance to tint skyTop/skyBot.)
 
-    const glow = this.nightFactor;
+    // Building lights run on the GRID: they only glow if the city is actually
+    // generating enough power. In a shortage the whole skyline browns out
+    // (dimming with the supply ratio) and flickers; with no generation at all the
+    // windows go dark — the visible end of the power chain reaction the economy models.
+    const pr = this.shortages ? this.shortages.powerRatio : null;
+    let powerLight = 1;
+    if (this.shortages && this.shortages.power) {
+      const ratio = THREE.MathUtils.clamp(pr == null ? 0.2 : pr, 0.04, 1);
+      const flick = 0.78 + 0.22 * Math.sin(performance.now() / 70) * (1 - ratio);   // unstable supply flickers
+      powerLight = ratio * flick;
+    }
+    const glow = this.nightFactor * powerLight;
     for (const m of ALL_MATS) {
       // After dark only lit windows / signs glow warm (facades carry a window
       // emissive map; lit designer parts have glowK >= 1). Plain bodies don't
@@ -4936,6 +5112,7 @@ export class Scene3D {
 
     this._updateDayNight();
     this._updateWeather(adt);
+    if (!this.frozen) this._updateFire(adt);   // hot-dry weather + no greenery -> smoke & fire
     this._updateDevelopment(adt);
     this._updatePeople(adt);
     this._updateBoats(adt);

@@ -403,7 +403,7 @@ function updateShortages() {
   const d = derive(G.state);
   const power = d.powerRatio < 1;
   const water = d.waterRatio < 1;
-  G.view.setShortages({ power, water });
+  G.view.setShortages({ power, water, powerRatio: d.powerRatio, waterRatio: d.waterRatio });
 
   const alerts = $('alerts');
   const msgs = [];

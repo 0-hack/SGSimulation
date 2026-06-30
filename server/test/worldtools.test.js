@@ -398,6 +398,75 @@ try {
   ok(dirt.found, 'dirt roads render as a vertex-coloured ribbon');
   ok(dirt.green && dirt.brown, 'the dirt path fades from a worn brown centre to grass-green edges (not a flat brown stripe)');
 
+  // ---- WEATHER: rain falls under the clouds (not snapped to the camera) -------
+  const rainT = await p.evaluate(() => {
+    const v = window.__sgview, tx = v.target.x, tz = v.target.z;
+    v.clouds.forEach((c, i) => c.position.set(i === 0 ? tx + 200 : tx + 6000, 92, tz));   // one cloud near (offset), rest far
+    v.weather = { ...v.weather, rain: 1, cloud: 0.95, wind: 0.5, windDir: 0 }; v._wTarget = { cloud: 0.95, rain: 1, wind: 0.5 }; v._floodRain = false;
+    for (let i = 0; i < 50; i++) v._updateWeather(0.04);
+    const arr = v.rain.geometry.attributes.position.array, cx = v.clouds[0].position.x, cz = v.clouds[0].position.z;
+    let active = 0, nearCloud = 0, nearCam = 0;
+    for (let i = 0; i < arr.length; i += 3) { if (arr[i + 1] > -9000) { active++; if (Math.hypot(arr[i] - cx, arr[i + 2] - cz) < 90) nearCloud++; if (Math.hypot(arr[i] - tx, arr[i + 2] - tz) < 90) nearCam++; } }
+    return { active, nearCloud, nearCam, visible: v.rain.visible };
+  });
+  ok(rainT.visible && rainT.active > 0, 'rain falls under a cloud near the view');
+  ok(rainT.nearCloud === rainT.active && rainT.nearCam === 0, 'every raindrop sits under the cloud, NOT snapped to the camera');
+
+  // ---- WEATHER: wind drifts slowly; storms throw lightning --------------------
+  const wxT = await p.evaluate(() => {
+    const v = window.__sgview, d0 = v.weather.windDir;
+    for (let i = 0; i < 200; i++) v._updateWeather(0.05);                 // ~10s of drift
+    const drift = Math.abs(v.weather.windDir - d0);
+    const tx = v.target.x, tz = v.target.z;
+    v.clouds.forEach((c) => c.position.set(tx + (Math.random() - 0.5) * 200, 95, tz + (Math.random() - 0.5) * 200));
+    v.weather = { ...v.weather, rain: 1, wind: 0.9 }; v._wTarget = { ...v._wTarget, rain: 1, wind: 0.9 }; v._boltTimer = -1; v._bolts.length = 0; v._flash = 0;
+    v._updateWeather(0.02);
+    return { drift: +drift.toFixed(4), bolts: v._bolts.length, flash: v._flash > 0 };
+  });
+  ok(wxT.drift > 0 && wxT.drift < 1.5, `wind direction drifts slowly & continuously (${wxT.drift} rad over ~10s)`);
+  ok(wxT.bolts > 0 && wxT.flash, 'a storm throws a lightning bolt and flashes the sky');
+
+  // ---- POWER: building lights run on the grid; a shortage browns them out -----
+  const powT = await p.evaluate(() => {
+    const v = window.__sgview, N = v.land.length;
+    let bx = -1, by = -1;
+    for (let y = 4; y < N - 4 && bx < 0; y += 2) for (let x = 4; x < N - 4; x++) { if (v.isLand(x, y) && !v.isRoadAt(x, y) && !v.buildings.has(`${x},${y}`) && !v.state.grid[y][x] && !(v.heritageLabelAt && v.heritageLabelAt(x, y))) { bx = x; by = y; break; } }
+    if (bx < 0) return { found: false };
+    v.state.grid[by][bx] = { k: 'hdb_flat' }; v._addMesh(bx, by, 'hdb_flat', false);
+    const grp = v.buildings.get(`${bx},${by}`).group;
+    let lit = null; grp.traverse((o) => { if (o.material) { const m = Array.isArray(o.material) ? o.material[0] : o.material; if (m.emissiveMap || (m.userData && (m.userData.glowK ?? 0) >= 1)) lit = m; } });
+    if (!lit) return { found: false };
+    v.gameDays = 0.0;   // midnight -> lights on
+    v.setShortages({ power: false, water: false, powerRatio: 1.5 }); v._updateDayNight(); const full = lit.emissiveIntensity;
+    v.setShortages({ power: true, water: false, powerRatio: 0.1 }); v._updateDayNight(); const short = lit.emissiveIntensity;
+    v.setShortages({ power: true, water: false, powerRatio: 0.0 }); v._updateDayNight(); const blackout = lit.emissiveIntensity;
+    return { found: true, full: +full.toFixed(3), short: +short.toFixed(3), blackout: +blackout.toFixed(3) };
+  });
+  ok(powT.found && powT.full > 0, 'building windows glow at night when there is enough power');
+  ok(powT.short < powT.full * 0.5, `a power shortage browns out the city lights (${powT.short} vs ${powT.full})`);
+  ok(powT.blackout <= powT.short && powT.blackout < powT.full * 0.25, 'with little or no generation the lights nearly go out');
+
+  // ---- FIRE: hot/dry land smokes & burns; rain douses it; greenery cools it ----
+  const fireT = await p.evaluate(() => {
+    const v = window.__sgview, tx = v.target.x, tz = v.target.z;
+    const before = v._fires.length;
+    const f = v.igniteFireAt(tx, tz, 'building', null);
+    const ignited = v._fires.length === before + 1 && !!f.flame && !!f.smoke && !!f.light;
+    const y0 = f.smoke.geometry.attributes.position.array[1];
+    v.weather = { ...v.weather, rain: 0, wind: 0.3 };
+    v._updateFire(0.1);
+    const smokeRises = f.smoke.geometry.attributes.position.array[1] > y0;
+    v.weather = { ...v.weather, rain: 1 };
+    let steps = 0; while (v._fires.length > 0 && steps < 300) { v._updateFire(0.2); steps++; }
+    const doused = v._fires.length === 0;
+    v._dryness = 0.5; v.weather = { ...v.weather, rain: 1, cloud: 0.9 }; for (let i = 0; i < 60; i++) v._updateFire(0.1); const wet = v._dryness;
+    v.weather = { ...v.weather, rain: 0, cloud: 0 }; for (let i = 0; i < 500; i++) v._updateFire(0.1); const dry = v._dryness;
+    return { ignited, smokeRises, doused, wet: +wet.toFixed(2), dry: +dry.toFixed(2) };
+  });
+  ok(fireT.ignited && fireT.smokeRises, 'a fire raises flickering flames + a warm light + a rising smoke column');
+  ok(fireT.doused, 'rain puts the fire out');
+  ok(fireT.dry > fireT.wet + 0.2, `the land dries out under clear sun and wets in rain (wet ${fireT.wet} -> dry ${fireT.dry})`);
+
   // ---- RECLAIM menu is reachable + renders (category tabs wrap, not off-screen)
   const rc = await p.evaluate(() => {
     document.querySelector('.tool[data-panel="build"]').click();

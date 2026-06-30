@@ -337,6 +337,67 @@ try {
   ok(dmBull.found && dmBull.hoverChunk, 'hovering a road shows a live red chunk (what a click would tear out)');
   ok(dmBull.staged && dmBull.split && dmBull.queued, 'a single click bulldozes a brush-sized chunk of road (CS-style)');
 
+  // ---- VEHICLES: realistic (slower) speeds + acceleration/braking ------------
+  const veh = await p.evaluate(() => {
+    const v = window.__sgview;
+    v._ensureVehicles(14);
+    const vs = v.vehicles; if (!vs.length) return { found: false };
+    const allAccel = vs.every((a) => typeof a.vel === 'number' && typeof a.accel === 'number' && typeof a.brake === 'number' && a.accel > 0);
+    const maxSpeed = Math.max(...vs.map((a) => a.speed)), minSpeed = Math.min(...vs.map((a) => a.speed));
+    // easing: a stopped car must climb back up gradually, not jump straight to cruise
+    const a = vs.find((x) => (v.edgeLen[x.edge] || 0) > 20) || vs[0];
+    a.t = a.dir > 0 ? 0.05 : 0.95; a.vel = 0; const cruise = a.speed;
+    v._advanceNet([a], 0.05);                                    // ONE short step from a standstill
+    const eased = a.vel > 0 && a.vel < cruise * 0.6;
+    return { found: true, allAccel, maxSpeed: +maxSpeed.toFixed(2), minSpeed: +minSpeed.toFixed(2), eased };
+  });
+  ok(veh.found && veh.allAccel, 'every vehicle carries acceleration & braking state');
+  ok(veh.maxSpeed < 5 && veh.minSpeed > 0, `vehicle speeds are realistic & slower (fastest ${veh.maxSpeed} u/s — was 7)`);
+  ok(veh.eased, 'a stopped vehicle accelerates back up smoothly (no instant jump to cruise)');
+
+  // ---- TRAINS: reduced line speeds + accel/braking ---------------------------
+  const trn = await p.evaluate(() => {
+    const v = window.__sgview, N = v.land.length, C = v.worldOfCell(Math.round(N * 0.5), Math.round(N * 0.5));
+    const V = v.target.constructor;   // THREE.Vector3 (track points are Vector3s)
+    v._playerTrainTracks = [{ kind: 'rail', pts: [new V(C.x - 120, 0, C.z), new V(C.x + 120, 0, C.z)] }];  // a straight line to run stock on
+    v._buildTrains();
+    const trains = v._trains || []; if (!trains.length) return { found: false };
+    const allAccel = trains.every((t) => typeof t.vel === 'number' && typeof t.accel === 'number' && typeof t.brake === 'number');
+    const maxSpeed = Math.max(...trains.map((t) => t.speed));
+    const tr0 = trains[0]; tr0.u = 0.5; tr0.vel = 0; tr0.dwell = 0; const cruise = tr0.speed;
+    v._updateTrains(0.05);                                          // one step from a standstill
+    const eased = tr0.vel > 0 && tr0.vel < cruise * 0.7;
+    return { found: true, allAccel, maxSpeed: +maxSpeed.toFixed(2), eased };
+  });
+  ok(trn.found && trn.allAccel, 'every train carries acceleration & braking state');
+  ok(trn.maxSpeed < 7 && trn.eased, `train speeds are realistic & slower, and ease in/out of stations (fastest ${trn.maxSpeed} u/s — was 13)`);
+
+  // ---- 2-WAY road gets a centre lane line; 1-way does not --------------------
+  const lane = await p.evaluate(() => {
+    const v = window.__sgview, N = v.land.length, C = v.worldOfCell(Math.round(N * 0.5) + 18, Math.round(N * 0.5));
+    const markVerts = () => { const m = v.roadGroup.children.find((c) => c.material && c.material.color && Math.abs(c.material.color.getHex() - 0xfaf3d8) <= 6); return m ? m.geometry.attributes.position.count : 0; };
+    v.state.roads = { nodes: [{ x: C.x - 30, z: C.z, y: 0 }, { x: C.x + 30, z: C.z, y: 0 }], edges: [{ a: 0, b: 1, type: 'road', lanes: 2 }], islands: [] };
+    v.rebuildRoadNet(); const twoWay = markVerts();
+    v.state.roads.edges[0].oneway = true; v.rebuildRoadNet(); const oneWay = markVerts();
+    return { twoWay, oneWay };
+  });
+  ok(lane.twoWay > 0, 'a two-way road gets a dashed centre line');
+  ok(lane.oneWay < lane.twoWay, 'a one-way road has no centre line (so the two read differently)');
+
+  // ---- DIRT road: worn-brown centre fading to grass-green edges (kampong) -----
+  const dirt = await p.evaluate(() => {
+    const v = window.__sgview, N = v.land.length, C = v.worldOfCell(Math.round(N * 0.5), Math.round(N * 0.5) + 18);
+    v.state.roads = { nodes: [{ x: C.x - 30, z: C.z, y: 0 }, { x: C.x + 30, z: C.z, y: 0 }], edges: [{ a: 0, b: 1, type: 'road', dirt: true, traced: true }], islands: [] };
+    v.rebuildRoadNet();
+    const meshes = v.roadGroup.children.filter((c) => c.geometry && c.geometry.attributes && c.geometry.attributes.color);
+    if (!meshes.length) return { found: false };
+    let green = false, brown = false;
+    for (const m of meshes) { const col = m.geometry.attributes.color; for (let i = 0; i < col.count; i++) { const r = col.getX(i), g = col.getY(i), b = col.getZ(i); if (g > r + 0.05 && g > b + 0.05) green = true; if (r > g + 0.05 && r > b + 0.05) brown = true; } }
+    return { found: true, green, brown, verts: meshes[0].geometry.attributes.color.count };
+  });
+  ok(dirt.found, 'dirt roads render as a vertex-coloured ribbon');
+  ok(dirt.green && dirt.brown, 'the dirt path fades from a worn brown centre to grass-green edges (not a flat brown stripe)');
+
   // ---- RECLAIM menu is reachable + renders (category tabs wrap, not off-screen)
   const rc = await p.evaluate(() => {
     document.querySelector('.tool[data-panel="build"]').click();

@@ -57,6 +57,15 @@ const SEA_COLOR = 0x3aa0d8;   // shared by the sea, river, reservoirs & coastal 
 const DAY_CYCLE = 1;          // one full day/night cycle per in-game day (locked to the calendar)
 const TOP_DOWN_PHI = 0.06;    // default tilt: ~3° off straight-down (map view, north up; >0 keeps the look-at stable)
 const LIGHT_YEAR = 1965;      // junction traffic lights are present from the start (SG had them since the 1930s)
+// --- realistic motion -------------------------------------------------------
+// Real vehicles are FAST relative to this little island, so the world used to
+// move at a silly pace. Anchor every moving thing to real life: one world unit
+// ≈ 7 m of Singapore (a 2.5u road cell ≈ ~18 m), and let the living world play
+// at ~2× real time so the streets feel lively but believable. KMH() turns a real
+// road speed (km/h) into world units per second.
+const M_PER_UNIT = 7;          // metres of Singapore per world unit
+const TIME_COMPRESS = 2;       // the living world runs ~2× real time
+const KMH = (k) => k * (1000 / 3600) / M_PER_UNIT * TIME_COMPRESS;   // ≈ k × 0.0794 u/s
 const MRT_DECK_CLEAR = 6.3 * MODEL_SCALE;            // deck clearance = the station's concourse-floor height, so the two meet
 const MRT_MAX_SLOPE = Math.tan(20 * Math.PI / 180);  // viaduct never climbs/falls steeper than 20°
 const MRT_TRACK_GAUGE = 0.32;                        // half-spacing of the two tracks: a train sits this far off the deck centre, so up- and down-trains pass
@@ -1401,7 +1410,7 @@ export class Scene3D {
       const b = makeBoat(types[i]);
       const ang = Math.random() * Math.PI * 2;
       this.scene.add(b);
-      const lin = 0.6 + Math.random() * 0.7;   // ~0.6–1.3 world units/sec — a visible cruise, still slow vs land
+      const lin = KMH(7) + Math.random() * KMH(7);   // ~7–14 km/h harbour cruise — slow and steady vs the land traffic
       const margin = 14 + Math.random() * 50;  // how far this one rides off the Singapore shoreline
       this.boats.push({ mesh: b, ang, lin, margin, dir: Math.random() < 0.5 ? 1 : -1 });
     }
@@ -1515,18 +1524,25 @@ export class Scene3D {
       const mesh = makeAirliner(); mesh.scale.setScalar(AIRPORT.planeScale); mesh.rotation.order = 'YXZ';  // SAME size as the docked planes
       grp.add(mesh);
       const u0 = (i / COUNT + 0.12) % 1;
-      this._airportPlanes.push({ mesh, pts, parkU, GY, u: u0, speed: 0.028, parked: false, dwell: 0, didPark: u0 >= parkU });
+      this._airportPlanes.push({ mesh, pts, parkU, GY, u: u0, speed: 0.020, vf: 1, parked: false, dwell: 0, didPark: u0 >= parkU });
     }
   }
   _updateAirportPlanes(dt) {
     const DWELL = 5;   // seconds parked at the gate each lap
     for (const p of (this._airportPlanes || [])) {
+      if (p.vf == null) p.vf = 1;
+      const onGround = this._alongPoly(p.pts, p.u).y <= p.GY + 1.0;
+      // smooth speed FACTOR: stop at the gate, taxi slow on the tarmac, full speed
+      // airborne — and brake into the gate — so it accelerates/decelerates, never jumps
+      let target = p.parked ? 0 : (onGround ? 0.34 : 1.0);
+      if (!p.parked && !p.didPark && onGround) { const ahead = p.parkU - p.u; if (ahead > 0 && ahead < 0.05) target = Math.min(target, Math.max(0.05, ahead / 0.05) * 0.34); }
+      const rate = target < p.vf ? 2.2 : 1.1;             // brakes harder than it spools up
+      p.vf += THREE.MathUtils.clamp(target - p.vf, -rate * dt, rate * dt);
       if (p.parked) {
-        p.dwell -= dt; if (p.dwell <= 0) p.parked = false;
+        p.dwell -= dt; if (p.dwell <= 0 && p.vf < 0.03) p.parked = false;   // hold, then pull away smoothly
       } else {
-        const onGround = this._alongPoly(p.pts, p.u).y <= p.GY + 1.0;
         const prev = p.u;
-        p.u += dt * p.speed * (onGround ? 0.4 : 1);       // taxi / roll slower than flight
+        p.u += dt * p.speed * p.vf;
         if (p.u >= 1) { p.u -= 1; p.didPark = false; }
         if (!p.didPark && prev < p.parkU && p.u >= p.parkU) { p.u = p.parkU; p.parked = true; p.dwell = DWELL; p.didPark = true; }
       }
@@ -3168,15 +3184,31 @@ export class Scene3D {
       if (!a.mesh.visible) continue;
       if (!this.edgePts[a.edge]) continue;   // edge removed by a rebuild this frame
       const len = this.edgeLen[a.edge] || 1;
-      let adv = dt * a.speed / len;
-      if (a._lead) {
-        const gap = (a.len * 0.5 + a._lead.len * 0.5 + (a.group === 'veh' ? 1.6 : 0.5)) / len;
+      // Decide the speed we WANT right now (full cruise unless something ahead),
+      // then ease the actual speed toward it — real acceleration & braking instead
+      // of teleport-stop/teleport-go.
+      if (a.vel == null) { a.vel = a.speed; a.accel = a.speed * 1.0; a.brake = a.speed * 2.4; }
+      let desired = a.speed;
+      if (a._lead) {                                   // follow the car/person ahead
+        const gap = (a.len * 0.5 + a._lead.len * 0.5 + (a.group === 'veh' ? 2.0 : 0.6)) / len;
         const ad = a.dir > 0 ? a._lead.t - a.t : a.t - a._lead.t;
-        if (ad < gap) adv = Math.max(0, adv - (gap - ad) * 0.7);
+        desired = Math.min(desired, a.speed * THREE.MathUtils.clamp((ad - gap) / Math.max(gap, 1e-4), 0, 1));
       }
+      if (a.group === 'veh') {                         // brake smoothly for a red light ahead
+        const node = a.dir > 0 ? this.edgeN2[a.edge] : this.edgeN1[a.edge];
+        if (!this._greenFor(node, a.edge)) {
+          const stopT = a.dir > 0 ? (1 - 2.4 / len) : (2.4 / len);
+          const distU = (a.dir > 0 ? (stopT - a.t) : (a.t - stopT)) * len;   // metres-ish to the stop line
+          const BRAKE_ZONE = 9;
+          desired = Math.min(desired, a.speed * THREE.MathUtils.clamp(distU / BRAKE_ZONE, 0, 1));
+          if (distU <= 0.3) desired = 0;
+        }
+      }
+      a.vel = desired > a.vel ? Math.min(desired, a.vel + a.accel * dt) : Math.max(desired, a.vel - a.brake * dt);
+      if (a.vel < 0) a.vel = 0;
       const prevT = a.t;
-      a.t += adv * a.dir; a._lead = null;
-      // stop on red at the junction ahead (vehicles only)
+      a.t += (dt * a.vel / len) * a.dir; a._lead = null;
+      // hard safety: never roll across the red stop line even if easing overshoots
       if (a.group === 'veh') {
         const node = a.dir > 0 ? this.edgeN2[a.edge] : this.edgeN1[a.edge];
         if (!this._greenFor(node, a.edge)) {
@@ -3221,7 +3253,7 @@ export class Scene3D {
     const baseY = y + (a.group === 'veh' ? 0.0 : 0.02);
     a.mesh.position.set(x + uz * a.lane, baseY, z - ux * a.lane);
     a.mesh.rotation.y = Math.atan2(ux, uz);
-    if (moving) a.phase += dt * a.speed * a.animK;
+    if (moving) a.phase += dt * (a.vel != null ? a.vel : a.speed) * a.animK;   // stride/wheels match the actual (eased) speed
     const ud = a.mesh.userData;
     if (ud.upperLegs) {                            // pedestrian walk cycle
       const ph = a.phase, m = moving ? 1 : 0, sc = a.mesh.scale.x;
@@ -3280,11 +3312,15 @@ export class Scene3D {
     // bus fills the carriageway, instead of spilling far onto the verge as before.
     const VS = 0.26; mesh.scale.setScalar(VS);
     this.scene.add(mesh);
-    const speed = { car: 6, taxi: 6, bike: 7, trishaw: 3, lorry: 4.5, bus: 4 }[kind];
+    // realistic urban road speeds (km/h) — a car cruises ~46, a motorbike a touch
+    // faster, a trishaw barely faster than a brisk walk, buses & lorries slower.
+    const speed = { car: KMH(46), taxi: KMH(46), bike: KMH(52), trishaw: KMH(11), lorry: KMH(35), bus: KMH(33) }[kind];
+    const cruise = speed * (0.88 + Math.random() * 0.24);
     const ag = {
       mesh, len: len * VS, group: 'veh', kind, edge: this._pickEdge(),
       dir: Math.random() < 0.5 ? 1 : -1, t: Math.random(), phase: 0,
-      speed: speed * (0.85 + Math.random() * 0.3), animK: 1, laneIdx: Math.floor(Math.random() * 3),
+      speed: cruise, vel: cruise, accel: cruise * 1.0, brake: cruise * 2.6,   // ease up/down (no instant starts/stops)
+      animK: 1, laneIdx: Math.floor(Math.random() * 3),
     };
     this._assignLane(ag);
     this.vehicles.push(ag);
@@ -3333,9 +3369,10 @@ export class Scene3D {
       const { mesh, len } = makePerson(kind);
       mesh.scale.multiplyScalar(0.3);    // realistic pedestrian size against roads, cars and buildings
       this.scene.add(mesh);
-      const speed = { man: 0.7, woman: 0.65, child: 0.65, elderly: 0.42 }[kind]; // a slow, unhurried walk — far below any vehicle
+      const speed = { man: KMH(5.0), woman: KMH(4.6), child: KMH(4.4), elderly: KMH(3.4) }[kind]; // a real, unhurried walking pace
       const ag = { mesh, len, group: 'ped', kind, edge: list[Math.floor(Math.random() * list.length)],
-        dir: Math.random() < 0.5 ? 1 : -1, t: Math.random(), phase: Math.random() * 6, speed,
+        dir: Math.random() < 0.5 ? 1 : -1, t: Math.random(), phase: Math.random() * 6,
+        speed, vel: speed, accel: speed * 1.6, brake: speed * 2.0,
         animK: 11, side: Math.random() < 0.5 ? 1 : -1 }; // cadence doubled to keep the stride matched now that they're smaller & slower
       this._assignLane(ag);
       this.people.push(ag);
@@ -4025,7 +4062,8 @@ export class Scene3D {
       const era = mrt ? 'mrt' : fe.train;
       const cars = mrt ? 2 : era === 'steam' ? 3 : 4;
       const stops = this._stopsForTrack(tk);        // stations on this line are stops
-      const speed = mrt ? 13 : era === 'steam' ? 6 : 9;
+      // realistic line speeds (km/h): MRT runs fast, a steam loco is slow, diesel/EMU between
+      const speed = mrt ? KMH(75) : era === 'steam' ? KMH(38) : KMH(58);
       const rideY = mrt ? 0.12 : 0.34;
       // Put rolling stock on the line. An MRT viaduct is two-way: a train sits on
       // each track (offset to its own side) running the opposite way, so the two
@@ -4033,7 +4071,7 @@ export class Scene3D {
       const spawn = (u, dir, lateral) => {
         const train = makeTrain(era, cars);
         for (const c of train.cars) g.add(c);
-        this._trains.push({ track: tk, cars: train.cars, total, carU: (train.carLen * 1.06) / total, u, dir, lateral, stops, dwell: 0, speed, rideY });
+        this._trains.push({ track: tk, cars: train.cars, total, carU: (train.carLen * 1.06) / total, u, dir, lateral, stops, dwell: 0, speed, vel: speed, accel: speed * 0.5, brake: speed * 0.8, rideY });
       };
       if (mrt) { spawn(Math.random() * 0.25, 1, MRT_TRACK_GAUGE); spawn(1 - Math.random() * 0.25, -1, -MRT_TRACK_GAUGE); }
       else spawn(Math.random() * 0.6, 1, 0);
@@ -4058,20 +4096,30 @@ export class Scene3D {
   }
   _updateTrains(dt) {
     for (const tr of (this._trains || [])) {
-      if (tr.dwell > 0) { tr.dwell -= dt; }   // halted at a station — hold position
+      if (tr.vel == null) { tr.vel = tr.speed; tr.accel = tr.speed * 0.5; tr.brake = tr.speed * 0.8; }
+      if (tr.dwell > 0) { tr.dwell -= dt; tr.vel = Math.max(0, tr.vel - tr.brake * dt); }   // halted at a station — brake to a stand
       else {
-        const prev = tr.u;
-        tr.u += tr.dir * dt * tr.speed / tr.total;
-        // pull up at a station as we reach it — berth the train CENTRED on the platform
-        // (head leads by half the set), not with its nose at the platform and the body
-        // trailing out behind it
         const halfU = (tr.cars.length - 1) * tr.carU / 2;
+        // ease toward line speed, but slow down as we approach the next station (so the
+        // train glides into the platform and pulls away smoothly, like the real thing)
+        let desired = tr.speed;
+        const BRAKE_U = Math.min(0.5, 22 / tr.total);          // start braking ~22u before the berth
         for (const su of (tr.stops || [])) {
-          if ((prev < su && tr.u >= su) || (prev > su && tr.u <= su)) { tr.u = Math.max(0, Math.min(1, su + tr.dir * halfU)); tr.dwell = 2.4; break; }
+          const berth = su + tr.dir * halfU;
+          const ahead = tr.dir > 0 ? (berth - tr.u) : (tr.u - berth);
+          if (ahead > 0 && ahead < BRAKE_U) desired = Math.min(desired, tr.speed * Math.max(0.05, ahead / BRAKE_U));
+        }
+        tr.vel = desired > tr.vel ? Math.min(desired, tr.vel + tr.accel * dt) : Math.max(desired, tr.vel - tr.brake * dt);
+        const prev = tr.u;
+        tr.u += tr.dir * dt * tr.vel / tr.total;
+        // pull up at a station as we reach it — berth the train CENTRED on the platform
+        for (const su of (tr.stops || [])) {
+          const berth = su + tr.dir * halfU;
+          if ((prev < berth && tr.u >= berth) || (prev > berth && tr.u <= berth)) { tr.u = Math.max(0, Math.min(1, berth)); tr.dwell = 2.4; tr.vel = 0; break; }
         }
         // shuttle: when the head reaches an end, reverse (and flip which way the cars trail)
-        if (tr.u > 1) { tr.u = 1; tr.dir = -1; }
-        else if (tr.u < 0) { tr.u = 0; tr.dir = 1; }
+        if (tr.u > 1) { tr.u = 1; tr.dir = -1; tr.vel = 0; }
+        else if (tr.u < 0) { tr.u = 0; tr.dir = 1; tr.vel = 0; }
       }
       const pts = tr.track.pts, eps = 0.012, lat = tr.lateral || 0;
       for (let i = 0; i < tr.cars.length; i++) {
@@ -4323,7 +4371,12 @@ export class Scene3D {
     if (!this.roadGroup) { this.roadGroup = new THREE.Group(); this.scene.add(this.roadGroup); }
     while (this.roadGroup.children.length) { const c = this.roadGroup.children.pop(); c.geometry?.dispose?.(); this.roadGroup.remove(c); }
     const roads = this.state?.roads;
-    const pave = [[], []], road = [[], []], mark = [[], []], dirtRoad = [[], []]; // dirtRoad = brown off-track ribbons
+    const pave = [[], []], road = [[], []], mark = [[], []];
+    // Dirt road: a vertex-coloured ribbon so a kampong path reads as worn EARTH down
+    // the middle (where feet/wheels rubbed the grass off) FADING to grass-green at the
+    // edges — not a flat brown stripe. Built separately (needs per-vertex colour).
+    const dirtV = [], dirtC = [], dirtI = [];
+    const EARTH = [0.52, 0.38, 0.22], GRASS = [0.40, 0.62, 0.32];   // worn centre / grass edge
     const ribbon = (buf, pts, hw, yOff) => {
       const [v, idx] = buf;
       for (let i = 0; i < pts.length - 1; i++) {
@@ -4358,6 +4411,25 @@ export class Scene3D {
         v.push(p.x + mx * off, p.y + yOff, p.z + mz * off, p.x - mx * off, p.y + yOff, p.z - mz * off);
       }
       for (let i = 0; i < pts.length - 1; i++) { const a = base + i * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+    };
+    // A 4-across dirt ribbon: grass-green at the kerb, worn earth-brown through the
+    // middle, so the path looks like grass scuffed away by years of feet & cartwheels.
+    const dirtRibbon = (pts, hw) => {
+      const base = dirtV.length / 3;
+      const offs = [-hw, -hw * 0.42, hw * 0.42, hw], cols = [GRASS, EARTH, EARTH, GRASS];
+      for (let i = 0; i < pts.length; i++) {
+        const p = pts[i], a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)];
+        let pdx = p.x - a.x, pdz = p.z - a.z, pl = Math.hypot(pdx, pdz);
+        let ndx = b.x - p.x, ndz = b.z - p.z, nl = Math.hypot(ndx, ndz);
+        if (pl < 1e-6) { pdx = ndx; pdz = ndz; pl = nl; } if (nl < 1e-6) { ndx = pdx; ndz = pdz; nl = pl; }
+        pdx /= pl || 1; pdz /= pl || 1; ndx /= nl || 1; ndz /= nl || 1;
+        const n1x = -pdz, n1z = pdx, n2x = -ndz, n2z = ndx;
+        let mx = n1x + n2x, mz = n1z + n2z, ml = Math.hypot(mx, mz);
+        if (ml < 1e-6) { mx = n2x; mz = n2z; ml = 1; } mx /= ml; mz /= ml;
+        let cosv = mx * n2x + mz * n2z; if (cosv < 0.5) cosv = 0.5;
+        for (let k = 0; k < 4; k++) { const o = offs[k] / cosv; dirtV.push(p.x + mx * o, p.y + 0.035, p.z + mz * o); dirtC.push(cols[k][0], cols[k][1], cols[k][2]); }
+      }
+      for (let i = 0; i < pts.length - 1; i++) { const a = base + i * 4, b = a + 4; for (let k = 0; k < 3; k++) dirtI.push(a + k, a + k + 1, b + k + 1, a + k, b + k + 1, b + k); }
     };
     // a thin marking line running along the centre-line, shifted sideways by `off`
     const markLine = (pts, off, dashed, hw = 0.09) => {      const [v, idx] = mark; let acc = 0;
@@ -4404,8 +4476,11 @@ export class Scene3D {
         // trace keeps its own points, we do NOT re-curve or distort it here).
         if (raw.length < 2) continue;
         const pts = this._densifyRoad(raw, 2.0, 0.10);
-        if (dirt) ribbonSmooth(dirtRoad, pts, HWD, 0.035);        // brown off-track road
-        else ribbonSmooth(road, pts, oneway ? HW1 : HW2, 0.04);  // paved (standard or single lane)
+        if (dirt) { dirtRibbon(pts, HWD); }                       // kampong dirt path: worn brown centre, grass edges
+        else {
+          ribbonSmooth(road, pts, oneway ? HW1 : HW2, 0.04);     // paved (standard or single lane)
+          if (!oneway) markLine(pts, 0, true, 0.05);             // two-way: a dashed centre line down the middle
+        }
       }
     }
 
@@ -4418,6 +4493,7 @@ export class Scene3D {
         // player-drawn Road: a slim carriageway matching the 1966 survey-map roads —
         // a clean dark ribbon of uniform width (mitred so bends don't pinch).
         ribbonSmooth(road, pts, T.renderHW, 0.04);
+        if (!e.oneway) markLine(pts, 0, true, 0.05);   // two-way: dashed centre line; one-way roads stay blank & narrower
         if (e.elevated) this._addPillars(this.roadGroup, pts, 0.45);
         return;
       }
@@ -4453,7 +4529,16 @@ export class Scene3D {
     };
     const DS = THREE.DoubleSide;
     mk(pave, toon(0xc4bda8, { side: DS, polygonOffset: true })); mk(road, toon(0x33363d, { side: DS, polygonOffset: true })); mk(mark, toon(0xfaf3d8, { side: DS, polygonOffset: true }));
-    mk(dirtRoad, toon(0x9c6f3f, { side: DS, polygonOffset: true }));   // off-track / unpaved roads in earthy brown
+    if (dirtV.length) {   // kampong dirt path — worn earth fading to grass at the verges (per-vertex colour)
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(dirtV, 3));
+      g.setAttribute('color', new THREE.Float32BufferAttribute(dirtC, 3));
+      const nrm = new Float32Array(dirtV.length); for (let i = 1; i < nrm.length; i += 3) nrm[i] = 1;
+      g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
+      g.setIndex(dirtI);
+      const dm = new THREE.MeshToonMaterial({ vertexColors: true, side: DS, gradientMap: toonGradient(), polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
+      const m = new THREE.Mesh(g, dm); m.receiveShadow = true; this.roadGroup.add(m);
+    }
 
     this._buildNavGraph();
   }

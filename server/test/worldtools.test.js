@@ -47,30 +47,41 @@ try {
   ok(sf.painted, 'painting a surface stores + renders a ground tile');
   ok(sf.cleared, 'painting "clear" removes the surface override');
 
-  // ---- SURFACE PAINT DRAPES over slopes (no floating/clipping flat plane) ----
+  // ---- SURFACE PAINT sits on the RENDERED hill mesh (no green poking through) -----
   const sd = await p.evaluate(() => {
     const v = window.__sgview, N = v.land.length;
-    let sx = -1, sy = -1;
-    for (let y = 2; y < N - 2 && sx < 0; y += 3) for (let x = 2; x < N - 2; x++) {
+    let sx = -1, sy = -1, best = 0;     // pick the STEEPEST cell to stress the draping
+    for (let y = 2; y < N - 2; y += 2) for (let x = 2; x < N - 2; x++) {
       if (!v.isLand(x, y) || v.isRoadAt(x, y)) continue;
       const lv = v.footprintLevels ? v.footprintLevels(x, y) : null;
-      if (lv && lv.range > 0.6) { sx = x; sy = y; break; }
+      if (lv && lv.range > best && lv.range < 6) { best = lv.range; sx = x; sy = y; }
     }
     if (sx < 0) return { found: false };
     v.paintSurfaceCell(sx, sy, 'concrete');
-    const m = v.surfaceTiles.get(`${sx},${sy}`), pos = m.geometry.attributes.position;
-    let minY = Infinity, maxY = -Infinity;
-    for (let i = 0; i < pos.count; i++) { const wy = m.position.y + pos.getY(i); minY = Math.min(minY, wy); maxY = Math.max(maxY, wy); }
-    const draped = (maxY - minY) > 0.2;                         // vertices follow the slope (not one flat height)
-    // every vertex sits right on the terrain surface (hugs the hill)
-    let maxGap = 0;
-    for (let i = 0; i < pos.count; i++) { const wx = m.position.x + pos.getX(i), wz = m.position.z + pos.getZ(i); maxGap = Math.max(maxGap, Math.abs((m.position.y + pos.getY(i)) - (v._heightAt(wx, wz) + 0.07))); }
-    const hugs = maxGap < 0.05;
+    const m = v.surfaceTiles.get(`${sx},${sy}`), pos = m.geometry.attributes.position, idx = m.geometry.index;
+    let minY = Infinity, maxY = -Infinity, vErr = 0;
+    for (let i = 0; i < pos.count; i++) {
+      const wx = m.position.x + pos.getX(i), wz = m.position.z + pos.getZ(i), wy = m.position.y + pos.getY(i);
+      minY = Math.min(minY, wy); maxY = Math.max(maxY, wy);
+      vErr = Math.max(vErr, Math.abs(wy - (v._meshTriY(wx, wz) + 0.08)));   // vertices ON the triangle mesh
+    }
+    const draped = (maxY - minY) > 0.2, exact = vErr < 0.002;
+    // INTERIOR check: at every surface triangle's centre the paint must stay AT/ABOVE
+    // the terrain triangle — i.e. the green hill never protrudes through it.
+    let poke = 0;
+    for (let t = 0; t < idx.count; t += 3) {
+      const a = idx.getX(t), b = idx.getX(t + 1), c = idx.getX(t + 2);
+      const cx = (pos.getX(a) + pos.getX(b) + pos.getX(c)) / 3 + m.position.x;
+      const cz = (pos.getZ(a) + pos.getZ(b) + pos.getZ(c)) / 3 + m.position.z;
+      const cy = (pos.getY(a) + pos.getY(b) + pos.getY(c)) / 3 + m.position.y;
+      poke = Math.max(poke, v._meshTriY(cx, cz) - cy);     // > 0 means terrain rises above the paint
+    }
+    const noPoke = poke < 0.05;
     v.paintSurfaceCell(sx, sy, 'clear');
-    return { found: true, range: +(v.footprintLevels(sx, sy).range).toFixed(2), draped, hugs };
+    return { found: true, range: +best.toFixed(2), draped, exact, poke: +poke.toFixed(3), noPoke };
   });
-  ok(sd.found && sd.draped, `painted surface drapes over the slope — vertices follow the hill (range ${sd.range})`);
-  ok(sd.hugs, 'every draped vertex hugs the terrain surface (no floating / clipping)');
+  ok(sd.found && sd.draped && sd.exact, `painted surface sits exactly on the rendered hill mesh (steep range ${sd.range})`);
+  ok(sd.noPoke, `the terrain never pokes through the paint, even on the steepest cell (max protrusion ${sd.poke})`);
 
   // ---- PAINT CURSOR: a brush ring shows the footprint; hidden when the tool ends -
   const pc = await p.evaluate(() => {
@@ -94,7 +105,7 @@ try {
       const trees = g.userData && g.userData.trees; if (!trees) continue;
       const [x, y] = key.split(',').map(Number); const c = v.worldOfCell(x, y);
       const ys = [];
-      for (const t of trees) { const wy = g.position.y + t.node.position.y; maxErr = Math.max(maxErr, Math.abs(wy - v._heightAt(c.x + t.dx, c.z + t.dz))); ys.push(wy); }
+      for (const t of trees) { const wy = g.position.y + t.node.position.y; maxErr = Math.max(maxErr, Math.abs(wy - v._meshTriY(c.x + t.dx, c.z + t.dz))); ys.push(wy); }
       if (ys.length > 1) maxSpread = Math.max(maxSpread, Math.max(...ys) - Math.min(...ys));
       if (++n > 4000) break;
     }

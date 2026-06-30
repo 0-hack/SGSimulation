@@ -772,7 +772,7 @@ export class Scene3D {
         const dx = (Math.random() - 0.5) * 5.5, dz = (Math.random() - 0.5) * 5.5;
         const t = new THREE.Group();
         treeAt(t, 0, 0, 0.8 + Math.random() * 0.9);
-        t.position.set(dx, this._heightAt(c.x + dx, c.z + dz), dz);
+        t.position.set(dx, this._meshTriY(c.x + dx, c.z + dz), dz);   // sit on the VISIBLE mesh surface
         g.add(t); trees.push({ node: t, dx, dz });
       }
       g.position.set(c.x, 0, c.z);
@@ -799,7 +799,7 @@ export class Scene3D {
         if (inCut) break;
       }
       g.visible = !inCut;
-      if (g.visible) { g.position.y = 0; for (const tr of (g.userData.trees || [])) tr.node.position.y = this._heightAt(c.x + tr.dx, c.z + tr.dz); }   // re-settle each tree onto the (possibly re-cut) terrain
+      if (g.visible) { g.position.y = 0; for (const tr of (g.userData.trees || [])) tr.node.position.y = this._meshTriY(c.x + tr.dx, c.z + tr.dz); }   // re-settle each tree onto the (possibly re-cut) VISIBLE terrain
     }
   }
   // Is there a visible ambient tree clump on this cell (so the Demolish tool can target it)?
@@ -2264,7 +2264,7 @@ export class Scene3D {
       this._paintBrush.renderOrder = 8; this.scene.add(this._paintBrush);
     }
     const radius = (r + 0.5) * TILE, SEG = 56, arr = [];
-    for (let i = 0; i <= SEG; i++) { const a = i / SEG * Math.PI * 2; const x = g.x + Math.cos(a) * radius, z = g.z + Math.sin(a) * radius; arr.push(x, this._heightAt(x, z) + 0.25, z); }
+    for (let i = 0; i <= SEG; i++) { const a = i / SEG * Math.PI * 2; const x = g.x + Math.cos(a) * radius, z = g.z + Math.sin(a) * radius; arr.push(x, this._meshTriY(x, z) + 0.25, z); }
     this._paintBrush.geometry.setAttribute('position', new THREE.Float32BufferAttribute(arr, 3));
     this._paintBrush.geometry.attributes.position.needsUpdate = true;
     this._paintBrush.visible = true;
@@ -2405,14 +2405,15 @@ export class Scene3D {
     const id = `${x},${y}`;
     const old = this.surfaceTiles.get(id); if (old) { this.surfaceGroup.remove(old); old.geometry.dispose(); }
     // DRAPE the tile over the hill: a subdivided quad whose every vertex is lifted to
-    // the terrain surface, so the paint hugs slopes instead of floating as a flat
-    // plane that clips through the ground (and slices nearby trees in half).
+    // the RENDERED terrain surface (_meshY, the same coarse 240-grid the hill mesh is
+    // built from — NOT the finer analytic height, which overshoots the mesh on convex
+    // hills and sinks below it in hollows, leaving the green terrain poking through).
     const c = cellToWorld(x, y);
-    const SEG = 4;
+    const SEG = 6;                                           // fine enough to hug even cliff cells
     const geo = new THREE.PlaneGeometry(TILE, TILE, SEG, SEG);
     geo.rotateX(-Math.PI / 2);                               // lay flat in the xz-plane
     const pos = geo.attributes.position;
-    for (let i = 0; i < pos.count; i++) pos.setY(i, this._heightAt(c.x + pos.getX(i), c.z + pos.getZ(i)) + 0.07);
+    for (let i = 0; i < pos.count; i++) pos.setY(i, this._meshTriY(c.x + pos.getX(i), c.z + pos.getZ(i)) + 0.08);
     pos.needsUpdate = true; geo.computeVertexNormals();
     const m = new THREE.Mesh(geo, mat(info.color, { polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }, 0.06));
     m.position.set(c.x, 0, c.z); m.receiveShadow = true;
@@ -2443,7 +2444,7 @@ export class Scene3D {
   _addPlantMesh(p) {
     if (!this.plantGroup) { this.plantGroup = new THREE.Group(); this.scene.add(this.plantGroup); }
     const m = makePlant(p.kind, p.rot || 0, 0.55 * (p.s || 1));
-    m.position.set(p.x, this._heightAt(p.x, p.z), p.z);
+    m.position.set(p.x, this._meshTriY(p.x, p.z), p.z);   // sit on the VISIBLE mesh surface
     m.userData.plant = p;
     this.plantGroup.add(m);
   }
@@ -4191,6 +4192,22 @@ export class Scene3D {
     const hn = (gi, gj) => this._terrainHN(x0 + (x1 - x0) * gi / RES, y0 + (y1 - y0) * gj / RES);
     const h0 = hn(i, j) * (1 - tx) + hn(i + 1, j) * tx, h1 = hn(i, j + 1) * (1 - tx) + hn(i + 1, j + 1) * tx;
     return h0 * (1 - tz) + h1 * tz;
+  }
+  // EXACT height of the rendered terrain TRIANGLE under (x,z) — same 240-grid and the
+  // same winding the hill mesh uses (quad split a,b,c / b,d,c). Bilinear (_meshY) dips
+  // below the triangle peaks on steep ground, which let the green terrain poke through
+  // draped paint and buried tree trunks; this returns the actual visible surface so
+  // every grounded object sits flush on it. Falls back to analytic outside the grid.
+  _meshTriY(x, z) {
+    const RES = 240, x0 = HEIGHTS_1966.x0, x1 = HEIGHTS_1966.x1, y0 = HEIGHTS_1966.y0, y1 = HEIGHTS_1966.y1;
+    const nx = x / WORLD + 0.5, ny = 0.5 - z / WORLD;
+    const fi = (nx - x0) / (x1 - x0) * RES, fj = (ny - y0) / (y1 - y0) * RES;
+    if (fi < 0 || fi >= RES || fj < 0 || fj >= RES) return this._terrainHN(nx, ny);
+    const i = Math.floor(fi), j = Math.floor(fj), tx = fi - i, tz = fj - j;
+    const hn = (gi, gj) => this._terrainHN(x0 + (x1 - x0) * gi / RES, y0 + (y1 - y0) * gj / RES);
+    const Ha = hn(i, j), Hb = hn(i + 1, j), Hc = hn(i, j + 1), Hd = hn(i + 1, j + 1);
+    return (tx + tz <= 1) ? Ha + tx * (Hb - Ha) + tz * (Hc - Ha)   // lower triangle (a,b,c)
+                          : Hb + (tx + tz - 1) * (Hd - Hb) + (1 - tx) * (Hc - Hb);  // upper triangle (b,d,c)
   }
   _roadY(x, z) { return this._meshY(x, z) + 0.12; }   // sit just on the rendered mesh
   // Resample a centre-line to <= `step` world-unit spacing, re-sampling the ground

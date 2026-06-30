@@ -764,10 +764,21 @@ export class Scene3D {
       const c = cellToWorld(x, y);
       const g = new THREE.Group();
       const n = forest ? 2 + Math.floor(Math.random() * 2) : 1 + (Math.random() < 0.4 ? 1 : 0);
-      for (let k = 0; k < n; k++) treeAt(g, (Math.random() - 0.5) * 6, (Math.random() - 0.5) * 6, 0.8 + Math.random() * 0.9);
-      g.position.set(c.x, this.terrainHeight(x, y), c.z); g.rotation.y = Math.random() * Math.PI;
+      // Each tree in the clump sits on the ACTUAL ground under it (sampled per-tree),
+      // not at the cell-centre height — otherwise trees scattered onto a slope float
+      // above it or sink half-buried. The clump group stays at y=0; tree y is absolute.
+      const trees = [];
+      for (let k = 0; k < n; k++) {
+        const dx = (Math.random() - 0.5) * 5.5, dz = (Math.random() - 0.5) * 5.5;
+        const t = new THREE.Group();
+        treeAt(t, 0, 0, 0.8 + Math.random() * 0.9);
+        t.position.set(dx, this._heightAt(c.x + dx, c.z + dz), dz);
+        g.add(t); trees.push({ node: t, dx, dz });
+      }
+      g.position.set(c.x, 0, c.z);
       g.traverse((m) => { if (m.isMesh) m.castShadow = false; });
       g.userData.demo = { kind: 'tree', x, y };   // pickable by the Demolish raycast
+      g.userData.trees = trees;                   // for per-tree re-settling on terrain re-cuts
       this.natureGroup.add(g);
       this.natureCells.set(x + ',' + y, g);
     }
@@ -788,7 +799,7 @@ export class Scene3D {
         if (inCut) break;
       }
       g.visible = !inCut;
-      if (g.visible) g.position.y = this.terrainHeight(x, y);   // re-settle onto the (possibly re-cut) terrain
+      if (g.visible) { g.position.y = 0; for (const tr of (g.userData.trees || [])) tr.node.position.y = this._heightAt(c.x + tr.dx, c.z + tr.dz); }   // re-settle each tree onto the (possibly re-cut) terrain
     }
   }
   // Is there a visible ambient tree clump on this cell (so the Demolish tool can target it)?
@@ -2358,9 +2369,11 @@ export class Scene3D {
       const c = state.grid[y] && state.grid[y][x]; if (!c || !c.demolish) continue;
       const e = this.buildings.get(id);
       if (e && e.group) {
+        if (!this._demoSites || !this._demoSites.has(id)) this._startDemoSite(x, y);   // hoarding + wrecking crane BEFORE it shrinks
         this._setBuildingRed(x, y, true);
         const p = Math.max(0.04, c.demolish.left / Math.max(1, c.demolish.total)); // crumbles down as it's torn
         e.group.scale.set(MODEL_SCALE, MODEL_SCALE * (e.tall ? this.devFactor : 1) * p, MODEL_SCALE);
+        this._setDemoSiteProgress(id, p);       // the wrecking platform rides DOWN as it comes apart
       }
       this._teardown.add(id);
     }
@@ -2369,6 +2382,7 @@ export class Scene3D {
       this._teardown.delete(id);
       const [x, y] = id.split(',').map(Number);
       this._setBuildingRed(x, y, false);
+      this._removeDemoSite(id);                 // pull the hoarding/crane once it's gone
       this.onDemolished(x, y);                  // dust + remove + greenery returns
     }
     if ((state._infraDemoDone || 0) !== (this._infraDemoSeen || 0)) {
@@ -2965,6 +2979,57 @@ export class Scene3D {
   _removeSite(id) {
     const s = this.sites.get(id); if (!s) return;
     this.scene.remove(s.group); if (s.found) this.scene.remove(s.found); this.sites.delete(id);
+  }
+  // A demolition "site" mirrors the construction one in reverse: an orange safety
+  // hoarding (corner posts) wraps the building, a wrecking crane stands beside it, and
+  // a hazard platform descends as the structure crumbles — so a slow teardown READS as
+  // a teardown, just like a slow build reads as a build.
+  _startDemoSite(x, y) {
+    const id = `${x},${y}`;
+    if (!this._demoSites) this._demoSites = new Map();
+    if (this._demoSites.has(id)) return;
+    const e = this.buildings.get(id); if (!e || !e.group) return;
+    const box = new THREE.Box3().setFromObject(e.group);
+    if (!isFinite(box.min.y) || !isFinite(box.max.y)) return;
+    const rcell = this.state?.grid?.[y]?.[x];
+    const baseY = (rcell && typeof rcell.fy === 'number') ? rcell.fy : this.terrainHeight(x, y);
+    const sx = Math.max(2.5, box.max.x - box.min.x), sz = Math.max(2.5, box.max.z - box.min.z);
+    const H = Math.max(4, box.max.y - baseY);
+    const wrap = new THREE.Group();
+    wrap.position.set(e.group.position.x, baseY, e.group.position.z);
+    wrap.rotation.y = e.group.rotation.y;
+    const hazard = toon(0xe2553a), rail = toon(0xf0a93a);
+    const hw = sx / 2 + 0.6, hd = sz / 2 + 0.6;
+    for (const [px, pz] of [[-hw, -hd], [hw, -hd], [hw, hd], [-hw, hd]]) {   // corner safety posts
+      const post = new THREE.Mesh(new THREE.BoxGeometry(0.24, H + 1.2, 0.24), hazard);
+      post.position.set(px, (H + 1.2) / 2, pz); wrap.add(post);
+    }
+    for (const yb of [1.0, H * 0.5 + 0.5]) {                                 // two hoarding rails around the base
+      for (const [a, b, len, rot] of [[0, -hd, sx + 1.2, 0], [0, hd, sx + 1.2, 0], [-hw, 0, sz + 1.2, Math.PI / 2], [hw, 0, sz + 1.2, Math.PI / 2]]) {
+        const r = new THREE.Mesh(new THREE.BoxGeometry(len, 0.18, 0.1), rail); r.position.set(a, yb, b); r.rotation.y = rot; wrap.add(r);
+      }
+    }
+    const plat = new THREE.Mesh(new THREE.BoxGeometry(sx + 1.0, 0.3, sz + 1.0), toon(0xff8a3a, { transparent: true, opacity: 0.55 }));
+    plat.position.y = H; wrap.add(plat);
+    const mast = new THREE.Mesh(new THREE.BoxGeometry(0.34, H + 7, 0.34), hazard);
+    mast.position.set(hw + 1.3, (H + 7) / 2, hd + 1.3); wrap.add(mast);
+    const jib = new THREE.Mesh(new THREE.BoxGeometry(sx + 3.4, 0.26, 0.26), hazard);
+    jib.position.set(hw + 1.3 - (sx + 3.4) / 2 + 0.3, H + 6.4, hd + 1.3); wrap.add(jib);
+    const ball = new THREE.Mesh(new THREE.SphereGeometry(0.7, 10, 8), toon(0x33373d));   // wrecking ball
+    ball.position.set(hw + 1.3 - (sx + 3.0), H + 2.6, hd + 1.3); wrap.add(ball);
+    this.scene.add(wrap);
+    this._demoSites.set(id, { group: wrap, plat, ball, H });
+    const cw = cellToWorld(x, y); this._spawnDust(cw.x, cw.z, 0x9a8f80, 12);
+  }
+  _setDemoSiteProgress(id, p) {
+    const s = this._demoSites && this._demoSites.get(id); if (!s) return;
+    const f = Math.max(0.02, Math.min(1, p));    // p = fraction still standing (1 → 0)
+    s.plat.position.y = f * s.H + 0.2;           // hazard platform rides the shrinking top down
+    if (s.ball) s.ball.position.y = f * s.H + 2.2;
+  }
+  _removeDemoSite(id) {
+    const s = this._demoSites && this._demoSites.get(id); if (!s) return;
+    this.scene.remove(s.group); this._demoSites.delete(id);
   }
 
   _addMesh(x, y, key, animate, theme) {

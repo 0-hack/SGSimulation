@@ -87,6 +87,47 @@ try {
   ok(pc.shown && pc.ringPts > 12, 'the paint brush ring shows the cursor footprint (so you can see which cells you\'ll paint)');
   ok(pc.hiddenAfter, 'leaving the paint tool hides the brush cursor');
 
+  // ---- TREES sit on the actual ground under each one (not floating on a slope) ----
+  const tr = await p.evaluate(() => {
+    const v = window.__sgview; let maxErr = 0, maxSpread = 0, n = 0;
+    for (const [key, g] of (v.natureCells || new Map())) {
+      const trees = g.userData && g.userData.trees; if (!trees) continue;
+      const [x, y] = key.split(',').map(Number); const c = v.worldOfCell(x, y);
+      const ys = [];
+      for (const t of trees) { const wy = g.position.y + t.node.position.y; maxErr = Math.max(maxErr, Math.abs(wy - v._heightAt(c.x + t.dx, c.z + t.dz))); ys.push(wy); }
+      if (ys.length > 1) maxSpread = Math.max(maxSpread, Math.max(...ys) - Math.min(...ys));
+      if (++n > 4000) break;
+    }
+    return { n, maxErr: +maxErr.toFixed(3), maxSpread: +maxSpread.toFixed(2) };
+  });
+  ok(tr.n > 0 && tr.maxErr < 0.05, `every ambient tree sits on the ground beneath it (max gap ${tr.maxErr} over ${tr.n} clumps)`);
+  ok(tr.maxSpread > 0.3, `clumps on slopes spread their trees down the contour (max in-clump height spread ${tr.maxSpread})`);
+
+  // ---- DEMOLITION raises a wrecking scaffold so a slow teardown READS as one ------
+  const ds = await p.evaluate(() => {
+    const v = window.__sgview, S = window.__sg, N = v.land.length;
+    let bx = -1, by = -1;
+    for (let y = 4; y < N - 4 && bx < 0; y += 2) for (let x = 4; x < N - 4; x++) {
+      if (v.isLand(x, y) && !v.isRoadAt(x, y) && !v.buildings.has(`${x},${y}`) && !v.state.grid[y][x] && !(v.heritageLabelAt && v.heritageLabelAt(x, y))) { bx = x; by = y; break; }
+    }
+    if (bx < 0) return { found: false };
+    v.state.grid[by][bx] = { k: 'hdb_flat' }; v._addMesh(bx, by, 'hdb_flat', false);
+    const id = `${bx},${by}`;
+    S.setBulldoze(true);
+    S.onTileTap(bx, by, v.worldOfCell(bx, by));
+    S.commitDemolish();                                           // queues a TIMED teardown -> scaffold goes up
+    const hasScaffold = !!(v._demoSites && v._demoSites.has(id));
+    const plat0 = hasScaffold ? v._demoSites.get(id).plat.position.y : 0;
+    S.tick(30);                                                   // wait the teardown out
+    const platLater = (v._demoSites && v._demoSites.has(id)) ? v._demoSites.get(id).plat.position.y : 0;
+    const descended = platLater < plat0;                          // platform rode down while it stood (or it's gone)
+    const cleared = !(v._demoSites && v._demoSites.has(id)) && !v.buildings.has(id);
+    S.setBulldoze(false);
+    return { found: true, hasScaffold, descended: descended || cleared, cleared };
+  });
+  ok(ds.found && ds.hasScaffold, 'confirming a demolition raises a wrecking scaffold/hoarding around the building');
+  ok(ds.cleared, 'the scaffold is pulled once the teardown finishes (and the building is gone)');
+
   // ---- SLOPE FOUNDATION: elevate by default; excavate actually cuts the hill -
   const fd = await p.evaluate(() => {
     const v = window.__sgview, S = window.__sg, N = v.land.length;

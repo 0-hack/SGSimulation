@@ -29,6 +29,7 @@ export const CATEGORIES = [
   { id: 'industry', name: 'Economy', icon: '🏭' },
   { id: 'civic', name: 'Services', icon: '🏥' },
   { id: 'green', name: 'Environment', icon: '🌳' },
+  { id: 'agriculture', name: 'Farms', icon: '🌾' },
   { id: 'leisure', name: 'Coast & Leisure', icon: '⛱️' },
   { id: 'roads', name: 'Transport', icon: '🛣️' },
   { id: 'land', name: 'Reclaim', icon: '🏝️' },
@@ -430,6 +431,76 @@ export const BUILDINGS = {
     cost: 55, upkeep: 2.0, year: 1965, homes: 0, jobs: 200,
     power: -10, water: -8, pollution: 0, happiness: 11, income: 3,
     desc: 'A grandstand and playing fields for football, athletics and national-day parades. Sport built fitness, pride and a shared identity for the new republic.',
+  },
+
+  // ---- Farms & agriculture (self-sufficiency: `food` = people fed) ----------
+  market_garden: {
+    name: 'Market Garden', cat: 'agriculture', icon: '🥬', color: '#5fbf6a',
+    cost: 8, upkeep: 0.2, year: 1965, homes: 0, jobs: 200,
+    power: 0, water: -4, pollution: 0, happiness: 1, income: 2, food: 3000,
+    desc: 'Vegetable plots and polytunnels of the old rural fringe — kangkong, chye sim and bayam. Cheap fresh produce, and a step toward feeding the island ourselves.',
+  },
+  poultry_farm: {
+    name: 'Poultry Farm', cat: 'agriculture', icon: '🐔', color: '#d9b14b',
+    cost: 10, upkeep: 0.3, year: 1965, homes: 0, jobs: 150,
+    power: 0, water: -3, pollution: 2, happiness: 0, income: 3, food: 4000,
+    desc: 'Layer sheds and runs for chickens and ducks. Eggs and poultry for the wet markets — a smelly but vital part of the kampong economy.',
+  },
+  fish_farm: {
+    name: 'Fish Farm', cat: 'agriculture', icon: '🐟', color: '#3f86c4',
+    cost: 12, upkeep: 0.3, year: 1965, homes: 0, jobs: 150,
+    power: -2, water: 0, pollution: 1, happiness: 1, income: 4, food: 5000,
+    desc: 'Coastal kelongs and inland ponds raising fish and prawns. Protein for a growing nation and a living for fishing families.',
+  },
+  hydroponic_farm: {
+    name: 'Hydroponic Farm', cat: 'agriculture', icon: '🌱', color: '#57c98a',
+    cost: 40, upkeep: 1.2, year: 2000, homes: 0, jobs: 120,
+    power: -8, water: -6, pollution: 0, happiness: 2, income: 8, food: 12000,
+    desc: 'Climate-controlled greenhouses growing leafy greens in nutrient water — high yield on little land, the modern answer to a city with no farmland to spare.',
+  },
+  vertical_farm: {
+    name: 'Vertical Farm', cat: 'agriculture', icon: '🏢', color: '#46b06a',
+    cost: 90, upkeep: 2.5, year: 2014, homes: 0, jobs: 200,
+    power: -20, water: -10, pollution: 0, happiness: 3, income: 18, food: 40000,
+    desc: 'Stacked rotating growing towers under LED light — pioneered right here. Enormous food output from a tiny footprint, powering the "30 by 30" self-sufficiency drive.',
+  },
+
+  // ---- More options, 1965 → present (priced by year + currency strength) -----
+  hawker_centre: {
+    name: 'Hawker Centre', cat: 'leisure', icon: '🍜', color: '#e0833f',
+    cost: 14, upkeep: 0.6, year: 1971, homes: 0, jobs: 400,
+    power: -6, water: -5, pollution: 1, happiness: 10, income: 6,
+    desc: 'Rows of cooked-food stalls that moved the street hawkers under one roof — cheap, glorious, multicultural food and the beating social heart of every neighbourhood.',
+  },
+  community_garden: {
+    name: 'Community Garden', cat: 'green', icon: '🌻', color: '#7fb24a',
+    cost: 6, upkeep: 0.1, year: 1995, homes: 0, jobs: 20,
+    power: 0, water: -2, pollution: -2, happiness: 5, income: 0, food: 800,
+    desc: 'Allotment plots tended by residents under the Community in Bloom scheme — herbs, fruit and flowers that green the estate and bring neighbours together.',
+  },
+  wafer_fab: {
+    name: 'Wafer Fab', cat: 'industry', icon: '🔬', color: '#7f8fa6',
+    cost: 200, upkeep: 7, year: 1987, homes: 0, jobs: 1500,
+    power: -50, water: -25, pollution: 8, happiness: -2, income: 40,
+    desc: 'A semiconductor fabrication plant — clean-rooms etching silicon wafers. The high-tech manufacturing that pulled the economy up the value chain in the 1980s–90s.',
+  },
+  biomed_park: {
+    name: 'Biomedical Park', cat: 'industry', icon: '🧬', color: '#8a6fc0',
+    cost: 160, upkeep: 5, year: 2000, homes: 0, jobs: 2000,
+    power: -30, water: -15, pollution: 2, happiness: 2, income: 30, education: 8,
+    desc: 'Pharma plants and research labs of the Biopolis era — vaccines, diagnostics and drug manufacturing. A new growth pillar built on brains, not just hands.',
+  },
+  data_centre: {
+    name: 'Data Centre', cat: 'industry', icon: '🖥️', color: '#5b6b7a',
+    cost: 180, upkeep: 6, year: 2001, homes: 0, jobs: 400,
+    power: -60, water: -20, pollution: 2, happiness: 0, income: 35,
+    desc: 'Halls of humming servers behind blank façades — the digital backbone of a regional finance and tech hub. Voracious for power and cooling water.',
+  },
+  desalination: {
+    name: 'Desalination Plant', cat: 'water', icon: '🌊', color: '#2f7fa0',
+    cost: 140, upkeep: 4, year: 2005, homes: 0, jobs: 150,
+    power: -35, water: 140, pollution: 1, happiness: 1, income: 0,
+    desc: 'Reverse-osmosis plant turning seawater into drinking water — the fourth national tap. Drought-proof, but thirsty for electricity.',
   },
 };
 

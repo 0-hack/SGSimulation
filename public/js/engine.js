@@ -340,8 +340,18 @@ export function inflationRate(state) { return (state && state.economy && state.e
 export function currencyStrength(state) { return (state && state.economy && state.economy.currency) || 1; }
 // A 1965-baseline price charged at today's price level.
 export function priced(base, state) { return Math.round(base * priceIndex(state) * 10) / 10; }
-// Current purchase cost of a building ($M) after inflation.
-export function buildingCost(state, key) { const b = BUILDINGS[key]; return b ? Math.round(b.cost * priceIndex(state)) : 0; }
+// How much imported materials/tech cost shifts with the local currency. A strong
+// SGD (currency > 1) makes imports cheaper; a weak one makes them dearer. Gentle
+// and clamped (±25%), and exactly 1.0 at the 1965 baseline so existing balance is
+// unchanged until the economy actually moves the currency.
+export function currencyCostFactor(state) {
+  return clamp(1 / Math.sqrt(currencyStrength(state) || 1), 0.8, 1.25);
+}
+// Current purchase cost of a building ($M) after inflation + currency strength.
+export function buildingCost(state, key) {
+  const b = BUILDINGS[key];
+  return b ? Math.round(b.cost * priceIndex(state) * currencyCostFactor(state)) : 0;
+}
 
 // Construction time in game-days, from a building's complexity (its base cost,
 // plus part count for 3D-designed landmarks). Bigger/more elaborate = longer.
@@ -671,7 +681,7 @@ function policyMods(state) {
 // Derived statistics — recomputed each tick from the grid + policies.
 // ---------------------------------------------------------------------------
 export function derive(state) {
-  let homes = 0, jobs = 0, powerGen = 0, powerUse = 0, waterGen = 0, waterUse = 0;
+  let homes = 0, jobs = 0, food = 0, powerGen = 0, powerUse = 0, waterGen = 0, waterUse = 0;
   let pollutionSrc = 0, happinessLocal = 0, directIncome = 0;
   let eduCap = 0, healthCap = 0, safetyCap = 0;
   let counts = {};
@@ -686,6 +696,7 @@ export function derive(state) {
       if (cell.demolish) continue;                     // being torn down — no longer functioning
       counts[cell.k] = (counts[cell.k] || 0) + 1;
       homes += b.homes || 0;
+      food += b.food || 0;
       jobs += b.jobs || 0;
       if (b.power > 0) powerGen += b.power; else powerUse += -b.power;
       if (b.water > 0) waterGen += b.water; else waterUse += -b.water;
@@ -717,8 +728,15 @@ export function derive(state) {
   // Housing pressure: >1 means overcrowded.
   const housingPressure = homes > 0 ? pop / homes : (pop > 0 ? 3 : 0);
 
+  // Food self-sufficiency: locally-grown food vs the population it can feed. Most
+  // food is imported (so low is normal/historical), but farms lift it — a modest
+  // resilience + happiness win, in the spirit of the "30 by 30" goal.
+  const foodNeed = Math.max(1, pop);
+  const foodSelf = clamp(food / foodNeed, 0, 1.5);
+
   return {
     homes, jobs: mods_jobs, baseJobs: jobs, counts,
+    food, foodNeed, foodSelf,
     powerGen, powerUse, powerRatio,
     waterGen, waterUse, waterRatio,
     pollutionSrc, happinessLocal, directIncome,
@@ -746,6 +764,8 @@ function approvalTarget(state, d) {
   t += (state.safety - 50) * 0.16;
   // Amenities (parks, MRT, etc.) — scale by city size
   t += clamp(d.happinessLocal / Math.max(1, d.homes / 4000), 0, 14);
+  // Home-grown food is a modest resilience/pride boost (no penalty for importing)
+  t += clamp(d.foodSelf || 0, 0, 1) * 4;
   // Policy approval
   t += m.approval;
   // Fiscal stress — deficits and heavy national debt are unpopular

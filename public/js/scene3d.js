@@ -5168,8 +5168,57 @@ export function makeBuilding(key, theme) {
         const sail = new THREE.Mesh(new THREE.PlaneGeometry(1.4, 2.4, 1, 1), mat(0xffffff, { side: THREE.DoubleSide }));
         sail.position.set(bx + 0.5, 2.2, bz); sail.rotation.y = Math.PI / 2; g.add(sail);
       }
+    } else if (key === 'hawker_centre') {
+      lawn(g, 9.4, 9.4, 0x9fa6a0);                                          // paved forecourt
+      g.add(partBox(8.6, 3.0, 7.2, mat(col), 0, 1.5, 0));                   // open-sided hall
+      g.add(partBox(9.2, 0.5, 7.8, mat(0x9c4a3a), 0, 3.25, 0));             // low pitched roof
+      for (const z of [-2.4, 0, 2.4]) g.add(partBox(0.4, 0.6, 0.4, mat(0x6f757b), 4.2, 3.7, z)); // roof vents
+      const stallc = [0xe8b04b, 0xd9694f, 0x6fae9e, 0xe2cd7a, 0x7fa8c9];    // colourful stalls round the edge
+      let si = 0;
+      for (const z of [-2.6, 2.6]) for (const x of [-3, -1, 1, 3]) {
+        g.add(partBox(1.7, 1.9, 1.4, mat(stallc[si++ % stallc.length]), x, 0.95, z));
+        g.add(partBox(1.8, 0.18, 0.5, mat(0xf2efe6), x, 1.95, z + (z < 0 ? -0.7 : 0.7))); // awning
+      }
+      for (const [x, z] of [[-2.5, 0], [0, 0], [2.5, 0]]) { g.add(partBox(1.6, 0.12, 1.6, mat(0xd9d2c4), x, 0.7, z)); for (const [ox, oz] of [[-.6, -.6], [.6, -.6], [-.6, .6], [.6, .6]]) g.add(cyl(0.06, 0.06, 0.7, 0x8a8f88, x + ox, 0.35, z + oz)); } // communal tables + stools
     } else {
       g.add(box(6, 6, 6, col));
+    }
+  } else if (cat === 'agriculture') {
+    lawn(g, 9.6, 9.6, 0x86a063);                                           // tilled earth
+    if (key === 'market_garden') {
+      for (let r = -3.2; r <= 3.2; r += 1.3) {                             // raised vegetable beds in rows
+        g.add(partBox(8, 0.35, 0.7, mat(0x6b4f33), 0, 0.17, r));
+        for (let x = -3.2; x <= 3.2; x += 0.8) { const v = new THREE.Mesh(new THREE.SphereGeometry(0.26, 7, 5), mat(0x6fc24a)); v.position.set(x, 0.5, r); v.scale.y = 0.7; g.add(v); }
+      }
+      for (const [x, z] of [[-4, -4], [4, 4]]) g.add(partBox(0.2, 2.2, 0.2, mat(0x9a8f7a), x, 1.1, z)); // corner poles for polytunnel
+      const tun = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.2, 4, 12, 1, true, 0, Math.PI), mat(0xdfeef0, { transparent: true, opacity: 0.5, side: THREE.DoubleSide }));
+      tun.rotation.z = Math.PI / 2; tun.position.set(2.6, 1.0, 0); g.add(tun);                          // polytunnel
+    } else if (key === 'poultry_farm') {
+      for (const [z, c] of [[-2.6, 0xcdbfa0], [0.2, 0xc7b58f], [3, 0xcdbfa0]]) {                         // long layer sheds
+        g.add(partBox(7.5, 1.7, 1.7, mat(c), 0, 0.85, z));
+        for (const s of [-1, 1]) { const r = new THREE.Mesh(new THREE.BoxGeometry(8, 0.12, 1.05), mat(0x8a8f88)); r.position.set(0, 1.85, z + s * 0.5); r.rotation.x = s * 0.5; g.add(r); }
+      }
+      g.add(partBox(5, 0.05, 5, mat(0xb6a884), -0.5, 0.06, -3.8));         // fenced run
+    } else if (key === 'fish_farm') {
+      for (const [x, z, r] of [[-2.4, -2, 1.4], [2.2, -1.6, 1.5], [0, 2.2, 1.6]]) {                       // ponds
+        const pond = new THREE.Mesh(new THREE.CircleGeometry(r, 20), mat(0x2f7fb0, { transparent: true, opacity: 0.92 }));
+        pond.rotation.x = -Math.PI / 2; pond.position.set(x, 0.1, z); g.add(pond);
+        const rim = new THREE.Mesh(new THREE.TorusGeometry(r, 0.16, 6, 20), mat(0x6e6450)); rim.rotation.x = Math.PI / 2; rim.position.set(x, 0.12, z); g.add(rim);
+      }
+      g.add(partBox(1.6, 1.0, 1.4, mat(0x9c7a4d), 3.4, 0.5, 3.2));         // pump/feed hut
+    } else if (key === 'hydroponic_farm' || key === 'market_garden_glass') {
+      g.add(partBox(8.6, 2.6, 7.4, mat(0xd7ecef, { transparent: true, opacity: 0.62 }), 0, 1.3, 0));     // glasshouse
+      const roof = new THREE.Mesh(new THREE.CylinderGeometry(3.9, 3.9, 8.6, 16, 1, true, 0, Math.PI), mat(0xe6f3f4, { transparent: true, opacity: 0.5, side: THREE.DoubleSide }));
+      roof.rotation.z = Math.PI / 2; roof.position.set(0, 2.6, 0); g.add(roof);                          // barrel-vault glass roof
+      for (let r = -2.4; r <= 2.4; r += 1.2) { g.add(partBox(7.6, 0.5, 0.5, mat(0x3f9f6a), 0, 1.1, r)); g.add(partBox(7.6, 0.3, 0.55, mat(0x6fd28a), 0, 1.45, r)); } // grow troughs of greens
+    } else if (key === 'vertical_farm') {
+      for (const [x, z] of [[-2.4, -2.2], [2.2, -2.2], [-2.4, 2.2], [2.2, 2.2], [0, 0]]) {                // stacked rotating grow-towers
+        g.add(cyl(0.9, 1.0, 7.0, mat(0xcfe9d6), x, 3.5, z, 8));
+        for (let yy = 1.2; yy < 7; yy += 1.0) { const ring = new THREE.Mesh(new THREE.TorusGeometry(1.05, 0.18, 5, 10), mat(0x46b06a)); ring.rotation.x = Math.PI / 2; ring.position.set(x, yy, z); g.add(ring); }
+        g.add(cyl(1.15, 1.15, 0.3, 0x8a8f88, x, 0.15, z, 8));            // base
+      }
+    } else {
+      for (const [x, z] of [[-2, -2], [2, -1], [0, 2], [-3, 1], [3, 2.5]]) treeAt(g, x, z, 1.1);          // generic orchard
     }
   } else {
     g.add(box(6, 6, 6, col));

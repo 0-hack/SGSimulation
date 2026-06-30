@@ -269,6 +269,10 @@ export function renderDash(state, ctx = {}) {
   grid.append(metric('💼 Jobs', num(d.jobs),
     `${pct((1 - d.unemployment) * 100)} employed`));
   grid.append(meterMetric('☁️ Pollution', state.pollution, true));
+  // Home-grown food self-sufficiency (farms) — most food is imported, so this is
+  // a bonus measure of resilience rather than a hard requirement.
+  grid.append(metric('🌾 Food', `${pct((d.foodSelf || 0) * 100)}`,
+    (d.foodSelf || 0) >= 0.3 ? 'home-grown — resilient' : 'mostly imported · build farms'));
 
   // Inflation & currency — a live read on economic management.
   const infl = inflationRate(state) * 100;

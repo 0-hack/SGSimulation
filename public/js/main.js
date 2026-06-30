@@ -61,6 +61,10 @@ const currentRate = () => G.dayRate * SPEED_MULT[G.speed];
 
 const $ = (id) => document.getElementById(id);
 
+// Demolish road brush: world-radius of the bulldozer. A single click tears out a
+// chunk this wide; a drag sweeps a stroke of it (like painting). ~1.6 tiles.
+const DEMO_BRUSH = 4;
+
 const G = {
   state: null,
   view: null,
@@ -78,6 +82,7 @@ const G = {
   demoHover: null,              // the Demolish target currently under the cursor (shown red alongside the selection)
   demoCuts: [],                 // freehand road-erase strokes: { id, stroke:[{x,z}], radius, polys:[[{x,z}]] }. Committed on Done.
   demoCutId: 0,                 // running id for road-erase strokes
+  demoRoadPreview: null,        // live hover preview (road chunk under the cursor) — what a click would cut
   pieceRot: 0,                  // running orientation of the road piece being aimed (for the dial)
   road: { tool: null, type: 'road', elevated: false, pending: [] },
   reclaim: { active: false },  // land-reclamation tool: tap sea to fill land
@@ -495,7 +500,7 @@ function onReclaimArea(pts) {
   });
 }
 
-function onTileTap(x, y, world) {
+function onTileTap(x, y, world, landmark) {
   if (G.readOnly) { toast('You are visiting — building is disabled here.'); return; }
   // Plants tool: tap open ground to place a specimen; tap directly on a plant to remove it.
   if (G.plant.active && G.plant.kind && world) {
@@ -507,13 +512,28 @@ function onTileTap(x, y, world) {
   if (b.bulldoze) {
     // Multi-select: a tap TOGGLES the item under the cursor in/out of the teardown
     // selection (tap a red one again to undo). Nothing is removed until ✓ Done.
-    const t = findDemoTarget({ x, y }, world);
-    if (!t) { toast('Nothing to select here — tap a building, shophouse or tree, or drag along a road.'); return; }
-    const key = demoKey(t);
-    if (G.demoSel.has(key)) G.demoSel.delete(key);          // tap a selected (red) item again -> undo
-    else G.demoSel.set(key, { ...t, key });
-    refreshDemoVisual();
-    updateToolBanner();
+    // `landmark` (e.g. the airport) is a fixed structure the 3D pick hit directly.
+    const t = landmark ? { kind: 'landmark', id: landmark.id, label: landmark.label } : findDemoTarget({ x, y }, world);
+    if (t) {
+      const key = demoKey(t);
+      if (G.demoSel.has(key)) G.demoSel.delete(key);        // tap a selected (red) item again -> undo
+      else G.demoSel.set(key, { ...t, key });
+      refreshDemoVisual();
+      updateToolBanner();
+      return;
+    }
+    // No discrete object under the cursor → Cities-Skylines-style road bulldozer:
+    // a click tears out a brush-sized chunk of the road right here (drag for more).
+    if (world) {
+      const polys = roadEraseCover(G.state.roads, [{ x: world.x, z: world.z }], DEMO_BRUSH);
+      if (polys.length) {
+        G.demoCuts.push({ id: ++G.demoCutId, stroke: [{ x: world.x, z: world.z }], radius: DEMO_BRUSH, polys });
+        refreshDemoVisual();
+        updateToolBanner();
+        return;
+      }
+    }
+    toast('Nothing to demolish here — point at a building, tree or landmark, or a road.');
     return;
   }
   // While positioning a placed object, a tap MOVES it to the exact spot (sub-cell).
@@ -718,8 +738,8 @@ function clearAdjustSilently() { if (G.adjust) { if (G.view) G.view.clearAdjust(
 function demoCount() { return G.demoSel.size + ((G.demoCuts && G.demoCuts.length) || 0); }
 // Empty the Demolish selection (no teardown happens) and clear its red highlights.
 function clearDemoSelection() {
-  G.demoSel.clear(); G.demoHover = null; G.demoCuts = [];
-  if (G.view) G.view.demoSetSelection([]);
+  G.demoSel.clear(); G.demoHover = null; G.demoCuts = []; G.demoRoadPreview = null;
+  if (G.view) { G.view.demoSetSelection([]); if (G.view.showDemoRoadHover) G.view.showDemoRoadHover([]); }
   updateToolBanner();
 }
 function updateRotDial() {
@@ -858,7 +878,8 @@ function findDemoTarget(cell, world) {
 }
 // A stable key for a demolish target (so the selection can toggle it).
 function demoKey(t) {
-  return t.kind === 'building' ? `b:${t.x},${t.y}` : t.kind === 'heritage' ? `h:${t.x},${t.y}` : t.kind === 'tree' ? `t:${t.x},${t.y}` : `${t.kind}:${t.i}`;
+  return t.kind === 'building' ? `b:${t.x},${t.y}` : t.kind === 'heritage' ? `h:${t.x},${t.y}`
+    : t.kind === 'tree' ? `t:${t.x},${t.y}` : t.kind === 'landmark' ? `L:${t.id}` : `${t.kind}:${t.i}`;
 }
 // The live state-object behind an infra target (for queueing its timed teardown).
 function infraRef(t) {
@@ -911,7 +932,8 @@ function commitDemolish() {
   for (const t of G.demoSel.values()) {
     if (t.kind === 'building') items.push({ kind: 'building', x: t.x, y: t.y });
     else if (t.kind === 'heritage') { if (G.view.removeHeritageVisual) G.view.removeHeritageVisual(t.x, t.y); }
-    else if (t.kind === 'tree') { if (G.view.removeTreeAt) G.view.removeTreeAt(t.x, t.y); }
+    else if (t.kind === 'tree') { if (G.view.removeTreeAt) G.view.removeTreeAt(t.x, t.y); G.dirty = true; }
+    else if (t.kind === 'landmark') { if (G.view.removeLandmark) G.view.removeLandmark(t.id); G.dirty = true; }
     else { const ref = infraRef(t); if (ref) items.push({ kind: t.kind, ref }); }
   }
   // freehand road erasers: split each covered road and queue the covered pieces
@@ -923,8 +945,9 @@ function commitDemolish() {
   }
   const n = G.demoSel.size + cuts.length;
   if (items.length) queueDemolish(G.state, items);
-  G.demoSel.clear(); G.demoHover = null; G.demoCuts = [];
+  G.demoSel.clear(); G.demoHover = null; G.demoCuts = []; G.demoRoadPreview = null;
   G.view.demoSetSelection([]);          // drop the selection tint; the teardown visuals take over
+  if (G.view.showDemoRoadHover) G.view.showDemoRoadHover([]);
   if (roadsRebuilt && G.view.rebuildRoadNet) G.view.rebuildRoadNet();   // show the freshly-split road geometry
   G.view.syncDemolition(G.state);       // start the teardown immediately
   afterEdit();
@@ -936,20 +959,27 @@ function commitDemolish() {
 function onDemolishStroke(stroke) {
   if (G.readOnly || !G.build.bulldoze) return;
   if (!stroke || stroke.length < 1) return;
-  const radius = 4;
-  const polys = roadEraseCover(G.state.roads, stroke, radius);
+  const polys = roadEraseCover(G.state.roads, stroke, DEMO_BRUSH);
   if (!polys.length) { toast('No road under that stroke — drag along a road to demolish it.'); return; }
   G.demoCuts = G.demoCuts || [];
-  G.demoCuts.push({ id: ++G.demoCutId, stroke: stroke.map((p) => ({ x: p.x, z: p.z })), radius, polys });
+  G.demoCuts.push({ id: ++G.demoCutId, stroke: stroke.map((p) => ({ x: p.x, z: p.z })), radius: DEMO_BRUSH, polys });
+  if (G.view.showDemoRoadHover) G.view.showDemoRoadHover([]);   // the chunk is now committed (red); drop the hover ghost
   refreshDemoVisual();
   updateToolBanner();
 }
 // Cursor moved in Demolish mode: track what's under it and show it red alongside
-// the existing selection, so you can see what a tap will toggle.
-function onDemolishHover(cell, world) {
+// the existing selection, so you can see what a tap will toggle. `landmark` is a
+// fixed structure (e.g. the airport) the 3D pick hit directly.
+function onDemolishHover(cell, world, landmark) {
   if (G.readOnly || !G.build.bulldoze) return;
-  const t = findDemoTarget(cell, world);
+  const t = landmark ? { kind: 'landmark', id: landmark.id, label: landmark.label } : findDemoTarget(cell, world);
   G.demoHover = t ? { ...t, key: demoKey(t) } : null;
+  // Cities-Skylines-style live bulldozer feedback: when NOT pointing at a discrete
+  // object, light up (in orange-red) the road chunk a click would tear out right here.
+  let preview = null;
+  if (!t && world) { const polys = roadEraseCover(G.state.roads, [{ x: world.x, z: world.z }], DEMO_BRUSH); if (polys.length) preview = polys; }
+  G.demoRoadPreview = preview;
+  if (G.view.showDemoRoadHover) G.view.showDemoRoadHover(preview || []);
   refreshDemoVisual();
   updateDemoBanner();
 }
@@ -967,7 +997,8 @@ function updateDemoBanner() {
   const head = n ? `🚜 Demolish · ${n} selected` : '🚜 Demolish';
   let sub;
   if (hov) { const sel = G.demoSel.has(hov.key); sub = `${sel ? 'Tap again to keep' : 'Tap to select'} ${hov.label}` + (n ? ' · ✓ Done to tear down' : ''); }
-  else sub = n ? 'Tap more or drag a road to add · ✓ Done tears them down over time' : 'Tap a building/shophouse/tree, or drag along a road, then ✓ Done';
+  else if (G.demoRoadPreview) sub = 'Click to bulldoze this stretch of road · drag for more · ✓ Done';
+  else sub = n ? 'Tap more, or click/drag a road to add · ✓ Done tears them down over time' : 'Tap a building, shophouse, tree or landmark — or click/drag a road';
   txt.innerHTML = `<b>${head}</b><br><span class="tb-sub">${sub}</span>`;
 }
 // Distance from point (x,z) to segment a-b ({x,z}).
@@ -1482,6 +1513,7 @@ window.__sg = {
   get adjust() { return G.adjust; },
   get demoSel() { return G.demoSel; },
   get demoCuts() { return G.demoCuts; },
+  get demoRoadPreview() { return G.demoRoadPreview; },
   get state() { return G.state; },
   get build() { return G.build; },
   get plant() { return G.plant; },

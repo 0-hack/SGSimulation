@@ -767,6 +767,7 @@ export class Scene3D {
       for (let k = 0; k < n; k++) treeAt(g, (Math.random() - 0.5) * 6, (Math.random() - 0.5) * 6, 0.8 + Math.random() * 0.9);
       g.position.set(c.x, this.terrainHeight(x, y), c.z); g.rotation.y = Math.random() * Math.PI;
       g.traverse((m) => { if (m.isMesh) m.castShadow = false; });
+      g.userData.demo = { kind: 'tree', x, y };   // pickable by the Demolish raycast
       this.natureGroup.add(g);
       this.natureCells.set(x + ',' + y, g);
     }
@@ -833,6 +834,7 @@ export class Scene3D {
     this._syncCarves();                         // re-cut the terrain flat under the runway
     this._airfieldY = level;
     const g = new THREE.Group(); g.position.set(cx, level, cz); g.rotation.y = rot; g.scale.setScalar(SC);
+    g.userData.demo = { kind: 'landmark', id: 'airport', label: 'Paya Lebar Airport' };   // demolishable as a whole landmark
     this.scene.add(g); this.airportGroup = g;
     this._airportCenter = { cx, cz, rot, len: len * SC };
 
@@ -1080,7 +1082,9 @@ export class Scene3D {
       g.add(m);
       this.heritageMask[gy][gx] = true;
       if (name) this.heritageInfo.set(`${gx},${gy}`, name);
-      this.heritagePlacements.push({ key, gx, gy, name: name || null, mesh: m });
+      const pl = { key, gx, gy, name: name || null, mesh: m };
+      m.userData.demo = { kind: 'heritage', placement: pl };   // pickable: the real shophouse/landmark model
+      this.heritagePlacements.push(pl);
     };
     for (const s of (list || [])) {
       const n = s.n || 1, sp = s.spread || 0.012;
@@ -1174,7 +1178,9 @@ export class Scene3D {
       m.rotation.y = faceAng;                                // facade (+Z) faces the road
       this.heritageGroup.add(m);
       for (const [gx, gy] of cells) { this.heritageMask[gy][gx] = true; this._shopMask[gy][gx] = 1; }
-      this.heritagePlacements.push({ key: 'shophouse', gx: ctr[0], gy: ctr[1], name: null, mesh: m, decor: true, cells });
+      const pl = { key: 'shophouse', gx: ctr[0], gy: ctr[1], name: null, mesh: m, decor: true, cells };
+      m.userData.demo = { kind: 'heritage', placement: pl };   // pickable: the real terrace model
+      this.heritagePlacements.push(pl);
       count++;
       return true;
     };
@@ -1702,6 +1708,14 @@ export class Scene3D {
         } else if (this.roadMode && this.onGroundTap) {
           const g = this._raycastGround(p);
           if (g) this.onGroundTap(g.x, g.z);
+        } else if (this.bulldoze) {
+          // Demolish tap: pick the real object under the cursor (any angle); pass its
+          // footprint cell + any fixed-landmark hit through to the game.
+          const g = this._groundPoint(p);
+          const pick = this.pickDemo(p);
+          const cell = (pick && pick.x != null) ? { x: pick.x, y: pick.y } : (g ? this._cellOfWorld(g) : null);
+          const landmark = (pick && pick.kind === 'landmark') ? pick : null;
+          if (this.onTileTap) this.onTileTap(cell ? cell.x : -1, cell ? cell.y : -1, g, landmark);
         } else {
           const g = this._groundPoint(p);
           const cell = g ? this._cellOfWorld(g) : null;
@@ -1714,7 +1728,7 @@ export class Scene3D {
     };
     c.addEventListener('pointerup', end);
     c.addEventListener('pointercancel', end);
-    c.addEventListener('pointerleave', () => { if (this.ghost) this.ghost.visible = false; this._hideHoverTile(); if (this.bulldoze && this.onDemolishHover) this.onDemolishHover(null, null); if (this._demoDrawing) { this._demoDrawing = false; this._demoStroke = null; this._clearDemoStrokePreview(); } this._clearSnapMarker(); this._hideDrawCursor(); if (this.pieceMode) this.clearRoadPreview(); });
+    c.addEventListener('pointerleave', () => { if (this.ghost) this.ghost.visible = false; this._hideHoverTile(); if (this.bulldoze && this.onDemolishHover) this.onDemolishHover(null, null); if (this._demoDrawing) { this._demoDrawing = false; this._demoStroke = null; this._clearDemoStrokePreview(); } this.showDemoRoadHover([]); this._clearSnapMarker(); this._hideDrawCursor(); if (this.pieceMode) this.clearRoadPreview(); });
     c.addEventListener('wheel', (e) => {
       e.preventDefault();
       this.cam.radius = THREE.MathUtils.clamp(this.cam.radius * (e.deltaY < 0 ? 0.92 : 1.08), this.MIN_R, this.MAX_R);
@@ -1851,6 +1865,69 @@ export class Scene3D {
     return { x: gx, y: gy };
   }
   _raycastCell(p) { return this._cellOfWorld(this._groundPoint(p)); }
+  // True 3D pick for the Demolish tool: raycast the ACTUAL object meshes under the
+  // cursor (placed buildings, construction sites, prebuilt shophouses, trees, fixed
+  // landmarks) so you target what you're visually pointing AT — correct at any camera
+  // angle, unlike a ground-cell guess that lands on the tile *behind* a tall building.
+  // Returns {kind:'building'|'heritage'|'tree', x, y} | {kind:'landmark', id, label} | null.
+  pickDemo(p) {
+    const roots = [];
+    for (const e of this.buildings.values()) if (e.group && e.group.visible) roots.push(e.group);
+    for (const s of this.sites.values()) if (s.group && s.group.visible) roots.push(s.group);
+    if (this.heritageGroup && this.heritageGroup.visible) roots.push(this.heritageGroup);
+    if (this.natureGroup && this.natureGroup.visible) roots.push(this.natureGroup);
+    if (this.airportGroup && this.airportGroup.visible) roots.push(this.airportGroup);
+    if (!roots.length) return null;
+    this.raycaster.setFromCamera(this._ndc(p), this.camera);
+    const hits = this.raycaster.intersectObjects(roots, true);
+    for (const h of hits) {
+      let o = h.object;
+      while (o) {
+        const d = o.userData && o.userData.demo;
+        if (d) {
+          if (d.kind === 'heritage') { const pl = d.placement; const c = (pl.cells && pl.cells.length) ? pl.cells[0] : [pl.gx, pl.gy]; return { kind: 'heritage', x: c[0], y: c[1] }; }
+          if (d.kind === 'landmark') return { kind: 'landmark', id: d.id, label: d.label };
+          return { kind: d.kind, x: d.x, y: d.y };
+        }
+        o = o.parent;
+      }
+    }
+    return null;
+  }
+  _landmarkGroup(id) { return id === 'airport' ? this.airportGroup : null; }
+  // Demolish a fixed landmark (e.g. the airport): hide its whole model, free the cells
+  // it blocked so the player can build there, and remember it so it stays gone on reload.
+  removeLandmark(id) {
+    const g = this._landmarkGroup(id); if (!g) return false;
+    this._tintObjectRed(g, false);
+    g.visible = false;
+    if (id === 'airport' && this.airportMask) for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) this.airportMask[y][x] = false;
+    (this._removedLandmarks || (this._removedLandmarks = new Set())).add(id);
+    if (this.state) (this.state.removedLandmarks || (this.state.removedLandmarks = {}))[id] = 1;
+    if (id === 'airport' && this._airportCenter) this._spawnDust(this._airportCenter.cx, this._airportCenter.cz, 0xbfb09a, 40);
+    return true;
+  }
+  // Restore which fixed landmarks the player has demolished (so they stay gone on load).
+  _applyRemovedLandmarks(state) {
+    this._removedLandmarks = new Set(Object.keys((state && state.removedLandmarks) || {}));
+    for (const id of this._removedLandmarks) {
+      const g = this._landmarkGroup(id); if (g) g.visible = false;
+      if (id === 'airport' && this.airportMask) for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) this.airportMask[y][x] = false;
+    }
+  }
+  // Cities-Skylines-style live bulldozer feedback: redraw (in orange-red) the road
+  // chunk(s) the cursor is currently over — what a click would tear out right here.
+  showDemoRoadHover(polys) {
+    if (!this._demoHoverGroup) { this._demoHoverGroup = new THREE.Group(); this.scene.add(this._demoHoverGroup); }
+    for (const m of this._demoHoverGroup.children.slice()) { this._demoHoverGroup.remove(m); m.geometry.dispose(); }
+    for (const poly of (polys || [])) {
+      if (!poly || poly.length < 2) continue;
+      const v = poly.map((q) => new THREE.Vector3(q.x, this._heightAt(q.x, q.z) + 0.55, q.z));
+      const geo = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(v), Math.max(6, v.length * 2), 1.4, 7, false);
+      const mm = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0xff7a4a, transparent: true, opacity: 0.5, depthTest: false }));
+      mm.renderOrder = 7; this._demoHoverGroup.add(mm);
+    }
+  }
   // Paint the cell under screen point p (once per cell per drag).
   _paintAt(p) {
     const cell = this._raycastCell(p); if (!cell || !this.onPaint) return;
@@ -2116,13 +2193,18 @@ export class Scene3D {
     }
     if (!this.previewKey && !this.bulldoze) { if (this.ghost) this.ghost.visible = false; this._hideHoverTile(); return; }
     const g = this._raycastGround(p);                 // exact sub-cell cursor point
-    const cell = this._cellOfWorld(g);
+    let cell = this._cellOfWorld(g);
+    // DEMOLISH: pick the real 3D object under the cursor (any camera angle) and hand
+    // the game its footprint cell + any fixed-landmark hit; the game classifies it,
+    // highlights it red, and the click removes EXACTLY what was highlighted.
+    if (this.bulldoze) {
+      const pick = this.pickDemo(p);
+      if (pick && pick.x != null) cell = { x: pick.x, y: pick.y };   // the object's cell, not the ground behind it
+      this.hoverCell = cell; this.hoverWorld = g;
+      if (this.onDemolishHover) this.onDemolishHover(cell, g, (pick && pick.kind === 'landmark') ? pick : null);
+      return;
+    }
     this.hoverCell = cell; this.hoverWorld = g;
-    // DEMOLISH: hand the exact cursor point to the game, which decides what's under
-    // it (building vs road/rail/runway), highlights it, and names it. Keeping that
-    // decision in one place (the game) is what stops the "removes a random nearby
-    // thing" bug — the click later removes EXACTLY what was highlighted here.
-    if (this.bulldoze) { if (this.onDemolishHover) this.onDemolishHover(cell, g); return; }
     this._updateGhost();                              // building ghost follows the cursor freely (sub-cell)
     if (cell) {
       const occupied = this.buildings.has(`${cell.x},${cell.y}`);
@@ -2173,15 +2255,18 @@ export class Scene3D {
     if (t.kind === 'building') this._tintObjectRed(this._buildingGroup(t.x, t.y), true);
     else if (t.kind === 'heritage') { const m = this._heritageMeshAt(t.x, t.y); if (m) this._tintObjectRed(m, true); else this._demoTile(t.key, t.x, t.y, true); }
     else if (t.kind === 'tree') this._tintObjectRed(this.natureCells && this.natureCells.get(`${t.x},${t.y}`), true);
+    else if (t.kind === 'landmark') this._tintObjectRed(this._landmarkGroup(t.id), true);
     else this._demoRibbon(t.key, t.poly, true);   // road cut / rail / runway ribbon
   }
   _demoUnshow(t) {
     if (t.kind === 'building') this._tintObjectRed(this._buildingGroup(t.x, t.y), false);
     else if (t.kind === 'heritage') { const m = this._heritageMeshAt(t.x, t.y); if (m) this._tintObjectRed(m, false); else this._demoTile(t.key, null, null, false); }
     else if (t.kind === 'tree') this._tintObjectRed(this.natureCells && this.natureCells.get(`${t.x},${t.y}`), false);
+    else if (t.kind === 'landmark') this._tintObjectRed(this._landmarkGroup(t.id), false);
     else this._demoRibbon(t.key, null, false);
   }
-  _buildingGroup(x, y) { const e = this.buildings.get(`${x},${y}`); return e && e.group; }
+  // The pickable group for a placed building OR one still under construction (so both tint red).
+  _buildingGroup(x, y) { const e = this.buildings.get(`${x},${y}`); if (e && e.group) return e.group; const s = this.sites.get(`${x},${y}`); return s ? s.group : null; }
   // The 3D mesh of the prebuilt heritage landmark (shophouse/kampong) covering a cell.
   _heritageMeshAt(gx, gy) {
     if (!this.heritagePlacements) return null;
@@ -2639,7 +2724,7 @@ export class Scene3D {
     return g;
   }
   // ---- external API (mirrors the 2D view) ----------------------------------
-  setState(state) { this.state = state; this._loadRemovedTrees(state); this.rebuildRoadNet(); this._relocateHeritageOffRoads(); this.applyHeritageToGrid(state); this._syncReclaimed(); this.syncAll(); this._buildPlayerRailways(state); this._buildPlayerAirstrips(state); this.syncRoadworks(state); this._buildPlayerPlants(state); this._syncSurfaces(state); this.refreshFoundationCarves(); }
+  setState(state) { this.state = state; this._loadRemovedTrees(state); this._applyRemovedLandmarks(state); this.rebuildRoadNet(); this._relocateHeritageOffRoads(); this.applyHeritageToGrid(state); this._syncReclaimed(); this.syncAll(); this._buildPlayerRailways(state); this._buildPlayerAirstrips(state); this.syncRoadworks(state); this._buildPlayerPlants(state); this._syncSurfaces(state); this.refreshFoundationCarves(); }
   // Restore which ambient trees the player has bulldozed (so they stay gone across saves).
   _loadRemovedTrees(state) { this._removedTrees = new Set(Object.keys((state && state.removedTrees) || {})); }
   setShortages(s) { this.shortages = s; }
@@ -2653,7 +2738,7 @@ export class Scene3D {
   setBulldoze(on) {
     this.bulldoze = on; this.previewKey = null;
     this._makeGhost(null);
-    if (!on) { this._hideHoverTile(); this.clearDemoSelection(); this._demoDrawing = false; this._demoStroke = null; this._clearDemoStrokePreview(); }   // leaving Demolish clears all red highlights
+    if (!on) { this._hideHoverTile(); this.clearDemoSelection(); this._demoDrawing = false; this._demoStroke = null; this._clearDemoStrokePreview(); this.showDemoRoadHover([]); }   // leaving Demolish clears all red highlights
   }
 
   _makeGhost(key) {
@@ -2813,6 +2898,7 @@ export class Scene3D {
     wrap.position.set(c.x + ox, (fy != null) ? fy : this.terrainHeight(x, y), c.z + oz);
     wrap.rotation.y = (rcell && typeof rcell.r === 'number') ? rcell.r : (Math.floor(Math.random() * 4)) * Math.PI / 2;
     wrap.scale.setScalar(MODEL_SCALE); // whole site (building + crane) sized to the live cell
+    wrap.userData.demo = { kind: 'building', x, y };   // a building still under construction is pickable too
     this.scene.add(wrap);
     let siteFound = null; if (fy != null) { siteFound = this._makeFoundation(x, y, fy, rcell && rcell.fmode); this.scene.add(siteFound); }
     // the target building, measured then flattened so it rises with progress
@@ -2865,6 +2951,7 @@ export class Scene3D {
     group.position.set(c.x + ox, (fy != null) ? fy : this.terrainHeight(x, y), c.z + oz);
     group.rotation.y = (rcell && typeof rcell.r === 'number') ? rcell.r : (Math.floor(Math.random() * 4)) * Math.PI / 2;
     group.castShadow = true;
+    group.userData.demo = { kind: 'building', x, y };   // so the Demolish raycast can pick the real model at any angle
     this.scene.add(group);
     let found = null; if (fy != null) { found = this._makeFoundation(x, y, fy, rcell && rcell.fmode); this.scene.add(found); }
     const tall = b.cat === 'residential' || b.cat === 'industry';

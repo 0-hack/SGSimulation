@@ -79,6 +79,7 @@ export function newGame({ name = 'New Singapore', owner = 'Anonymous' } = {}) {
     plants: [],               // individually-placed tropical plants: { x, z, kind, rot, s } in world coords
     surfaces: {},             // painted ground surfaces, sparse: "x,y" -> surface type (cosmetic only)
     removedTrees: {},         // ambient trees the player bulldozed, sparse: "x,y" -> 1 (so clearings persist)
+    removedLandmarks: {},     // fixed landmarks the player demolished, sparse: id -> 1 (e.g. "airport")
     landmarks: [],            // 3D-designed landmarks saved into THIS world (per-player; for build menu + visitors)
     projects: [],             // active guided national projects the player is building toward
     projectsDone: [],         // ids of completed national projects
@@ -166,6 +167,7 @@ export function ensureGrid(state) {
   if (!Array.isArray(state.plants)) state.plants = [];
   if (!state.surfaces || typeof state.surfaces !== 'object') state.surfaces = {};
   if (!state.removedTrees || typeof state.removedTrees !== 'object') state.removedTrees = {};
+  if (!state.removedLandmarks || typeof state.removedLandmarks !== 'object') state.removedLandmarks = {};
   if (!state.economy) state.economy = { inflation: 0.02, priceIndex: 1, currency: 1 };
   // Rebuild the active-construction & demolition lists from the grid (robust across saves).
   state.constructing = [];

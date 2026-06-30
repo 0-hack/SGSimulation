@@ -173,6 +173,78 @@ try {
   ok(dmR.found && dmR.marked, 'dragging along a road freely marks the covered portion (red)');
   ok(dmR.split && dmR.queued, 'Done splits the road and tears down ONLY the dragged portion (not a fixed length)');
 
+  // (5) TRUE 3D PICKING: pointing at a building's body picks the BUILDING, not the
+  // ground cell behind it (the bug that made tall buildings/airport un-hoverable).
+  const dmPick = await p.evaluate(() => {
+    const v = window.__sgview, N = v.land.length;
+    let bx = -1, by = -1;
+    for (let y = 8; y < N - 8 && bx < 0; y += 2) for (let x = 8; x < N - 8; x++) {
+      if (v.isLand(x, y) && !v.isRoadAt(x, y) && !v.buildings.has(`${x},${y}`) && !v.state.grid[y][x] && !(v.heritageLabelAt && v.heritageLabelAt(x, y))) { bx = x; by = y; break; }
+    }
+    if (bx < 0) return { found: false };
+    v.state.grid[by][bx] = { k: 'hdb_flat' }; v._addMesh(bx, by, 'hdb_flat', false);   // full height now (no rise animation)
+    v.scene.updateMatrixWorld(true);   // flush transforms so the raycast sees the brand-new mesh (the render loop does this each frame)
+    const grp = v.buildings.get(`${bx},${by}`).group;
+    const rect = v.canvas.getBoundingClientRect();
+    // screen point over the building BODY (a few units up the facade), in the angled default view
+    const sp = v.worldToScreen(grp.position.x, grp.position.y + 4, grp.position.z);
+    if (!sp.visible) return { found: false };
+    const lp = { x: sp.x - rect.left, y: sp.y - rect.top };
+    const pick = v.pickDemo(lp);
+    const pickedRight = !!pick && pick.kind === 'building' && pick.x === bx && pick.y === by;
+    return { found: true, pickedRight };
+  });
+  ok(dmPick.found && dmPick.pickedRight, 'pointing at a building body picks the BUILDING (true 3D mesh pick, any angle)');
+
+  // (6) AIRPORT (fixed landmark): selectable, demolished on Done, land freed, persisted
+  const dmAir = await p.evaluate(() => {
+    const v = window.__sgview, S = window.__sg, N = v.land.length;
+    if (!v.airportGroup) return { found: false };
+    let maskedBefore = false;
+    for (let y = 0; y < N && !maskedBefore; y++) for (let x = 0; x < N; x++) if (v.airportMask[y][x]) { maskedBefore = true; break; }
+    S.setBulldoze(true);
+    const lm = { id: 'airport', label: 'Paya Lebar Airport' };
+    S.onTileTap(-1, -1, { x: v._airportCenter.cx, z: v._airportCenter.cz }, lm);  // simulate the 3D pick selecting it
+    const sel = S.demoSel.size === 1;
+    S.commitDemolish();
+    const hidden = v.airportGroup.visible === false;
+    let maskedAfter = false;
+    for (let y = 0; y < N && !maskedAfter; y++) for (let x = 0; x < N; x++) if (v.airportMask[y][x]) { maskedAfter = true; break; }
+    const persisted = !!(v.state.removedLandmarks && v.state.removedLandmarks.airport);
+    S.setBulldoze(false);
+    return { found: true, maskedBefore, sel, hidden, freed: !maskedAfter, persisted };
+  });
+  ok(dmAir.found && dmAir.maskedBefore && dmAir.sel, 'the airport (fixed landmark) can be selected for demolition');
+  ok(dmAir.hidden && dmAir.freed && dmAir.persisted, 'Done removes the airport, frees its land, and the removal persists');
+
+  // (7) CS-style road bulldozer: hover shows a live chunk; a single CLICK tears it out
+  const dmBull = await p.evaluate(() => {
+    const v = window.__sgview, S = window.__sg, roads = v.state.roads;
+    if (!roads || !roads.edges || !roads.edges.length) return { found: false };
+    const lineOf = (e) => { if (e.poly && e.poly.length >= 2) return e.poly.map((q) => ({ x: q.x, z: q.z })); const a = roads.nodes[e.a], b = roads.nodes[e.b]; return (a && b) ? [{ x: a.x, z: a.z }, { x: b.x, z: b.z }] : []; };
+    const cellOf = (w) => ({ x: Math.floor((w.x / 1600 + 0.5) * v.land.length), y: Math.floor((0.5 - w.z / 1600) * v.land.length) });
+    let pt = null;
+    for (const e of roads.edges) {
+      if (e.demolish) continue; const l = lineOf(e); if (l.length < 2) continue;
+      if (Math.hypot(l[l.length - 1].x - l[0].x, l[l.length - 1].z - l[0].z) < 12) continue;
+      for (let f = 0.3; f <= 0.7; f += 0.1) { const q = l[Math.min(l.length - 1, Math.floor(l.length * f))]; if (!S.findDemoTarget(cellOf(q), { x: q.x, z: q.z })) { pt = q; break; } }
+      if (pt) break;
+    }
+    if (!pt) return { found: false };
+    S.setBulldoze(true);
+    S.onDemolishHover(cellOf(pt), { x: pt.x, z: pt.z }, null);    // hover the road
+    const hoverChunk = !!(S.demoRoadPreview && S.demoRoadPreview.length);
+    const before = roads.edges.length;
+    S.onTileTap(cellOf(pt).x, cellOf(pt).y, { x: pt.x, z: pt.z }); // single click bulldozes a chunk
+    const staged = S.demoCuts.length === 1;
+    S.commitDemolish();
+    const split = roads.edges.length > before, queued = roads.edges.some((e) => e && e.demolish);
+    S.setBulldoze(false);
+    return { found: true, hoverChunk, staged, split, queued };
+  });
+  ok(dmBull.found && dmBull.hoverChunk, 'hovering a road shows a live red chunk (what a click would tear out)');
+  ok(dmBull.staged && dmBull.split && dmBull.queued, 'a single click bulldozes a brush-sized chunk of road (CS-style)');
+
   // ---- RECLAIM menu is reachable + renders (category tabs wrap, not off-screen)
   const rc = await p.evaluate(() => {
     document.querySelector('.tool[data-panel="build"]').click();

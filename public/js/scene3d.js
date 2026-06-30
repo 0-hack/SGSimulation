@@ -589,18 +589,34 @@ export class Scene3D {
   // Combine railway-cutting + airport-pad carves and re-cut the terrain mesh when
   // they change. (Railway gradings are managed by the railway builder, flat runway
   // pads by the airstrip builder; both feed this so they coexist.)
-  _syncCarves() {
-    const all = [...(this._railCarves || []), ...(this._airCarves || []), ...(this._airBuiltinCarve || [])];
+  _syncCarves(skipResettle = false) {
+    const all = [...(this._railCarves || []), ...(this._airCarves || []), ...(this._airBuiltinCarve || []), ...(this._buildingCarves || [])];
     this._carves = all.length ? all : null;
     const sig = all.map((c) => `${c.poly.length}:${c.poly[0].x.toFixed(0)},${c.poly[0].z.toFixed(0)}:${(c.floors ? c.floors[0] : c.floor).toFixed(1)}:${(c.floors ? c.floors[c.floors.length - 1] : c.floor).toFixed(1)}`).join('|');
     if (sig !== (this._carveSig ?? '')) {
       this._carveSig = sig; this._buildTerrain();
       // the ground just moved: re-settle roads and trees so a cut hill doesn't leave
-      // its old road/trees floating where the hill used to be
-      if (this.state) this.rebuildRoadNet();
-      this._refreshNature();
+      // its old road/trees floating where the hill used to be. A small building pad
+      // (skipResettle) never sits under a road, so skip the expensive road rebuild.
+      if (!skipResettle && this.state) this.rebuildRoadNet();
+      if (!skipResettle) this._refreshNature();
     }
   }
+  // A flat pad carved into the hill under a building footprint (Excavate mode), so
+  // the slope is "broken open" and the whole building shows instead of being buried.
+  _cellCarve(gx, gy, fy) {
+    const c = cellToWorld(gx, gy);
+    return { poly: [{ x: c.x - 0.3, z: c.z }, { x: c.x + 0.3, z: c.z }], halfW: 1.6, blend: 3.0, floor: fy };
+  }
+  // Collect all excavation carves: every committed Excavate building + the pending
+  // one being positioned (so the cut previews live).
+  _rebuildBuildingCarves() {
+    const out = []; const g = this.state && this.state.grid;
+    if (g) for (let y = 0; y < N; y++) { const row = g[y]; if (!row) continue; for (let x = 0; x < N; x++) { const c = row[x]; if (c && c.fmode === 'cut' && typeof c.fy === 'number') out.push(this._cellCarve(x, y, c.fy)); } }
+    if (this._adjust && this._adjust.fmode === 'cut' && this._adjust.fy != null) out.push(this._cellCarve(this._adjust.x, this._adjust.y, this._adjust.fy));
+    this._buildingCarves = out.length ? out : null;
+  }
+  refreshFoundationCarves() { this._rebuildBuildingCarves(); this._syncCarves(true); }
   // Lower the heightfield inside carves so linear features sit IN the ground rather
   // than poking out of it. Two kinds: a tunnel-mouth ramp capsule (cut to the track
   // floor at the mouth, ramping back to natural by its inner end), and a flat runway
@@ -2520,9 +2536,16 @@ export class Scene3D {
   // A concrete platform under a building on a slope: a flat pad at `fy`, plus a
   // podium/retaining wall down to the lowest surrounding ground so it meets the
   // terrain cleanly (a tall podium when elevated, a low pad when excavated).
-  _makeFoundation(gx, gy, fy) {
+  _makeFoundation(gx, gy, fy, mode) {
     const g = new THREE.Group();
-    const c = cellToWorld(gx, gy), H = TILE / 2;
+    const c = cellToWorld(gx, gy);
+    if (mode === 'cut') {
+      // EXCAVATE: the terrain is carved down to fy elsewhere — just a slab the
+      // building floor sits on at the bottom of the cut.
+      g.add(partBox(TILE * 1.0, 0.3, TILE * 1.0, mat(0xbcb8ad), c.x, fy - 0.08, c.z));
+      return g;
+    }
+    // ELEVATE: a podium / retaining block from the lowest ground up to fy + a pad.
     const lvl = this.footprintLevels(gx, gy);
     const base = Math.min(lvl.lo, fy) - 0.3;
     const podH = Math.max(0.3, fy - base);
@@ -2531,7 +2554,7 @@ export class Scene3D {
     return g;
   }
   // ---- external API (mirrors the 2D view) ----------------------------------
-  setState(state) { this.state = state; this.rebuildRoadNet(); this._relocateHeritageOffRoads(); this.applyHeritageToGrid(state); this._syncReclaimed(); this.syncAll(); this._buildPlayerRailways(state); this._buildPlayerAirstrips(state); this.syncRoadworks(state); this._buildPlayerPlants(state); this._syncSurfaces(state); }
+  setState(state) { this.state = state; this.rebuildRoadNet(); this._relocateHeritageOffRoads(); this.applyHeritageToGrid(state); this._syncReclaimed(); this.syncAll(); this._buildPlayerRailways(state); this._buildPlayerAirstrips(state); this.syncRoadworks(state); this._buildPlayerPlants(state); this._syncSurfaces(state); this.refreshFoundationCarves(); }
   setShortages(s) { this.shortages = s; }
   setPreview(key, theme) {
     this.previewKey = key; this.previewTheme = theme; this.bulldoze = false;
@@ -2563,7 +2586,7 @@ export class Scene3D {
   }
   // ---- place-then-adjust: a PENDING object sits on the ground (not yet committed)
   // so the player can rotate / move / remove it and SEE it before confirming -------
-  enterAdjust(x, y, key, theme, rot, wx, wz, fy) {
+  enterAdjust(x, y, key, theme, rot, wx, wz, fy, fmode) {
     this.clearAdjust();
     const g = makeBuilding(key, theme); g.scale.setScalar(MODEL_SCALE);
     const c = cellToWorld(x, y), hy = (fy != null) ? fy : this.terrainHeight(x, y);
@@ -2572,28 +2595,31 @@ export class Scene3D {
     const ring = new THREE.Mesh(new THREE.RingGeometry(TILE * 0.55, TILE * 0.82, 28),
       new THREE.MeshBasicMaterial({ color: 0x8fe05a, transparent: true, opacity: 0.9, side: THREE.DoubleSide }));
     ring.rotation.x = -Math.PI / 2; ring.position.set(px, hy + 0.14, pz); this.scene.add(ring);
-    let found = null; if (fy != null) { found = this._makeFoundation(x, y, fy); this.scene.add(found); }
-    this._adjust = { x, y, key, theme, rot: rot || 0, wx: px, wz: pz, fy: (fy != null ? fy : null), mesh: g, ring, found };
+    let found = null; if (fy != null) { found = this._makeFoundation(x, y, fy, fmode); this.scene.add(found); }
+    this._adjust = { x, y, key, theme, rot: rot || 0, wx: px, wz: pz, fy: (fy != null ? fy : null), fmode: fmode || null, mesh: g, ring, found };
+    this.refreshFoundationCarves();   // live-cut the hill if this is an Excavate
     if (this.ghost) this.ghost.visible = false;
   }
   setAdjustRotation(rot) { if (this._adjust) { this._adjust.rot = rot; this._adjust.mesh.rotation.y = rot; } }
-  // Switch the pending building's foundation level (fy = excavated low side, or the
-  // elevated high side; null = back to flat ground).
-  setAdjustFoundation(fy) {
+  // Switch the pending building's foundation: fy = the excavated low side or the
+  // elevated high side; mode = 'cut' | 'lift' (null = back to flat ground).
+  setAdjustFoundation(fy, fmode) {
     const a = this._adjust; if (!a) return;
     const baseY = (fy != null) ? fy : this.terrainHeight(a.x, a.y);
-    a.mesh.position.y = baseY; a.ring.position.y = baseY + 0.14; a.fy = (fy != null ? fy : null);
+    a.mesh.position.y = baseY; a.ring.position.y = baseY + 0.14; a.fy = (fy != null ? fy : null); a.fmode = fmode || null;
     if (a.found) { this.scene.remove(a.found); a.found = null; }
-    if (fy != null) { a.found = this._makeFoundation(a.x, a.y, fy); this.scene.add(a.found); }
+    if (fy != null) { a.found = this._makeFoundation(a.x, a.y, fy, fmode); this.scene.add(a.found); }
+    this.refreshFoundationCarves();
   }
-  moveAdjust(x, y, wx, wz, fy) {
+  moveAdjust(x, y, wx, wz, fy, fmode) {
     if (!this._adjust) return;
     const c = cellToWorld(x, y), hy = (fy != null) ? fy : this.terrainHeight(x, y);
     const px = (wx != null) ? wx : c.x, pz = (wz != null) ? wz : c.z;
     this._adjust.mesh.position.set(px, hy, pz); this._adjust.ring.position.set(px, hy + 0.14, pz);
-    this._adjust.x = x; this._adjust.y = y; this._adjust.wx = px; this._adjust.wz = pz; this._adjust.fy = (fy != null ? fy : null);
+    this._adjust.x = x; this._adjust.y = y; this._adjust.wx = px; this._adjust.wz = pz; this._adjust.fy = (fy != null ? fy : null); this._adjust.fmode = fmode || null;
     if (this._adjust.found) { this.scene.remove(this._adjust.found); this._adjust.found = null; }
-    if (fy != null) { this._adjust.found = this._makeFoundation(x, y, fy); this.scene.add(this._adjust.found); }
+    if (fy != null) { this._adjust.found = this._makeFoundation(x, y, fy, fmode); this.scene.add(this._adjust.found); }
+    this.refreshFoundationCarves();
   }
   // Is the cursor over (or right next to) the pending building? Used to start a
   // drag-rotate instead of orbiting the camera.
@@ -2609,6 +2635,7 @@ export class Scene3D {
     if (this._adjust.found) this.scene.remove(this._adjust.found);
     if (this._adjust.ring.geometry) this._adjust.ring.geometry.dispose();
     this._adjust = null;
+    this.refreshFoundationCarves();   // drop the pending cut preview (or keep a committed one)
   }
   adjustActive() { return !!this._adjust; }
   // Nearest grid cell that sits on a drawn track (MRT only when mrtOnly), within
@@ -2700,7 +2727,7 @@ export class Scene3D {
     wrap.rotation.y = (rcell && typeof rcell.r === 'number') ? rcell.r : (Math.floor(Math.random() * 4)) * Math.PI / 2;
     wrap.scale.setScalar(MODEL_SCALE); // whole site (building + crane) sized to the live cell
     this.scene.add(wrap);
-    let siteFound = null; if (fy != null) { siteFound = this._makeFoundation(x, y, fy); this.scene.add(siteFound); }
+    let siteFound = null; if (fy != null) { siteFound = this._makeFoundation(x, y, fy, rcell && rcell.fmode); this.scene.add(siteFound); }
     // the target building, measured then flattened so it rises with progress
     const b = makeBuilding(key, theme);
     const box = new THREE.Box3().setFromObject(b);
@@ -2752,7 +2779,7 @@ export class Scene3D {
     group.rotation.y = (rcell && typeof rcell.r === 'number') ? rcell.r : (Math.floor(Math.random() * 4)) * Math.PI / 2;
     group.castShadow = true;
     this.scene.add(group);
-    let found = null; if (fy != null) { found = this._makeFoundation(x, y, fy); this.scene.add(found); }
+    let found = null; if (fy != null) { found = this._makeFoundation(x, y, fy, rcell && rcell.fmode); this.scene.add(found); }
     const tall = b.cat === 'residential' || b.cat === 'industry';
     const entry = { group, key, tall, anim: false, found };
     this.buildings.set(id, entry);
@@ -2790,6 +2817,7 @@ export class Scene3D {
     const c = cellToWorld(x, y);
     this._spawnDust(c.x, c.z, 0xbfb09a, 26);
     const g = this.natureCells?.get(x + ',' + y); if (g) g.visible = true;   // greenery returns
+    if (this.state && this.state.grid?.[y]?.[x] == null) this.refreshFoundationCarves();   // a torn-down excavation un-cuts the hill
     if (entry.key === 'mrt' && this.state) this._buildPlayerRailways(this.state);  // re-level the deck (the removed platform no longer flattens it) + realign + retrain
     else if (entry.key === 'rail_station') { this._alignRailStations(); this._refreshTrainStops(); } // a demolished station is no longer a stop
   }

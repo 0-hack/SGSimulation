@@ -49,7 +49,7 @@ const SUN_CAP = 0.5;                // max in-game days/sec the day-night cycle 
 // cut the hills (and fill the dips) to a smooth line.
 const FLAT_TOL = 1.5;               // metres of height variation tolerated before clearing/flattening is required
 const EARTHWORK_RATE = 0.012;       // $M per m³ of cut/fill (× live price index)
-const SLOPE_TOL = 1.4;              // ground unevenness (world units) under a footprint before a foundation is required
+const SLOPE_TOL = 0.7;              // ground unevenness (world units) under a footprint before a foundation is offered
 // Does the footprint at (x,y) need a foundation? Returns {flo,fhi,range} or null.
 function slopeFoundation(x, y) {
   if (!G.view || !G.view.footprintLevels) return null;
@@ -520,9 +520,9 @@ function onTileTap(x, y, world) {
     if (!placementOk(tx, ty)) { toast('Can\'t put it there.'); return; }
     const mf = G.adjust.key === 'mrt' ? null : slopeFoundation(tx, ty);   // re-evaluate the slope at the new spot
     G.adjust.flo = mf ? mf.flo : null; G.adjust.fhi = mf ? mf.fhi : null;
-    if (mf) { if (!G.adjust.fmode) G.adjust.fmode = 'cut'; G.adjust.fy = G.adjust.fmode === 'lift' ? mf.fhi : mf.flo; }
+    if (mf) { if (!G.adjust.fmode) G.adjust.fmode = 'lift'; G.adjust.fy = G.adjust.fmode === 'lift' ? mf.fhi : mf.flo; }
     else { G.adjust.fmode = null; G.adjust.fy = null; }
-    G.adjust.x = tx; G.adjust.y = ty; G.adjust.wx = wx; G.adjust.wz = wz; G.view.moveAdjust(tx, ty, wx, wz, G.adjust.fy);
+    G.adjust.x = tx; G.adjust.y = ty; G.adjust.wx = wx; G.adjust.wz = wz; G.view.moveAdjust(tx, ty, wx, wz, G.adjust.fy, G.adjust.fmode);
     updateToolBanner();
     return;
   }
@@ -542,15 +542,16 @@ function onTileTap(x, y, world) {
     const theme = BUILDINGS[b.selected].customizable ? b.theme : null;
     let rot = b.rot || 0;
     if (b.selected === 'mrt') { const w = G.view.worldOfCell(tx, ty); const info = G.view._viaductInfoAt(w.x, w.z, 2.5 * 2.2); if (info) rot = info.bearing; } // face along the track
-    // On steep/uneven ground a building needs a foundation: default to EXCAVATE
-    // (level down to the low side); the player can switch to ELEVATE in the banner.
+    // On steep/uneven ground the building gets a foundation so it isn't buried by
+    // the slope: default to ELEVATE (a platform up to the high side, always fully
+    // visible); the player can switch to EXCAVATE (cut the hill open) in the banner.
     const fnd = b.selected === 'mrt' ? null : slopeFoundation(tx, ty);
-    const fmode = fnd ? 'cut' : null, fy = fnd ? fnd.flo : null;
+    const fmode = fnd ? 'lift' : null, fy = fnd ? fnd.fhi : null;
     G.adjust = { x: tx, y: ty, key: b.selected, theme, rot, wx, wz, fy, fmode, flo: fnd ? fnd.flo : null, fhi: fnd ? fnd.fhi : null };
-    G.view.enterAdjust(tx, ty, b.selected, theme, G.adjust.rot, wx, wz, fy);
+    G.view.enterAdjust(tx, ty, b.selected, theme, G.adjust.rot, wx, wz, fy, fmode);
     updateToolBanner();
     const linked = b.selected === 'mrt' && (tx !== x || ty !== y) ? ' Linked to the MRT line.' : '';
-    const slope = fnd ? ' Uneven ground — ⛰ Excavated by default; tap 🏗 to Elevate instead.' : '';
+    const slope = fnd ? ' Uneven ground — 🏗 Elevated on a platform; tap ⛰ to Excavate (cut the hill) instead.' : '';
     toast(`Positioning ${BUILDINGS[b.selected].name}.${linked}${slope} Drag it to rotate · tap to move · ✓ Done.`);
   } else {
     // inspect
@@ -580,9 +581,9 @@ function toggleFoundation() {
   if (!G.adjust || G.adjust.flo == null) return;
   G.adjust.fmode = G.adjust.fmode === 'lift' ? 'cut' : 'lift';
   G.adjust.fy = G.adjust.fmode === 'lift' ? G.adjust.fhi : G.adjust.flo;
-  G.view.setAdjustFoundation(G.adjust.fy);
+  G.view.setAdjustFoundation(G.adjust.fy, G.adjust.fmode);
   updateToolBanner();
-  toast(G.adjust.fmode === 'lift' ? '🏗 Elevated on a platform.' : '⛰ Excavated to level ground.');
+  toast(G.adjust.fmode === 'lift' ? '🏗 Elevated on a platform.' : '⛰ Slope cut open for the building.');
 }
 // Turn the pending station to line up with the MRT track it just snapped onto.
 function alignAdjustToViaduct(gx, gy) {

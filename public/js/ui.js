@@ -1,6 +1,6 @@
 // UI rendering helpers: builds the contents of each bottom sheet/panel.
 // Returns DOM and wires callbacks; keeps main.js focused on orchestration.
-import { BUILDINGS, CATEGORIES, POLICIES, POP_SCALE, THEMES, ROAD_TYPES, PLANTS, SANDBOX } from './data.js';
+import { BUILDINGS, CATEGORIES, POLICIES, POP_SCALE, THEMES, ROAD_TYPES, PLANTS, SURFACE_TYPES, SANDBOX } from './data.js';
 import { derive, isUnlocked, formatDate, debtCeiling, bondRate, reclaimCost, buildingCost, buildDays, priceIndex, inflationRate, currencyStrength } from './engine.js';
 import { ICONS, CAT_ICON } from './icons.js';
 

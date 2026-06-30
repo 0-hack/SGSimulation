@@ -47,31 +47,32 @@ try {
   ok(sf.painted, 'painting a surface stores + renders a ground tile');
   ok(sf.cleared, 'painting "clear" removes the surface override');
 
-  // ---- SLOPE FOUNDATION: find a steep cell, place, toggle cut/lift, commit -
+  // ---- SLOPE FOUNDATION: elevate by default; excavate actually cuts the hill -
   const fd = await p.evaluate(() => {
     const v = window.__sgview, S = window.__sg, N = v.land.length;
-    // hunt for a steep, buildable cell (Bukit Timah / hilly ground)
     let sx = -1, sy = -1, range = 0;
     for (let y = 2; y < N - 2 && sx < 0; y += 3) for (let x = 2; x < N - 2; x += 3) {
       if (!v.isLand(x, y) || v.isRoadAt(x, y) || v.buildings.has(`${x},${y}`) || v.state.grid[y][x]) continue;
-      const lv = v.footprintLevels(x, y); if (lv.range > 1.4) { sx = x; sy = y; range = lv.range; break; }
+      const lv = v.footprintLevels(x, y); if (lv.range > 0.9) { sx = x; sy = y; range = lv.range; break; }
     }
     if (sx < 0) return { found: false };
+    const c = v.worldOfCell(sx, sy), origH = v._heightAt(c.x, c.z);
     S.selectBuilding('hdb_flat');
-    S.onTileTap(sx, sy, v.worldOfCell(sx, sy));
-    const needsFound = S.adjust && S.adjust.fy != null && S.adjust.fmode === 'cut';   // excavate by default
-    const cutY = S.adjust.fy;
-    S.toggleFoundation();
-    const lifted = S.adjust.fmode === 'lift' && S.adjust.fy > cutY;                   // elevate raises it
+    S.onTileTap(sx, sy, c);
+    const defLift = S.adjust && S.adjust.fmode === 'lift' && S.adjust.fy != null;     // ELEVATE by default
+    S.toggleFoundation();                                                              // -> EXCAVATE
+    const cutFloor = S.adjust.fy, nowCut = S.adjust.fmode === 'cut';
+    const carved = Math.abs(v._heightAt(c.x, c.z) - cutFloor) < 0.5 && cutFloor < origH - 0.2;  // hill cut to the floor
     S.commitAdjust();
     const cell = v.state.grid[sy][sx];
-    const persisted = cell && typeof cell.fy === 'number' && cell.fmode === 'lift';
-    return { found: true, range: +range.toFixed(2), needsFound, lifted, persisted };
+    const persisted = cell && cell.fmode === 'cut' && typeof cell.fy === 'number';
+    const stillCut = v._heightAt(c.x, c.z) < origH - 0.2;                             // carve survives commit
+    return { found: true, range: +range.toFixed(2), defLift, nowCut, carved, persisted, stillCut };
   });
   ok(fd.found, `found a steep buildable cell (range ${fd.range})`);
-  ok(fd.needsFound, 'a building on uneven ground gets a foundation (excavated by default)');
-  ok(fd.lifted, '⛰ Cut / 🏗 Lift toggles between excavate and elevate (elevate raises it)');
-  ok(fd.persisted, 'the chosen foundation is saved on the built cell');
+  ok(fd.defLift, 'a building on uneven ground is ELEVATED on a platform by default (fully visible)');
+  ok(fd.nowCut && fd.carved, '⛰ Excavate actually cuts the slope open (terrain lowered to the building floor)');
+  ok(fd.persisted && fd.stillCut, 'the excavation is saved and the cut persists');
 
   // ---- NEW BUILDINGS render in-scene without error ------------------------
   const nb = await p.evaluate(() => {
@@ -82,6 +83,23 @@ try {
     return { okAll };
   });
   ok(nb.okAll, 'the new farm/era buildings build into the scene');
+
+  // ---- RECLAIM menu is reachable + renders (category tabs wrap, not off-screen)
+  const rc = await p.evaluate(() => {
+    document.querySelector('.tool[data-panel="build"]').click();
+    const tab = [...document.querySelectorAll('.cat-tab')].find(t => /Reclaim/.test(t.textContent));
+    if (!tab) return { tab: false };
+    const tabs = document.querySelector('.cat-tabs');
+    const wraps = getComputedStyle(tabs).flexWrap === 'wrap';
+    const onScreen = tab.getBoundingClientRect().right <= window.innerWidth + 1;   // visible without horizontal scroll
+    tab.click();
+    const hasReclaimBtn = [...document.querySelectorAll('#sheet-content button')].some(b => /reclaim/i.test(b.textContent));
+    const hasSurface = !!document.querySelector('#sheet-content .surface-grid');
+    return { tab: true, wraps, onScreen, hasReclaimBtn, hasSurface };
+  });
+  ok(rc.tab && rc.wraps, 'the category tabs wrap so every tab (incl. Reclaim) is reachable');
+  ok(rc.onScreen, 'the Reclaim tab is on-screen (no hidden horizontal scroll)');
+  ok(rc.hasReclaimBtn && rc.hasSurface, 'the Reclaim/Land menu renders (reclaim button + surface-paint palette)');
 
   ok(errs.length === 0, 'no console/page errors' + (errs.length ? ': ' + errs[0] : ''));
 } catch (e) { fail++; console.error('  ✗ threw:', e.message, e.stack); }

@@ -29,6 +29,7 @@ export const CATEGORIES = [
   { id: 'industry', name: 'Economy', icon: '🏭' },
   { id: 'civic', name: 'Services', icon: '🏥' },
   { id: 'green', name: 'Environment', icon: '🌳' },
+  { id: 'plants', name: 'Plants', icon: '🌿' },
   { id: 'agriculture', name: 'Farms', icon: '🌾' },
   { id: 'leisure', name: 'Coast & Leisure', icon: '⛱️' },
   { id: 'roads', name: 'Transport', icon: '🛣️' },
@@ -502,6 +503,24 @@ export const BUILDINGS = {
     power: -35, water: 140, pollution: 1, happiness: 1, income: 0,
     desc: 'Reverse-osmosis plant turning seawater into drinking water — the fourth national tap. Drought-proof, but thirsty for electricity.',
   },
+};
+
+// ---------------------------------------------------------------------------
+// INDIVIDUAL PLANTS — placed one specimen at a time (not whole forests), free and
+// instant. Tropical / humid-climate species only (no temperate 4-season flora).
+// Decorative: a small happiness lift near homes, no economy/grid footprint.
+// ---------------------------------------------------------------------------
+export const PLANTS = {
+  rain_tree:     { name: 'Rain Tree',     icon: '🌳', tip: 'Broad umbrella canopy — the iconic shade tree of Singapore\'s roads.' },
+  angsana:       { name: 'Angsana',       icon: '🌳', tip: 'Fast-growing flowering roadside tree with golden blooms.' },
+  palm:          { name: 'Coconut Palm',  icon: '🌴', tip: 'Tall coastal palm with feathery fronds.' },
+  travellers:    { name: "Traveller's Palm", icon: '🪴', tip: 'Fan of huge banana-like leaves — a tropical signature.' },
+  frangipani:    { name: 'Frangipani',    icon: '🌸', tip: 'Fragrant white-and-yellow temple flowers.' },
+  bougainvillea: { name: 'Bougainvillea', icon: '🌺', tip: 'Vivid magenta bracts spilling over walls all year.' },
+  heliconia:     { name: 'Heliconia',     icon: '🌷', tip: 'Upright scarlet lobster-claw flowers.' },
+  banana:        { name: 'Banana Clump',  icon: '🍌', tip: 'Broad paddle leaves of a backyard banana stand.' },
+  fern:          { name: 'Tree Fern',     icon: '🌿', tip: 'Lush green fronds for shady corners.' },
+  orchid:        { name: 'Orchid Bed',    icon: '🪻', tip: 'A planting of the national flower, Vanda Miss Joaquim.' },
 };
 
 // ---------------------------------------------------------------------------

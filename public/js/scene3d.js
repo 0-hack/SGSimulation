@@ -2026,6 +2026,11 @@ export class Scene3D {
   }
 
   _hover(p) {
+    if (this.plantMode) {                                 // Plants tool: ghost specimen follows the cursor
+      const g = this._raycastGround(p);
+      if (g && this.plantGhost) { this.plantGhost.position.set(g.x, this._heightAt(g.x, g.z), g.z); this.plantGhost.visible = true; }
+      this._hideHoverTile(); return;
+    }
     if (this._roundaboutPreview) { this._roundaboutHover(p); this._hideHoverTile(); return; }  // show where the roundabout lands
     if (this.pieceMode) { this._lastHover = p; this._piecePreview(p); this._hideHoverTile(); return; } // placing a fixed Lego piece
     if (this.drawMode) {                                  // road/area drawing — fully free-style
@@ -2161,6 +2166,50 @@ export class Scene3D {
     if ((state._infraDemoDone || 0) !== (this._infraDemoSeen || 0)) {
       this._infraDemoSeen = state._infraDemoDone || 0;
       this.rebuildRoadNet(); this._buildPlayerRailways(state); this._buildPlayerAirstrips(state);
+    }
+  }
+  // ---- Individual plants (Plants tool) -------------------------------------
+  // Render every player-placed plant from state.plants (full rebuild, on load).
+  _buildPlayerPlants(state) {
+    if (this.plantGroup) this.scene.remove(this.plantGroup);
+    this.plantGroup = new THREE.Group(); this.scene.add(this.plantGroup);
+    for (const p of ((state && state.plants) || [])) this._addPlantMesh(p);
+  }
+  _addPlantMesh(p) {
+    if (!this.plantGroup) { this.plantGroup = new THREE.Group(); this.scene.add(this.plantGroup); }
+    const m = makePlant(p.kind, p.rot || 0, 0.55 * (p.s || 1));
+    m.position.set(p.x, this._heightAt(p.x, p.z), p.z);
+    m.userData.plant = p;
+    this.plantGroup.add(m);
+  }
+  // Place a plant at an exact world point; returns the stored plant record.
+  addPlant(x, z, kind, rot, s) {
+    if (!this.state) return null;
+    if (!Array.isArray(this.state.plants)) this.state.plants = [];
+    const p = { x, z, kind, rot: rot || 0, s: s || 1 };
+    this.state.plants.push(p);
+    this._addPlantMesh(p);
+    return p;
+  }
+  // Remove the nearest plant within `r` of (x,z); returns true if one was removed.
+  removePlantNear(x, z, r = 1.6) {
+    const plants = (this.state && this.state.plants) || [];
+    let bi = -1, bd = r * r;
+    for (let i = 0; i < plants.length; i++) { const dx = plants[i].x - x, dz = plants[i].z - z, d = dx * dx + dz * dz; if (d < bd) { bd = d; bi = i; } }
+    if (bi < 0) return false;
+    plants.splice(bi, 1);
+    if (this.plantGroup) { for (const m of [...this.plantGroup.children]) if (m.userData.plant && plants.indexOf(m.userData.plant) < 0) this.plantGroup.remove(m); }
+    this._spawnDust(x, z, 0x9ad06a, 8);
+    return true;
+  }
+  // Plants tool on/off: keep a translucent ghost of the chosen species at the cursor.
+  setPlantMode(on, kind) {
+    this.plantMode = !!on; this.plantKind = kind || this.plantKind;
+    if (this.plantGhost) { this.scene.remove(this.plantGhost); this.plantGhost = null; }
+    if (on && this.plantKind) {
+      const gh = makePlant(this.plantKind, 0, 0.55);
+      gh.traverse((o) => { if (o.material) { o.material = o.material.clone(); o.material.transparent = true; o.material.opacity = 0.6; } });
+      gh.visible = false; this.plantGhost = gh; this.scene.add(gh);
     }
   }
   // While in draw mode (and not mid-stroke), light up the nearest existing road
@@ -2424,7 +2473,7 @@ export class Scene3D {
   }
 
   // ---- external API (mirrors the 2D view) ----------------------------------
-  setState(state) { this.state = state; this.rebuildRoadNet(); this._relocateHeritageOffRoads(); this.applyHeritageToGrid(state); this._syncReclaimed(); this.syncAll(); this._buildPlayerRailways(state); this._buildPlayerAirstrips(state); this.syncRoadworks(state); }
+  setState(state) { this.state = state; this.rebuildRoadNet(); this._relocateHeritageOffRoads(); this.applyHeritageToGrid(state); this._syncReclaimed(); this.syncAll(); this._buildPlayerRailways(state); this._buildPlayerAirstrips(state); this.syncRoadworks(state); this._buildPlayerPlants(state); }
   setShortages(s) { this.shortages = s; }
   setPreview(key, theme) {
     this.previewKey = key; this.previewTheme = theme; this.bulldoze = false;
@@ -5223,6 +5272,50 @@ export function makeBuilding(key, theme) {
   } else {
     g.add(box(6, 6, 6, col));
   }
+  return g;
+}
+
+// One individual tropical plant specimen (placed via the Plants tool). Authored at
+// roughly real scale; the caller applies a small placement scale. Humid-climate
+// species only — no temperate/4-season flora.
+export function makePlant(kind, rot = 0, s = 1) {
+  const g = new THREE.Group();
+  const dbl = (c) => mat(c, { side: THREE.DoubleSide });
+  const trunk = (rt, rb, h, c) => g.add(cyl(rt, rb, h, c, 0, h / 2, 0, 8));
+  if (kind === 'rain_tree') {
+    trunk(0.16, 0.26, 2.0, 0x6b4f33);
+    const f = new THREE.Mesh(new THREE.SphereGeometry(1.8, 10, 8), mat(0x4f8f3a)); f.position.y = 2.5; f.scale.set(1.35, 0.62, 1.35); f.castShadow = true; g.add(f);
+  } else if (kind === 'angsana') {
+    trunk(0.13, 0.18, 2.4, 0x6b4f33);
+    const f = new THREE.Mesh(new THREE.SphereGeometry(1.35, 9, 7), mat(0x6fa83c)); f.position.y = 3.0; f.scale.y = 1.1; f.castShadow = true; g.add(f);
+    for (const [dx, dz] of [[0.7, 0], [-0.6, 0.4], [0.2, -0.6]]) { const b = new THREE.Mesh(new THREE.SphereGeometry(0.4, 6, 5), mat(0xe7c93f)); b.position.set(dx, 3.1, dz); g.add(b); }
+  } else if (kind === 'palm') {
+    trunk(0.1, 0.16, 3.4, 0x8a6b43);
+    for (let i = 0; i < 7; i++) { const a = i / 7 * Math.PI * 2; const fr = new THREE.Mesh(new THREE.ConeGeometry(0.22, 2.2, 4), mat(0x3fae57)); fr.position.set(Math.cos(a) * 0.9, 3.5, Math.sin(a) * 0.9); fr.rotation.set(1.15 * Math.sin(a), -a, -1.15 * Math.cos(a)); fr.castShadow = true; g.add(fr); }
+    for (const [dx, dz] of [[0.2, 0.1], [-0.15, 0.18]]) { const c = new THREE.Mesh(new THREE.SphereGeometry(0.14, 6, 5), mat(0x8a6b43)); c.position.set(dx, 3.3, dz); g.add(c); }
+  } else if (kind === 'travellers') {
+    trunk(0.18, 0.24, 0.9, 0x7a7050);
+    for (let i = 0; i < 7; i++) { const ang = (i / 6 - 0.5) * 1.7; const l = new THREE.Mesh(new THREE.PlaneGeometry(0.55, 2.8), dbl(0x4fae4a)); l.position.set(0, 2.1, 0); l.rotation.z = ang; l.castShadow = true; g.add(l); }
+  } else if (kind === 'frangipani') {
+    trunk(0.15, 0.22, 1.0, 0x9a8b76);
+    for (const [dx, dz] of [[0, 0], [0.5, 0.25], [-0.45, 0.3], [0.2, -0.4]]) { const f = new THREE.Mesh(new THREE.SphereGeometry(0.5, 8, 6), mat(0x6fae5a)); f.position.set(dx, 1.5, dz); g.add(f); const fl = new THREE.Mesh(new THREE.SphereGeometry(0.16, 6, 5), mat(0xf6ecd2)); fl.position.set(dx, 1.8, dz); g.add(fl); }
+  } else if (kind === 'bougainvillea') {
+    trunk(0.06, 0.09, 0.7, 0x6b5a3a);
+    for (const [dx, dy, dz, c] of [[0, 1.1, 0, 0xc94b7e], [0.4, 0.9, 0.2, 0xd86fa0], [-0.35, 1.0, 0.25, 0xb83f78]]) { const f = new THREE.Mesh(new THREE.SphereGeometry(0.5, 8, 6), mat(c)); f.position.set(dx, dy, dz); f.scale.y = 0.8; g.add(f); }
+  } else if (kind === 'heliconia') {
+    for (const [dx, dz] of [[0, 0], [0.3, 0.12], [-0.28, 0.2]]) { g.add(cyl(0.04, 0.06, 1.5, 0x3f7f3a, dx, 0.75, dz, 6)); const c = new THREE.Mesh(new THREE.ConeGeometry(0.17, 0.8, 5), mat(0xd2432f)); c.position.set(dx, 1.7, dz); c.rotation.z = 0.3; g.add(c); }
+  } else if (kind === 'banana') {
+    g.add(cyl(0.22, 0.32, 1.4, 0x7fa81a, 0, 0.7, 0, 8));
+    for (let i = 0; i < 6; i++) { const a = i / 6 * Math.PI * 2; const l = new THREE.Mesh(new THREE.PlaneGeometry(0.8, 2.4), dbl(0x4fa63a)); l.position.set(0, 1.7, 0); l.rotation.set(-0.7, a, 0); l.castShadow = true; g.add(l); }
+  } else if (kind === 'fern') {
+    for (let i = 0; i < 7; i++) { const a = i / 7 * Math.PI * 2; const l = new THREE.Mesh(new THREE.PlaneGeometry(0.45, 1.5), dbl(0x3d8a2a)); l.position.set(0, 0.65, 0); l.rotation.set(-0.95, a, 0); g.add(l); }
+  } else if (kind === 'orchid') {
+    const bed = new THREE.Mesh(new THREE.CircleGeometry(0.95, 14), mat(0x5a7f4a)); bed.rotation.x = -Math.PI / 2; bed.position.y = 0.05; g.add(bed);
+    for (const [dx, dz, c] of [[-0.35, -0.2, 0xb44fa0], [0.35, 0.1, 0xff8fa3], [0, 0.4, 0xc66fc0], [0.15, -0.35, 0x9f5fd0]]) { g.add(cyl(0.03, 0.03, 0.55, 0x3f7f3a, dx, 0.3, dz, 5)); const fl = new THREE.Mesh(new THREE.SphereGeometry(0.15, 6, 5), mat(c)); fl.position.set(dx, 0.65, dz); fl.scale.set(1.3, 0.7, 1.3); g.add(fl); }
+  } else {
+    trunk(0.14, 0.2, 1.6, 0x6b4f33); const f = new THREE.Mesh(new THREE.SphereGeometry(1.0, 8, 6), mat(0x4f9e3f)); f.position.y = 2.1; g.add(f);
+  }
+  g.scale.setScalar(s); g.rotation.y = rot;
   return g;
 }
 

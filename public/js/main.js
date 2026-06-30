@@ -14,7 +14,7 @@ import {
   updateHud, renderBuild, renderPolicy, renderDash, renderNews,
   money, num, pct, el,
 } from './ui.js';
-import { BUILDINGS, CATEGORIES, POP_SCALE, ROAD_TYPES, landmarkToBuilding, SANDBOX } from './data.js';
+import { BUILDINGS, CATEGORIES, POP_SCALE, ROAD_TYPES, PLANTS, landmarkToBuilding, SANDBOX } from './data.js';
 import { loadLibrary } from './landmarks.js';
 import { injectIcons, ICONS, WEATHER } from './icons.js';
 
@@ -71,6 +71,7 @@ const G = {
   pieceRot: 0,                  // running orientation of the road piece being aimed (for the dial)
   road: { tool: null, type: 'road', elevated: false, pending: [] },
   reclaim: { active: false },  // land-reclamation tool: tap sea to fill land
+  plant: { active: false, kind: null },  // Plants tool: tap to place individual tropical specimens
   editPause: false,            // true while a build/road/reclaim tool is active — freezes time & the world
 
   currentPanel: null,
@@ -457,6 +458,12 @@ function onReclaimArea(pts) {
 
 function onTileTap(x, y, world) {
   if (G.readOnly) { toast('You are visiting — building is disabled here.'); return; }
+  // Plants tool: tap open ground to place a specimen; tap directly on a plant to remove it.
+  if (G.plant.active && G.plant.kind && world) {
+    if (G.view.removePlantNear(world.x, world.z, 1.0)) { G.dirty = true; }
+    else { G.view.addPlant(world.x, world.z, G.plant.kind, Math.random() * Math.PI * 2, 0.85 + Math.random() * 0.4); G.dirty = true; }
+    return;
+  }
   const b = G.build;
   if (b.bulldoze) {
     // Multi-select: a tap TOGGLES the item under the cursor in/out of the teardown
@@ -578,6 +585,7 @@ function activeTool() {
   if (G.readOnly) return null;
   if (G.build.selected && BUILDINGS[G.build.selected]) return { verb: 'build', label: BUILDINGS[G.build.selected].name };
   if (G.build.bulldoze) return { verb: 'remove', label: '🚜 Demolish' };
+  if (G.plant.active && G.plant.kind) return { verb: 'plant', label: '🌿 ' + (PLANTS[G.plant.kind]?.name || 'Plant') };
   if (G.reclaim.active) return { verb: 'fill with land', label: '🏝 Reclaim' };
   if (G.road.tool) return { verb: 'draw', label: '🛣 Road · ' + G.road.tool };
   return null;
@@ -685,11 +693,23 @@ function cancelTools() {
   clearAdjustSilently();
   if (G.demoSel.size || G.demoHover) clearDemoSelection();
   G.build.selected = null; G.build.bulldoze = false; G.reclaim.active = false;
+  G.plant.active = false; G.plant.kind = null;
   G.road.tool = null; G.road.pending = [];
   closeCommit(true);
-  if (G.view) { G.view.setPreview(null); G.view.setBulldoze(false); G.view.setRoadMode(false); G.view.setPaintMode(false); G.view.setDrawMode(false); G.view.setPieceMode(false); G.view.setRoundaboutPreview(false); G.view.showRoadPreview([]); }
+  if (G.view) { G.view.setPreview(null); G.view.setBulldoze(false); G.view.setRoadMode(false); G.view.setPaintMode(false); G.view.setDrawMode(false); G.view.setPieceMode(false); G.view.setRoundaboutPreview(false); G.view.setPlantMode(false); G.view.showRoadPreview([]); }
   updateToolBanner();
   if (G.currentPanel === 'build') refreshPanel();
+}
+// Plants tool: pick a tropical species and start placing single specimens.
+function selectPlant(kind) {
+  clearAdjustSilently();
+  if (G.demoSel.size || G.demoHover) clearDemoSelection();
+  G.plant.active = true; G.plant.kind = kind;
+  G.build.selected = null; G.build.bulldoze = false; G.reclaim.active = false; G.road.tool = null;
+  if (G.view) { G.view.setPreview(null); G.view.setBulldoze(false); G.view.setRoadMode(false); G.view.setDrawMode(false); G.view.setPieceMode(false); G.view.setPaintMode(false); G.view.setRoundaboutPreview(false); G.view.showRoadPreview([]); G.view.setPlantMode(true, kind); }
+  closeSheet();
+  updateToolBanner();
+  toast(`Planting ${PLANTS[kind]?.name || 'plant'} — tap open ground to plant, tap a plant to remove it. ✕ Done / Esc to stop.`);
 }
 
 // ===========================================================================
@@ -1020,10 +1040,10 @@ function refreshPanel() {
     if (!G.readOnly) { const lib = loadLibrary(); registerLandmarks(lib); G.state.landmarks = lib; }
     content.append(renderBuild(G.state, {
       cat: G.build.cat, selected: G.build.selected, bulldoze: G.build.bulldoze, theme: G.build.theme,
-      road: G.road, reclaim: G.reclaim, toggleReclaim,
+      road: G.road, reclaim: G.reclaim, toggleReclaim, plant: G.plant, selectPlant,
       selectRoadTool, setRoadType: (t) => { G.road.type = t; applyRoadToolMode(); refreshPanel(); },
       toggleBridge: () => { G.road.elevated = !G.road.elevated; refreshPanel(); },
-      setCat: (c) => { clearAdjustSilently(); G.build.cat = c; if (c !== 'roads') { G.road.tool = null; G.view.setRoadMode(false); } if (c !== 'land') { G.reclaim.active = false; G.view.setPaintMode(false); } refreshPanel(); updateToolBanner(); },
+      setCat: (c) => { clearAdjustSilently(); G.build.cat = c; if (c !== 'roads') { G.road.tool = null; G.view.setRoadMode(false); } if (c !== 'land') { G.reclaim.active = false; G.view.setPaintMode(false); } if (c !== 'plants' && G.plant.active) { G.plant.active = false; G.plant.kind = null; G.view.setPlantMode(false); } refreshPanel(); updateToolBanner(); },
       setTheme: (t) => { G.build.theme = t; if (G.adjust) { G.adjust.theme = t; G.view.enterAdjust(G.adjust.x, G.adjust.y, G.adjust.key, t, G.adjust.rot); } else if (G.build.selected) G.view.setPreview(G.build.selected, t); refreshPanel(); },
       selectBuilding: (k) => {
         clearAdjustSilently();

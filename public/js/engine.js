@@ -76,6 +76,7 @@ export function newGame({ name = 'New Singapore', owner = 'Anonymous' } = {}) {
     economy: { inflation: 0.02, priceIndex: 1, currency: 1 }, // dynamic inflation / price level / SGD strength
     constructing: [],         // [x,y] cells whose building is still being built
     demolishing: [],          // [x,y] cells whose building is being torn down (timed teardown)
+    plants: [],               // individually-placed tropical plants: { x, z, kind, rot, s } in world coords
     landmarks: [],            // 3D-designed landmarks saved into THIS world (per-player; for build menu + visitors)
     projects: [],             // active guided national projects the player is building toward
     projectsDone: [],         // ids of completed national projects
@@ -160,6 +161,7 @@ export function ensureGrid(state) {
   if (!Array.isArray(state.roadworks)) state.roadworks = [];
   if (!Array.isArray(state.railways)) state.railways = [];
   if (!Array.isArray(state.airstrips)) state.airstrips = [];
+  if (!Array.isArray(state.plants)) state.plants = [];
   if (!state.economy) state.economy = { inflation: 0.02, priceIndex: 1, currency: 1 };
   // Rebuild the active-construction & demolition lists from the grid (robust across saves).
   state.constructing = [];

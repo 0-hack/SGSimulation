@@ -1,6 +1,6 @@
 // UI rendering helpers: builds the contents of each bottom sheet/panel.
 // Returns DOM and wires callbacks; keeps main.js focused on orchestration.
-import { BUILDINGS, CATEGORIES, POLICIES, POP_SCALE, THEMES, ROAD_TYPES, SANDBOX } from './data.js';
+import { BUILDINGS, CATEGORIES, POLICIES, POP_SCALE, THEMES, ROAD_TYPES, PLANTS, SANDBOX } from './data.js';
 import { derive, isUnlocked, formatDate, debtCeiling, bondRate, reclaimCost, buildingCost, buildDays, priceIndex, inflationRate, currencyStrength } from './engine.js';
 import { ICONS, CAT_ICON } from './icons.js';
 
@@ -73,6 +73,9 @@ export function renderBuild(state, ctx) {
   } else if (ctx.cat === 'land') {
     // Reclaim category shows the land-reclamation tool instead of buildings.
     wrap.append(renderReclaim(state, ctx)); return wrap;
+  } else if (ctx.cat === 'plants') {
+    // Plants category shows the individual-plant palette instead of buildings.
+    wrap.append(renderPlants(ctx)); return wrap;
   }
 
   // Colour-theme picker — shown for categories that contain customizable builds.
@@ -187,6 +190,24 @@ function renderReclaim(state, ctx) {
     `<span class="bi">🏝️</span> ${ctx.reclaim.active ? 'Reclaiming — draw a loop over open sea' : 'Start reclaiming land'}`);
   btn.onclick = () => ctx.toggleReclaim();
   wrap.append(btn);
+  return wrap;
+}
+
+// ---- individual plants palette --------------------------------------------
+function renderPlants(ctx) {
+  const wrap = el('div', 'roads-ui');
+  wrap.append(el('p', 'policy-desc', 'Place individual tropical plants — one specimen at a time, not whole forests. Pick a species, then tap open ground to plant it (free & instant); tap a plant again to remove it. Humid-climate species only, no temperate flora.'));
+  wrap.append(el('div', 'section-title', 'Trees, palms & flowers'));
+  const grid = el('div', 'plant-grid');
+  for (const [kind, p] of Object.entries(PLANTS)) {
+    const sel = ctx.plant && ctx.plant.active && ctx.plant.kind === kind;
+    const btn = el('button', 'plant-btn' + (sel ? ' selected' : ''),
+      `<span class="pl-ico">${p.icon}</span><span class="pl-name">${p.name}</span>`);
+    btn.title = p.tip || '';
+    btn.onclick = () => ctx.selectPlant(kind);
+    grid.append(btn);
+  }
+  wrap.append(grid);
   return wrap;
 }
 

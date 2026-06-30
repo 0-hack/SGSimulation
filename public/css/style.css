@@ -412,3 +412,13 @@ body.edit-mode #city {
   .nation-name { max-width: 220px; }
   .hud-stats .stat { font-size: 13.5px; }
 }
+
+/* ---- individual plants palette (Plants tool) ----------------------------- */
+.plant-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-top: 8px; }
+.plant-btn { display: flex; align-items: center; gap: 9px; padding: 10px 11px; border-radius: 12px;
+  background: var(--surface-2); border: 1px solid var(--line-2); cursor: pointer;
+  color: var(--ink); text-align: left; transition: background .12s, border-color .12s, box-shadow .12s; }
+.plant-btn:hover { border-color: var(--teal); }
+.plant-btn.selected { border-color: var(--teal); background: rgba(17,163,156,0.12); box-shadow: 0 0 0 2px rgba(17,163,156,0.18); }
+.plant-btn .pl-ico { font-size: 22px; line-height: 1; }
+.plant-btn .pl-name { font-weight: 700; font-size: 13px; }

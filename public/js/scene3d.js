@@ -4,7 +4,7 @@
 // disasters (floods, haze, storms) are animated. Mirrors the small API that
 // main.js expects from the old 2D view.
 import * as THREE from './vendor/three.module.js';
-import { BUILDINGS, GRID_SIZE, WORLD_SIZE, ROAD_TYPES, fleetEra } from './data.js';
+import { BUILDINGS, GRID_SIZE, WORLD_SIZE, ROAD_TYPES, SURFACE_TYPES, fleetEra } from './data.js';
 import { smoothRoute } from './engine.js';
 import { SG_OUTLINE, SG_ISLANDS, SG_FOREIGN, SG_SANDS, SG_RESERVOIRS, pointInPolygon, landMask, inReservoir, reservoirArea, inRiver, reservoirBranches, riverBranches } from './shape.js';
 import { CUSTOM_HOUSES, CUSTOM_RAILWAYS, CUSTOM_SANDS, CUSTOM_LANDMARKS, SEED_1965 } from './custom1966.js';
@@ -2168,6 +2168,41 @@ export class Scene3D {
       this.rebuildRoadNet(); this._buildPlayerRailways(state); this._buildPlayerAirstrips(state);
     }
   }
+  // ---- Painted ground surfaces (Surface tool) ------------------------------
+  // Rebuild all painted-surface tiles from state.surfaces (sparse "x,y" -> type).
+  _syncSurfaces(state) {
+    if (this.surfaceGroup) this.scene.remove(this.surfaceGroup);
+    this.surfaceGroup = new THREE.Group(); this.scene.add(this.surfaceGroup);
+    this.surfaceTiles = new Map();
+    const surf = (state && state.surfaces) || {};
+    for (const id of Object.keys(surf)) { const [x, y] = id.split(',').map(Number); this._renderSurfaceCell(x, y, surf[id]); }
+  }
+  _renderSurfaceCell(x, y, type) {
+    const info = SURFACE_TYPES[type]; if (!info) return;
+    if (!this.surfaceGroup) { this.surfaceGroup = new THREE.Group(); this.scene.add(this.surfaceGroup); this.surfaceTiles = this.surfaceTiles || new Map(); }
+    const id = `${x},${y}`;
+    const old = this.surfaceTiles.get(id); if (old) this.surfaceGroup.remove(old);
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(TILE, TILE),
+      mat(info.color, { polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }, 0.06));
+    m.rotation.x = -Math.PI / 2; const c = cellToWorld(x, y);
+    m.position.set(c.x, this.terrainHeight(x, y) + 0.07, c.z); m.receiveShadow = true;
+    this.surfaceGroup.add(m); this.surfaceTiles.set(id, m);
+  }
+  // Paint or clear one cell's surface (type === null/'clear' clears the override).
+  paintSurfaceCell(x, y, type) {
+    if (!this.state) return;
+    if (!this.state.surfaces) this.state.surfaces = {};
+    const id = `${x},${y}`;
+    if (!type || type === 'clear') {
+      delete this.state.surfaces[id];
+      const m = this.surfaceTiles && this.surfaceTiles.get(id);
+      if (m && this.surfaceGroup) { this.surfaceGroup.remove(m); this.surfaceTiles.delete(id); }
+      return;
+    }
+    if (!SURFACE_TYPES[type]) return;
+    this.state.surfaces[id] = type;
+    this._renderSurfaceCell(x, y, type);
+  }
   // ---- Individual plants (Plants tool) -------------------------------------
   // Render every player-placed plant from state.plants (full rebuild, on load).
   _buildPlayerPlants(state) {
@@ -2472,8 +2507,31 @@ export class Scene3D {
     return out;
   }
 
+  // ---- foundations on sloped ground ----------------------------------------
+  // Terrain height range across a building footprint (cell centre + its 4 edges).
+  // A big range means the ground is too uneven to build flat — needs excavating
+  // (cut down to the low side) or elevating (a platform up to the high side).
+  footprintLevels(gx, gy) {
+    const c = cellToWorld(gx, gy), H = TILE / 2;
+    const hs = [this._heightAt(c.x, c.z), this._heightAt(c.x - H, c.z), this._heightAt(c.x + H, c.z), this._heightAt(c.x, c.z - H), this._heightAt(c.x, c.z + H)];
+    let lo = Infinity, hi = -Infinity; for (const h of hs) { if (h < lo) lo = h; if (h > hi) hi = h; }
+    return { lo, hi, range: hi - lo };
+  }
+  // A concrete platform under a building on a slope: a flat pad at `fy`, plus a
+  // podium/retaining wall down to the lowest surrounding ground so it meets the
+  // terrain cleanly (a tall podium when elevated, a low pad when excavated).
+  _makeFoundation(gx, gy, fy) {
+    const g = new THREE.Group();
+    const c = cellToWorld(gx, gy), H = TILE / 2;
+    const lvl = this.footprintLevels(gx, gy);
+    const base = Math.min(lvl.lo, fy) - 0.3;
+    const podH = Math.max(0.3, fy - base);
+    g.add(partBox(TILE * 0.98, podH, TILE * 0.98, mat(0x9a968b), c.x, base + podH / 2, c.z));   // podium / retaining block
+    g.add(partBox(TILE * 1.02, 0.34, TILE * 1.02, mat(0xbcb8ad), c.x, fy - 0.05, c.z));          // flat pad on top
+    return g;
+  }
   // ---- external API (mirrors the 2D view) ----------------------------------
-  setState(state) { this.state = state; this.rebuildRoadNet(); this._relocateHeritageOffRoads(); this.applyHeritageToGrid(state); this._syncReclaimed(); this.syncAll(); this._buildPlayerRailways(state); this._buildPlayerAirstrips(state); this.syncRoadworks(state); this._buildPlayerPlants(state); }
+  setState(state) { this.state = state; this.rebuildRoadNet(); this._relocateHeritageOffRoads(); this.applyHeritageToGrid(state); this._syncReclaimed(); this.syncAll(); this._buildPlayerRailways(state); this._buildPlayerAirstrips(state); this.syncRoadworks(state); this._buildPlayerPlants(state); this._syncSurfaces(state); }
   setShortages(s) { this.shortages = s; }
   setPreview(key, theme) {
     this.previewKey = key; this.previewTheme = theme; this.bulldoze = false;
@@ -2505,25 +2563,37 @@ export class Scene3D {
   }
   // ---- place-then-adjust: a PENDING object sits on the ground (not yet committed)
   // so the player can rotate / move / remove it and SEE it before confirming -------
-  enterAdjust(x, y, key, theme, rot, wx, wz) {
+  enterAdjust(x, y, key, theme, rot, wx, wz, fy) {
     this.clearAdjust();
     const g = makeBuilding(key, theme); g.scale.setScalar(MODEL_SCALE);
-    const c = cellToWorld(x, y), hy = this.terrainHeight(x, y);
+    const c = cellToWorld(x, y), hy = (fy != null) ? fy : this.terrainHeight(x, y);
     const px = (wx != null) ? wx : c.x, pz = (wz != null) ? wz : c.z;   // exact sub-cell spot
     g.position.set(px, hy, pz); g.rotation.y = rot || 0; this.scene.add(g);
     const ring = new THREE.Mesh(new THREE.RingGeometry(TILE * 0.55, TILE * 0.82, 28),
       new THREE.MeshBasicMaterial({ color: 0x8fe05a, transparent: true, opacity: 0.9, side: THREE.DoubleSide }));
     ring.rotation.x = -Math.PI / 2; ring.position.set(px, hy + 0.14, pz); this.scene.add(ring);
-    this._adjust = { x, y, key, theme, rot: rot || 0, wx: px, wz: pz, mesh: g, ring };
+    let found = null; if (fy != null) { found = this._makeFoundation(x, y, fy); this.scene.add(found); }
+    this._adjust = { x, y, key, theme, rot: rot || 0, wx: px, wz: pz, fy: (fy != null ? fy : null), mesh: g, ring, found };
     if (this.ghost) this.ghost.visible = false;
   }
   setAdjustRotation(rot) { if (this._adjust) { this._adjust.rot = rot; this._adjust.mesh.rotation.y = rot; } }
-  moveAdjust(x, y, wx, wz) {
+  // Switch the pending building's foundation level (fy = excavated low side, or the
+  // elevated high side; null = back to flat ground).
+  setAdjustFoundation(fy) {
+    const a = this._adjust; if (!a) return;
+    const baseY = (fy != null) ? fy : this.terrainHeight(a.x, a.y);
+    a.mesh.position.y = baseY; a.ring.position.y = baseY + 0.14; a.fy = (fy != null ? fy : null);
+    if (a.found) { this.scene.remove(a.found); a.found = null; }
+    if (fy != null) { a.found = this._makeFoundation(a.x, a.y, fy); this.scene.add(a.found); }
+  }
+  moveAdjust(x, y, wx, wz, fy) {
     if (!this._adjust) return;
-    const c = cellToWorld(x, y), hy = this.terrainHeight(x, y);
+    const c = cellToWorld(x, y), hy = (fy != null) ? fy : this.terrainHeight(x, y);
     const px = (wx != null) ? wx : c.x, pz = (wz != null) ? wz : c.z;
     this._adjust.mesh.position.set(px, hy, pz); this._adjust.ring.position.set(px, hy + 0.14, pz);
-    this._adjust.x = x; this._adjust.y = y; this._adjust.wx = px; this._adjust.wz = pz;
+    this._adjust.x = x; this._adjust.y = y; this._adjust.wx = px; this._adjust.wz = pz; this._adjust.fy = (fy != null ? fy : null);
+    if (this._adjust.found) { this.scene.remove(this._adjust.found); this._adjust.found = null; }
+    if (fy != null) { this._adjust.found = this._makeFoundation(x, y, fy); this.scene.add(this._adjust.found); }
   }
   // Is the cursor over (or right next to) the pending building? Used to start a
   // drag-rotate instead of orbiting the camera.
@@ -2536,6 +2606,7 @@ export class Scene3D {
   clearAdjust() {
     if (!this._adjust) return;
     this.scene.remove(this._adjust.mesh); this.scene.remove(this._adjust.ring);
+    if (this._adjust.found) this.scene.remove(this._adjust.found);
     if (this._adjust.ring.geometry) this._adjust.ring.geometry.dispose();
     this._adjust = null;
   }
@@ -2623,11 +2694,13 @@ export class Scene3D {
     const rcell = this.state?.grid?.[y]?.[x];
     const ox = (rcell && typeof rcell.ox === 'number') ? rcell.ox : 0;   // free sub-cell offset
     const oz = (rcell && typeof rcell.oz === 'number') ? rcell.oz : 0;
+    const fy = (rcell && typeof rcell.fy === 'number') ? rcell.fy : null;   // foundation on a slope
     const wrap = new THREE.Group();
-    wrap.position.set(c.x + ox, this.terrainHeight(x, y), c.z + oz);
+    wrap.position.set(c.x + ox, (fy != null) ? fy : this.terrainHeight(x, y), c.z + oz);
     wrap.rotation.y = (rcell && typeof rcell.r === 'number') ? rcell.r : (Math.floor(Math.random() * 4)) * Math.PI / 2;
     wrap.scale.setScalar(MODEL_SCALE); // whole site (building + crane) sized to the live cell
     this.scene.add(wrap);
+    let siteFound = null; if (fy != null) { siteFound = this._makeFoundation(x, y, fy); this.scene.add(siteFound); }
     // the target building, measured then flattened so it rises with progress
     const b = makeBuilding(key, theme);
     const box = new THREE.Box3().setFromObject(b);
@@ -2648,7 +2721,7 @@ export class Scene3D {
     mast.position.set(hw + 1.2, (H + 6) / 2, hd + 1.2); wrap.add(mast);
     const jib = new THREE.Mesh(new THREE.BoxGeometry(sx + 3, 0.22, 0.22), poleMat);
     jib.position.set(hw + 1.2 - (sx + 3) / 2 + 0.3, H + 5.6, hd + 1.2); wrap.add(jib);
-    this.sites.set(id, { group: wrap, b, plat, H });
+    this.sites.set(id, { group: wrap, b, plat, H, found: siteFound });
     const dg = this.natureCells && this.natureCells.get(id); if (dg) dg.visible = false;
     this._spawnDust(c.x, c.z, 0xcab98a, 10);
   }
@@ -2661,7 +2734,7 @@ export class Scene3D {
   }
   _removeSite(id) {
     const s = this.sites.get(id); if (!s) return;
-    this.scene.remove(s.group); this.sites.delete(id);
+    this.scene.remove(s.group); if (s.found) this.scene.remove(s.found); this.sites.delete(id);
   }
 
   _addMesh(x, y, key, animate, theme) {
@@ -2674,12 +2747,14 @@ export class Scene3D {
     const rcell = this.state?.grid?.[y]?.[x];
     const ox = (rcell && typeof rcell.ox === 'number') ? rcell.ox : 0;   // free sub-cell offset
     const oz = (rcell && typeof rcell.oz === 'number') ? rcell.oz : 0;
-    group.position.set(c.x + ox, this.terrainHeight(x, y), c.z + oz);
+    const fy = (rcell && typeof rcell.fy === 'number') ? rcell.fy : null;   // foundation on a slope
+    group.position.set(c.x + ox, (fy != null) ? fy : this.terrainHeight(x, y), c.z + oz);
     group.rotation.y = (rcell && typeof rcell.r === 'number') ? rcell.r : (Math.floor(Math.random() * 4)) * Math.PI / 2;
     group.castShadow = true;
     this.scene.add(group);
+    let found = null; if (fy != null) { found = this._makeFoundation(x, y, fy); this.scene.add(found); }
     const tall = b.cat === 'residential' || b.cat === 'industry';
-    const entry = { group, key, tall, anim: false };
+    const entry = { group, key, tall, anim: false, found };
     this.buildings.set(id, entry);
     if (animate) {
       group.scale.set(MODEL_SCALE, MODEL_SCALE * 0.001, MODEL_SCALE);
@@ -2710,6 +2785,7 @@ export class Scene3D {
     const entry = this.buildings.get(id);
     if (!entry) return;
     this.buildings.delete(id);
+    if (entry.found) this.scene.remove(entry.found);   // remove its slope foundation too
     this.anims.push({ group: entry.group, t: 0, dur: 0.8, type: 'demolish', baseY: entry.group.position.y });
     const c = cellToWorld(x, y);
     this._spawnDust(c.x, c.z, 0xbfb09a, 26);
@@ -2720,7 +2796,7 @@ export class Scene3D {
   removeBuilding(x, y) {
     const id = `${x},${y}`;
     const e = this.buildings.get(id);
-    if (e) { this.scene.remove(e.group); this.buildings.delete(id); }
+    if (e) { this.scene.remove(e.group); if (e.found) this.scene.remove(e.found); this.buildings.delete(id); }
   }
 
   // ---- dust particles -------------------------------------------------------

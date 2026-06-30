@@ -14,7 +14,7 @@ import {
   updateHud, renderBuild, renderPolicy, renderDash, renderNews,
   money, num, pct, el,
 } from './ui.js';
-import { BUILDINGS, CATEGORIES, POP_SCALE, ROAD_TYPES, PLANTS, landmarkToBuilding, SANDBOX } from './data.js';
+import { BUILDINGS, CATEGORIES, POP_SCALE, ROAD_TYPES, PLANTS, SURFACE_TYPES, landmarkToBuilding, SANDBOX } from './data.js';
 import { loadLibrary } from './landmarks.js';
 import { injectIcons, ICONS, WEATHER } from './icons.js';
 
@@ -49,6 +49,13 @@ const SUN_CAP = 0.5;                // max in-game days/sec the day-night cycle 
 // cut the hills (and fill the dips) to a smooth line.
 const FLAT_TOL = 1.5;               // metres of height variation tolerated before clearing/flattening is required
 const EARTHWORK_RATE = 0.012;       // $M per m³ of cut/fill (× live price index)
+const SLOPE_TOL = 1.4;              // ground unevenness (world units) under a footprint before a foundation is required
+// Does the footprint at (x,y) need a foundation? Returns {flo,fhi,range} or null.
+function slopeFoundation(x, y) {
+  if (!G.view || !G.view.footprintLevels) return null;
+  const lv = G.view.footprintLevels(x, y);
+  return (lv && lv.range > SLOPE_TOL) ? { flo: lv.lo, fhi: lv.hi, range: lv.range } : null;
+}
 const currentRate = () => G.dayRate * SPEED_MULT[G.speed];
 
 const $ = (id) => document.getElementById(id);
@@ -72,6 +79,7 @@ const G = {
   road: { tool: null, type: 'road', elevated: false, pending: [] },
   reclaim: { active: false },  // land-reclamation tool: tap sea to fill land
   plant: { active: false, kind: null },  // Plants tool: tap to place individual tropical specimens
+  surface: { active: false, type: 'concrete', scale: 1 },  // Surface-paint tool: drag to paint ground surfaces (brush scale in cells)
   editPause: false,            // true while a build/road/reclaim tool is active — freezes time & the world
 
   currentPanel: null,
@@ -106,6 +114,8 @@ function boot() {
   $('tool-banner-stop').onclick = () => { if (G.adjust) commitAdjust(); else if (G.build.bulldoze && G.demoSel.size) commitDemolish(); else cancelTools(); };
   // 🗑 Remove: discard the object you're positioning, or clear the demolish selection.
   $('tool-banner-remove').onclick = () => { if (G.adjust) cancelAdjust('Removed.'); else if (G.build.bulldoze && G.demoSel.size) { clearDemoSelection(); toast('Selection cleared.'); } };
+  // ⛰ Cut / 🏗 Lift: switch a sloped building between excavated and elevated.
+  $('tool-banner-found').onclick = () => toggleFoundation();
   $('tool-banner-rotate').onclick = () => {
     if (G.adjust) rotateAdjust(Math.PI / 4);              // 45° snap (drag/dial give any angle)
     else if (G.view && G.view.pieceMode) rotatePieceBy(Math.PI / 4);
@@ -482,7 +492,12 @@ function onTileTap(x, y, world) {
     let tx = x, ty = y, wx = world && world.x, wz = world && world.z;
     if (G.adjust.key === 'mrt') { const s = G.view._nearestTrackCell(x, y, 4, true); if (s && placementOk(s.x, s.y)) { tx = s.x; ty = s.y; wx = undefined; wz = undefined; alignAdjustToViaduct(tx, ty); } }
     if (!placementOk(tx, ty)) { toast('Can\'t put it there.'); return; }
-    G.adjust.x = tx; G.adjust.y = ty; G.adjust.wx = wx; G.adjust.wz = wz; G.view.moveAdjust(tx, ty, wx, wz);
+    const mf = G.adjust.key === 'mrt' ? null : slopeFoundation(tx, ty);   // re-evaluate the slope at the new spot
+    G.adjust.flo = mf ? mf.flo : null; G.adjust.fhi = mf ? mf.fhi : null;
+    if (mf) { if (!G.adjust.fmode) G.adjust.fmode = 'cut'; G.adjust.fy = G.adjust.fmode === 'lift' ? mf.fhi : mf.flo; }
+    else { G.adjust.fmode = null; G.adjust.fy = null; }
+    G.adjust.x = tx; G.adjust.y = ty; G.adjust.wx = wx; G.adjust.wz = wz; G.view.moveAdjust(tx, ty, wx, wz, G.adjust.fy);
+    updateToolBanner();
     return;
   }
   const heritage = G.view.heritageAt && G.view.heritageAt(x, y);
@@ -501,11 +516,16 @@ function onTileTap(x, y, world) {
     const theme = BUILDINGS[b.selected].customizable ? b.theme : null;
     let rot = b.rot || 0;
     if (b.selected === 'mrt') { const w = G.view.worldOfCell(tx, ty); const info = G.view._viaductInfoAt(w.x, w.z, 2.5 * 2.2); if (info) rot = info.bearing; } // face along the track
-    G.adjust = { x: tx, y: ty, key: b.selected, theme, rot, wx, wz };
-    G.view.enterAdjust(tx, ty, b.selected, theme, G.adjust.rot, wx, wz);
+    // On steep/uneven ground a building needs a foundation: default to EXCAVATE
+    // (level down to the low side); the player can switch to ELEVATE in the banner.
+    const fnd = b.selected === 'mrt' ? null : slopeFoundation(tx, ty);
+    const fmode = fnd ? 'cut' : null, fy = fnd ? fnd.flo : null;
+    G.adjust = { x: tx, y: ty, key: b.selected, theme, rot, wx, wz, fy, fmode, flo: fnd ? fnd.flo : null, fhi: fnd ? fnd.fhi : null };
+    G.view.enterAdjust(tx, ty, b.selected, theme, G.adjust.rot, wx, wz, fy);
     updateToolBanner();
     const linked = b.selected === 'mrt' && (tx !== x || ty !== y) ? ' Linked to the MRT line.' : '';
-    toast(`Positioning ${BUILDINGS[b.selected].name}.${linked} Drag it to rotate · tap to move · ✓ Done.`);
+    const slope = fnd ? ' Uneven ground — ⛰ Excavated by default; tap 🏗 to Elevate instead.' : '';
+    toast(`Positioning ${BUILDINGS[b.selected].name}.${linked}${slope} Drag it to rotate · tap to move · ✓ Done.`);
   } else {
     // inspect
     const cell = G.state.grid[y][x];
@@ -528,6 +548,16 @@ function rotateAdjust(delta) {
   G.view.setAdjustRotation(G.adjust.rot);
   updateRotDial();
 }
+// Switch the pending building between EXCAVATE (cut the ground level down to the
+// low side) and ELEVATE (raise it on a platform up to the high side).
+function toggleFoundation() {
+  if (!G.adjust || G.adjust.flo == null) return;
+  G.adjust.fmode = G.adjust.fmode === 'lift' ? 'cut' : 'lift';
+  G.adjust.fy = G.adjust.fmode === 'lift' ? G.adjust.fhi : G.adjust.flo;
+  G.view.setAdjustFoundation(G.adjust.fy);
+  updateToolBanner();
+  toast(G.adjust.fmode === 'lift' ? '🏗 Elevated on a platform.' : '⛰ Excavated to level ground.');
+}
 // Turn the pending station to line up with the MRT track it just snapped onto.
 function alignAdjustToViaduct(gx, gy) {
   if (!G.adjust) return;
@@ -546,18 +576,27 @@ function commitAdjust() {
   const theme = BUILDINGS[a.key].customizable ? a.theme : null;
   build(G.state, a.x, a.y, a.key, theme);
   const cell = G.state.grid[a.y][a.x];
+  let foundMsg = '';
   if (cell) {
     cell.r = a.rot || 0;                                  // keep the chosen orientation
     if (a.wx != null && a.wz != null) {                   // keep the chosen sub-cell spot (free placement)
       const ctr = G.view.worldOfCell(a.x, a.y);
       cell.ox = a.wx - ctr.x; cell.oz = a.wz - ctr.z;
     }
+    if (a.fy != null && a.flo != null) {                  // foundation on a slope: store it + charge earthwork/platform + extra time
+      cell.fy = a.fy; cell.fmode = a.fmode;
+      const range = Math.max(0, (a.fhi || 0) - (a.flo || 0));
+      const sur = a.fmode === 'lift' ? Math.round(priced(5 + range * 5, G.state)) : Math.round(priced(3 + range * 6, G.state));
+      G.state.treasury -= sur;
+      if (cell.build) { const extra = Math.max(2, Math.round(range * 1.5)); cell.build.total += extra; cell.build.left += extra; }
+      foundMsg = a.fmode === 'lift' ? ` 🏗 Elevated on a platform (${money(sur)}).` : ` ⛰ Ground excavated to level (${money(sur)}).`;
+    }
   }
   G.view.clearAdjust();
   G.view.syncConstruction(G.state);   // it now tops out over time
   G.adjust = null;
   afterEdit();
-  toast(`${BUILDINGS[a.key].name} — construction started.`);
+  toast(`${BUILDINGS[a.key].name} — construction started.${foundMsg}`);
   updateToolBanner();                 // back to place-mode (ready for the next one)
 }
 // Discard the object being positioned (it was never charged).
@@ -586,6 +625,7 @@ function activeTool() {
   if (G.build.selected && BUILDINGS[G.build.selected]) return { verb: 'build', label: BUILDINGS[G.build.selected].name };
   if (G.build.bulldoze) return { verb: 'remove', label: '🚜 Demolish' };
   if (G.plant.active && G.plant.kind) return { verb: 'plant', label: '🌿 ' + (PLANTS[G.plant.kind]?.name || 'Plant') };
+  if (G.surface.active) return { verb: 'paint', label: '🎨 ' + (G.surface.type === 'clear' ? 'Clear surface' : (SURFACE_TYPES[G.surface.type]?.name || 'Surface')) };
   if (G.reclaim.active) return { verb: 'fill with land', label: '🏝 Reclaim' };
   if (G.road.tool) return { verb: 'draw', label: '🛣 Road · ' + G.road.tool };
   return null;
@@ -607,6 +647,11 @@ function updateToolBanner() {
     $('tool-banner-text').innerHTML = `<b>⏸ Edit mode · ${t.label}</b><br><span class="tb-sub">Time paused — tap the map to ${t.verb}${rotHint}</span>`;
   }
   const demoReady = G.build.bulldoze && G.demoSel.size > 0;
+  const found = $('tool-banner-found'); if (found) {
+    const show = adjusting && G.adjust.flo != null;
+    found.classList.toggle('hidden', !show);
+    if (show) found.textContent = G.adjust.fmode === 'lift' ? '🏗 Elevated' : '⛰ Excavated';
+  }
   $('tool-banner-rotate').classList.toggle('hidden', !(adjusting || piece || G.build.selected));
   $('tool-banner-remove').classList.toggle('hidden', !(adjusting || demoReady));   // 🗑 = clear the selection
   const stop = $('tool-banner-stop'); if (stop) stop.textContent = (adjusting || demoReady) ? '✓ Done' : '✕ Done';
@@ -693,12 +738,33 @@ function cancelTools() {
   clearAdjustSilently();
   if (G.demoSel.size || G.demoHover) clearDemoSelection();
   G.build.selected = null; G.build.bulldoze = false; G.reclaim.active = false;
-  G.plant.active = false; G.plant.kind = null;
+  G.plant.active = false; G.plant.kind = null; G.surface.active = false;
   G.road.tool = null; G.road.pending = [];
   closeCommit(true);
   if (G.view) { G.view.setPreview(null); G.view.setBulldoze(false); G.view.setRoadMode(false); G.view.setPaintMode(false); G.view.setDrawMode(false); G.view.setPieceMode(false); G.view.setRoundaboutPreview(false); G.view.setPlantMode(false); G.view.showRoadPreview([]); }
   updateToolBanner();
   if (G.currentPanel === 'build') refreshPanel();
+}
+// Surface-paint tool: pick a ground surface and drag to paint it over the land.
+function selectSurface(type) {
+  clearAdjustSilently();
+  if (G.demoSel.size || G.demoHover) clearDemoSelection();
+  G.surface.type = type; G.surface.active = true;
+  G.build.selected = null; G.build.bulldoze = false; G.reclaim.active = false; G.plant.active = false; G.plant.kind = null; G.road.tool = null;
+  if (G.view) { G.view.setPreview(null); G.view.setBulldoze(false); G.view.setRoadMode(false); G.view.setDrawMode(false); G.view.setPieceMode(false); G.view.setPlantMode(false); G.view.setRoundaboutPreview(false); G.view.showRoadPreview([]); G.view.setPaintMode(true, onPaintSurface, G.surface.scale); }
+  closeSheet();
+  updateToolBanner();
+  const nm = type === 'clear' ? 'natural ground' : (SURFACE_TYPES[type]?.name || 'surface');
+  toast(`Surface paint: drag to paint ${nm}. Adjust the brush size in the panel. ✕ Done / Esc to stop.`);
+}
+function setSurfaceScale(scale) {
+  G.surface.scale = scale;
+  if (G.surface.active && G.view) G.view.setPaintMode(true, onPaintSurface, scale);
+}
+function onPaintSurface(x, y) {
+  if (G.readOnly || !G.surface.active) return;
+  G.view.paintSurfaceCell(x, y, G.surface.type);
+  G.dirty = true;
 }
 // Plants tool: pick a tropical species and start placing single specimens.
 function selectPlant(kind) {
@@ -1041,9 +1107,10 @@ function refreshPanel() {
     content.append(renderBuild(G.state, {
       cat: G.build.cat, selected: G.build.selected, bulldoze: G.build.bulldoze, theme: G.build.theme,
       road: G.road, reclaim: G.reclaim, toggleReclaim, plant: G.plant, selectPlant,
+      surface: G.surface, selectSurface, setSurfaceScale,
       selectRoadTool, setRoadType: (t) => { G.road.type = t; applyRoadToolMode(); refreshPanel(); },
       toggleBridge: () => { G.road.elevated = !G.road.elevated; refreshPanel(); },
-      setCat: (c) => { clearAdjustSilently(); G.build.cat = c; if (c !== 'roads') { G.road.tool = null; G.view.setRoadMode(false); } if (c !== 'land') { G.reclaim.active = false; G.view.setPaintMode(false); } if (c !== 'plants' && G.plant.active) { G.plant.active = false; G.plant.kind = null; G.view.setPlantMode(false); } refreshPanel(); updateToolBanner(); },
+      setCat: (c) => { clearAdjustSilently(); G.build.cat = c; if (c !== 'roads') { G.road.tool = null; G.view.setRoadMode(false); } if (c !== 'land') { G.reclaim.active = false; G.surface.active = false; G.view.setPaintMode(false); } if (c !== 'plants' && G.plant.active) { G.plant.active = false; G.plant.kind = null; G.view.setPlantMode(false); } refreshPanel(); updateToolBanner(); },
       setTheme: (t) => { G.build.theme = t; if (G.adjust) { G.adjust.theme = t; G.view.enterAdjust(G.adjust.x, G.adjust.y, G.adjust.key, t, G.adjust.rot); } else if (G.build.selected) G.view.setPreview(G.build.selected, t); refreshPanel(); },
       selectBuilding: (k) => {
         clearAdjustSilently();
@@ -1352,11 +1419,14 @@ window.__sg = {
   cancelAdjust: (m) => cancelAdjust(m),
   selectBuilding: (k) => { clearAdjustSilently(); G.build.selected = k; G.build.bulldoze = false; if (G.view) G.view.setPreview(k, G.build.theme); updateToolBanner(); },
   setBulldoze: (on) => { clearAdjustSilently(); G.demoSel.clear(); G.demoHover = null; G.build.selected = null; G.build.bulldoze = !!on; if (G.view) G.view.setBulldoze(!!on); updateToolBanner(); },
+  selectPlant, selectSurface, setSurfaceScale, toggleFoundation,
   tick: (n = 1) => { for (let i = 0; i < n; i++) tickDay(G.state); if (G.view) { G.view.syncConstruction(G.state); G.view.syncDemolition(G.state); } },
   get adjust() { return G.adjust; },
   get demoSel() { return G.demoSel; },
   get state() { return G.state; },
   get build() { return G.build; },
+  get plant() { return G.plant; },
+  get surface() { return G.surface; },
 };
 
 boot();

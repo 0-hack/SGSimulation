@@ -524,6 +524,22 @@ export const PLANTS = {
 };
 
 // ---------------------------------------------------------------------------
+// GROUND SURFACES — painted over the land to change its look (not its use). As a
+// country urbanises (and reclaims land), green gives way to concrete, plaza tile,
+// asphalt and sand. Cosmetic only: painting never changes what you can build.
+// ---------------------------------------------------------------------------
+export const SURFACE_TYPES = {
+  concrete:  { name: 'Concrete', icon: '⬜', color: 0xb4b1a8 },
+  pavement:  { name: 'Pavement', icon: '🔲', color: 0x9aa0a6 },
+  plaza:     { name: 'Plaza Tile', icon: '🟫', color: 0xcaa877 },
+  brick:     { name: 'Red Brick', icon: '🟧', color: 0xb0673f },
+  asphalt:   { name: 'Asphalt', icon: '⬛', color: 0x55585e },
+  sand:      { name: 'Sand', icon: '🟨', color: 0xe6d6a6 },
+  gravel:    { name: 'Gravel', icon: '🪨', color: 0x8f8a7e },
+  grass:     { name: 'Grass', icon: '🟩', color: 0x77c25a },
+};
+
+// ---------------------------------------------------------------------------
 // PLAYER-DESIGNED LANDMARKS (from public/design.html)
 // Each 3D design becomes a buildable building. Its construction cost — and its
 // power/water demand and jobs — are derived from the design's COMPLEXITY (number

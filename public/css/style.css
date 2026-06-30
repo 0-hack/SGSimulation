@@ -422,3 +422,16 @@ body.edit-mode #city {
 .plant-btn.selected { border-color: var(--teal); background: rgba(17,163,156,0.12); box-shadow: 0 0 0 2px rgba(17,163,156,0.18); }
 .plant-btn .pl-ico { font-size: 22px; line-height: 1; }
 .plant-btn .pl-name { font-weight: 700; font-size: 13px; }
+
+/* ---- surface-paint palette (Land tool) ----------------------------------- */
+.surface-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; margin-top: 8px; }
+.surface-btn { display: flex; align-items: center; gap: 7px; padding: 8px 9px; border-radius: 10px;
+  background: var(--surface-2); border: 1px solid var(--line-2); cursor: pointer; color: var(--ink); }
+.surface-btn:hover { border-color: var(--teal); }
+.surface-btn.selected { border-color: var(--teal); background: rgba(17,163,156,0.12); box-shadow: 0 0 0 2px rgba(17,163,156,0.18); }
+.surface-btn .sf-chip { width: 18px; height: 18px; border-radius: 5px; border: 1px solid rgba(0,0,0,0.18); flex: none; }
+.surface-btn .sf-name { font-weight: 700; font-size: 12px; }
+.brush-row { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+.brush-row .brush-label { font-weight: 700; font-size: 13px; color: var(--muted); }
+.brush-row input[type=range] { flex: 1; accent-color: var(--teal); }
+.brush-row .brush-val { font-weight: 700; font-size: 12px; min-width: 56px; text-align: right; font-variant-numeric: tabular-nums; }

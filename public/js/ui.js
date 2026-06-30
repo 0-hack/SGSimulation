@@ -190,6 +190,32 @@ function renderReclaim(state, ctx) {
     `<span class="bi">🏝️</span> ${ctx.reclaim.active ? 'Reclaiming — draw a loop over open sea' : 'Start reclaiming land'}`);
   btn.onclick = () => ctx.toggleReclaim();
   wrap.append(btn);
+
+  // ---- Surface paint: change how the ground LOOKS (concrete, plaza, sand…) ----
+  if (ctx.surface && ctx.selectSurface) {
+    wrap.append(el('div', 'section-title', 'Surface paint'));
+    wrap.append(el('p', 'policy-desc', 'Paint the ground a different surface as the country urbanises — concrete, plaza tile, asphalt, sand and more over green. Cosmetic only: it never changes what you can build. Pick a surface, set the brush size, then drag across the map. Paint "Grass" or "Clear" to restore the natural look.'));
+    const sg = el('div', 'surface-grid');
+    const swatch = (id, name, color) => {
+      const sel = ctx.surface.active && ctx.surface.type === id;
+      const b = el('button', 'surface-btn' + (sel ? ' selected' : ''),
+        `<span class="sf-chip" style="background:${color}"></span><span class="sf-name">${name}</span>`);
+      b.onclick = () => ctx.selectSurface(id);
+      sg.append(b);
+    };
+    for (const [id, info] of Object.entries(SURFACE_TYPES)) swatch(id, info.name, '#' + info.color.toString(16).padStart(6, '0'));
+    swatch('clear', 'Clear', 'repeating-linear-gradient(45deg,#ccc,#ccc 3px,#fff 3px,#fff 6px)');
+    wrap.append(sg);
+    // brush-size slider (radius in cells)
+    const sr = el('div', 'brush-row');
+    sr.append(el('span', 'brush-label', 'Brush'));
+    const slider = document.createElement('input');
+    slider.type = 'range'; slider.min = '0'; slider.max = '5'; slider.step = '1'; slider.value = String(ctx.surface.scale ?? 1);
+    const out = el('span', 'brush-val', `${(ctx.surface.scale ?? 1) === 0 ? '1 tile' : (ctx.surface.scale * 2 + 1) + ' tiles'}`);
+    slider.oninput = (e) => { const v = parseInt(e.target.value, 10); out.textContent = v === 0 ? '1 tile' : (v * 2 + 1) + ' tiles'; ctx.setSurfaceScale(v); };
+    sr.append(slider); sr.append(out);
+    wrap.append(sr);
+  }
   return wrap;
 }
 

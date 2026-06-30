@@ -1728,7 +1728,7 @@ export class Scene3D {
     };
     c.addEventListener('pointerup', end);
     c.addEventListener('pointercancel', end);
-    c.addEventListener('pointerleave', () => { if (this.ghost) this.ghost.visible = false; this._hideHoverTile(); if (this.bulldoze && this.onDemolishHover) this.onDemolishHover(null, null); if (this._demoDrawing) { this._demoDrawing = false; this._demoStroke = null; this._clearDemoStrokePreview(); } this.showDemoRoadHover([]); this._clearSnapMarker(); this._hideDrawCursor(); if (this.pieceMode) this.clearRoadPreview(); });
+    c.addEventListener('pointerleave', () => { if (this.ghost) this.ghost.visible = false; this._hideHoverTile(); if (this._paintBrush) this._paintBrush.visible = false; if (this.bulldoze && this.onDemolishHover) this.onDemolishHover(null, null); if (this._demoDrawing) { this._demoDrawing = false; this._demoStroke = null; this._clearDemoStrokePreview(); } this.showDemoRoadHover([]); this._clearSnapMarker(); this._hideDrawCursor(); if (this.pieceMode) this.clearRoadPreview(); });
     c.addEventListener('wheel', (e) => {
       e.preventDefault();
       this.cam.radius = THREE.MathUtils.clamp(this.cam.radius * (e.deltaY < 0 ? 0.92 : 1.08), this.MIN_R, this.MAX_R);
@@ -2191,7 +2191,14 @@ export class Scene3D {
       this._hideHoverTile();                              // no grid tile (this isn't a per-cell placement)
       return;
     }
-    if (!this.previewKey && !this.bulldoze) { if (this.ghost) this.ghost.visible = false; this._hideHoverTile(); return; }
+    if (this.paintMode) {                                 // surface paint / reclaim — show the cell + brush footprint
+      const g = this._raycastGround(p);
+      const cell = g ? this._cellOfWorld(g) : null;
+      if (cell) this._updateHoverTile(cell.x, cell.y, true); else this._hideHoverTile();
+      this._updatePaintBrush(g, this.paintRadius);
+      return;
+    }
+    if (!this.previewKey && !this.bulldoze) { if (this.ghost) this.ghost.visible = false; this._hideHoverTile(); this._updatePaintBrush(null, 0); return; }
     const g = this._raycastGround(p);                 // exact sub-cell cursor point
     let cell = this._cellOfWorld(g);
     // DEMOLISH: pick the real 3D object under the cursor (any camera angle) and hand
@@ -2236,6 +2243,21 @@ export class Scene3D {
     this._tileHi.visible = true;
   }
   _hideHoverTile() { if (this._tileHi) this._tileHi.visible = false; }
+  // A glowing ring draped on the terrain that shows the paint brush footprint, so you
+  // can see exactly which area a stroke will cover (radius in cells; hidden for a 1-cell brush).
+  _updatePaintBrush(g, r) {
+    if (!g || !r || r <= 0) { if (this._paintBrush) this._paintBrush.visible = false; return; }
+    if (!this._paintBrush) {
+      this._paintBrush = new THREE.Line(new THREE.BufferGeometry(),
+        new THREE.LineBasicMaterial({ color: 0x6fe0ff, transparent: true, opacity: 0.95, depthTest: false }));
+      this._paintBrush.renderOrder = 8; this.scene.add(this._paintBrush);
+    }
+    const radius = (r + 0.5) * TILE, SEG = 56, arr = [];
+    for (let i = 0; i <= SEG; i++) { const a = i / SEG * Math.PI * 2; const x = g.x + Math.cos(a) * radius, z = g.z + Math.sin(a) * radius; arr.push(x, this._heightAt(x, z) + 0.25, z); }
+    this._paintBrush.geometry.setAttribute('position', new THREE.Float32BufferAttribute(arr, 3));
+    this._paintBrush.geometry.attributes.position.needsUpdate = true;
+    this._paintBrush.visible = true;
+  }
   // Highlight exactly what the Demolish tool will remove under the cursor, so you
   // can SEE the target before tapping: a red tile for a building, or a thick red
   // ribbon tracing the road / railway / runway. `target` is the game's verdict.
@@ -2367,11 +2389,19 @@ export class Scene3D {
     const info = SURFACE_TYPES[type]; if (!info) return;
     if (!this.surfaceGroup) { this.surfaceGroup = new THREE.Group(); this.scene.add(this.surfaceGroup); this.surfaceTiles = this.surfaceTiles || new Map(); }
     const id = `${x},${y}`;
-    const old = this.surfaceTiles.get(id); if (old) this.surfaceGroup.remove(old);
-    const m = new THREE.Mesh(new THREE.PlaneGeometry(TILE, TILE),
-      mat(info.color, { polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }, 0.06));
-    m.rotation.x = -Math.PI / 2; const c = cellToWorld(x, y);
-    m.position.set(c.x, this.terrainHeight(x, y) + 0.07, c.z); m.receiveShadow = true;
+    const old = this.surfaceTiles.get(id); if (old) { this.surfaceGroup.remove(old); old.geometry.dispose(); }
+    // DRAPE the tile over the hill: a subdivided quad whose every vertex is lifted to
+    // the terrain surface, so the paint hugs slopes instead of floating as a flat
+    // plane that clips through the ground (and slices nearby trees in half).
+    const c = cellToWorld(x, y);
+    const SEG = 4;
+    const geo = new THREE.PlaneGeometry(TILE, TILE, SEG, SEG);
+    geo.rotateX(-Math.PI / 2);                               // lay flat in the xz-plane
+    const pos = geo.attributes.position;
+    for (let i = 0; i < pos.count; i++) pos.setY(i, this._heightAt(c.x + pos.getX(i), c.z + pos.getZ(i)) + 0.07);
+    pos.needsUpdate = true; geo.computeVertexNormals();
+    const m = new THREE.Mesh(geo, mat(info.color, { polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }, 0.06));
+    m.position.set(c.x, 0, c.z); m.receiveShadow = true;
     this.surfaceGroup.add(m); this.surfaceTiles.set(id, m);
   }
   // Paint or clear one cell's surface (type === null/'clear' clears the override).
@@ -2382,7 +2412,7 @@ export class Scene3D {
     if (!type || type === 'clear') {
       delete this.state.surfaces[id];
       const m = this.surfaceTiles && this.surfaceTiles.get(id);
-      if (m && this.surfaceGroup) { this.surfaceGroup.remove(m); this.surfaceTiles.delete(id); }
+      if (m && this.surfaceGroup) { this.surfaceGroup.remove(m); m.geometry.dispose(); this.surfaceTiles.delete(id); }
       return;
     }
     if (!SURFACE_TYPES[type]) return;
@@ -3494,7 +3524,7 @@ export class Scene3D {
   setRoadMode(on) { this.roadMode = on; if (!on) this.clearRoadPreview(); }
   // Paint mode (land reclamation): drag across the map to apply onPaint to each
   // cell instead of orbiting the camera.
-  setPaintMode(on, onPaint, radius) { this.paintMode = !!on; this.onPaint = onPaint || null; this.paintRadius = on ? (radius || 0) : 0; if (!on) { this._painting = false; this._paintSeen = null; } }
+  setPaintMode(on, onPaint, radius) { this.paintMode = !!on; this.onPaint = onPaint || null; this.paintRadius = on ? (radius || 0) : 0; if (!on) { this._painting = false; this._paintSeen = null; this._hideHoverTile(); this._updatePaintBrush(null, 0); } }
   // Draw mode: drag across the map to trace a route (road/railway). On release,
   // onStroke([{x,z}...]) is called. `opts` sets the live-preview look.
   setDrawMode(on, onStroke, opts) { this.drawMode = !!on; this.onStroke = onStroke || null; this._drawType = (opts && opts.type) || 'road'; this._drawElevated = !!(opts && opts.elevated); this._drawRail = !!(opts && opts.rail); this._drawAir = !!(opts && opts.air); this._drawArea = !!(opts && opts.area); if (!on) { this._drawing = false; this._stroke = null; this.clearRoadPreview(); } }

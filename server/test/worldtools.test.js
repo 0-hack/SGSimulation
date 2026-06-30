@@ -47,6 +47,46 @@ try {
   ok(sf.painted, 'painting a surface stores + renders a ground tile');
   ok(sf.cleared, 'painting "clear" removes the surface override');
 
+  // ---- SURFACE PAINT DRAPES over slopes (no floating/clipping flat plane) ----
+  const sd = await p.evaluate(() => {
+    const v = window.__sgview, N = v.land.length;
+    let sx = -1, sy = -1;
+    for (let y = 2; y < N - 2 && sx < 0; y += 3) for (let x = 2; x < N - 2; x++) {
+      if (!v.isLand(x, y) || v.isRoadAt(x, y)) continue;
+      const lv = v.footprintLevels ? v.footprintLevels(x, y) : null;
+      if (lv && lv.range > 0.6) { sx = x; sy = y; break; }
+    }
+    if (sx < 0) return { found: false };
+    v.paintSurfaceCell(sx, sy, 'concrete');
+    const m = v.surfaceTiles.get(`${sx},${sy}`), pos = m.geometry.attributes.position;
+    let minY = Infinity, maxY = -Infinity;
+    for (let i = 0; i < pos.count; i++) { const wy = m.position.y + pos.getY(i); minY = Math.min(minY, wy); maxY = Math.max(maxY, wy); }
+    const draped = (maxY - minY) > 0.2;                         // vertices follow the slope (not one flat height)
+    // every vertex sits right on the terrain surface (hugs the hill)
+    let maxGap = 0;
+    for (let i = 0; i < pos.count; i++) { const wx = m.position.x + pos.getX(i), wz = m.position.z + pos.getZ(i); maxGap = Math.max(maxGap, Math.abs((m.position.y + pos.getY(i)) - (v._heightAt(wx, wz) + 0.07))); }
+    const hugs = maxGap < 0.05;
+    v.paintSurfaceCell(sx, sy, 'clear');
+    return { found: true, range: +(v.footprintLevels(sx, sy).range).toFixed(2), draped, hugs };
+  });
+  ok(sd.found && sd.draped, `painted surface drapes over the slope — vertices follow the hill (range ${sd.range})`);
+  ok(sd.hugs, 'every draped vertex hugs the terrain surface (no floating / clipping)');
+
+  // ---- PAINT CURSOR: a brush ring shows the footprint; hidden when the tool ends -
+  const pc = await p.evaluate(() => {
+    const v = window.__sgview, N = v.land.length;
+    v.setPaintMode(true, () => {}, 2);
+    const c = v.worldOfCell(Math.round(N * 0.5), Math.round(N * 0.5));
+    v._updatePaintBrush({ x: c.x, z: c.z }, v.paintRadius);
+    const shown = !!(v._paintBrush && v._paintBrush.visible) && v.paintRadius === 2;
+    const ringPts = v._paintBrush.geometry.attributes.position.count;
+    v.setPaintMode(false);
+    const hiddenAfter = !!v._paintBrush && v._paintBrush.visible === false;
+    return { shown, ringPts, hiddenAfter };
+  });
+  ok(pc.shown && pc.ringPts > 12, 'the paint brush ring shows the cursor footprint (so you can see which cells you\'ll paint)');
+  ok(pc.hiddenAfter, 'leaving the paint tool hides the brush cursor');
+
   // ---- SLOPE FOUNDATION: elevate by default; excavate actually cuts the hill -
   const fd = await p.evaluate(() => {
     const v = window.__sgview, S = window.__sg, N = v.land.length;

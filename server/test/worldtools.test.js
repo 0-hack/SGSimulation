@@ -84,6 +84,95 @@ try {
   });
   ok(nb.okAll, 'the new farm/era buildings build into the scene');
 
+  // ---- DEMOLISH: hover turns the OBJECT red, multi-select toggles, Done tears down -
+  // (1) a placed building: hover tints its real mesh red; tap keeps it red; tap again undoes
+  const dmB = await p.evaluate(() => {
+    const v = window.__sgview, S = window.__sg, N = v.land.length;
+    let bx = -1, by = -1;
+    for (let y = 4; y < N - 4 && bx < 0; y += 2) for (let x = 4; x < N - 4; x++) {
+      if (v.isLand(x, y) && !v.isRoadAt(x, y) && !v.buildings.has(`${x},${y}`) && !v.state.grid[y][x] && !(v.heritageLabelAt && v.heritageLabelAt(x, y))) { bx = x; by = y; break; }
+    }
+    if (bx < 0) return { found: false };
+    v.state.grid[by][bx] = { k: 'hdb_flat' }; v.onBuilt(bx, by, 'hdb_flat');
+    const c = v.worldOfCell(bx, by), grp = v.buildings.get(`${bx},${by}`).group;
+    const reds = () => { let n = 0; grp.traverse((o) => { if (o.userData && o.userData._origMat) n++; }); return n; };
+    S.setBulldoze(true);
+    S.onDemolishHover({ x: bx, y: by }, c); const hoverRed = reds() > 0;          // hover alone tints it
+    S.onTileTap(bx, by, c); const selected = S.demoSel.size === 1 && reds() > 0;  // tap selects + keeps red
+    S.onDemolishHover(null, null); const staysRed = reds() > 0 && S.demoSel.size === 1; // moving away keeps it
+    S.onTileTap(bx, by, c); const undone = S.demoSel.size === 0 && reds() === 0;   // tap again undoes + restores
+    S.setBulldoze(false);
+    return { found: true, hoverRed, selected, staysRed, undone };
+  });
+  ok(dmB.found && dmB.hoverRed, 'hovering a building in Demolish turns the OBJECT red (not just a tile)');
+  ok(dmB.selected && dmB.staysRed, 'tapping keeps it red while you select others (multi-select)');
+  ok(dmB.undone, 'tapping a red building again undoes the selection and restores it');
+
+  // (2) a prebuilt heritage shophouse: detectable, tints its model, and Done removes it
+  const dmH = await p.evaluate(() => {
+    const v = window.__sgview, S = window.__sg, N = v.land.length;
+    let hx = -1, hy = -1;
+    for (let y = 0; y < N && hx < 0; y++) for (let x = 0; x < N; x++) { if (v.heritageLabelAt(x, y)) { hx = x; hy = y; break; } }
+    if (hx < 0) return { found: false };
+    const c = v.worldOfCell(hx, hy);
+    S.setBulldoze(true);
+    const t = S.findDemoTarget({ x: hx, y: hy }, c); const isHeritage = !!t && t.kind === 'heritage';
+    S.onDemolishHover({ x: hx, y: hy }, c);
+    const mesh = v._heritageMeshAt(hx, hy); let red = 0; if (mesh) mesh.traverse((o) => { if (o.userData && o.userData._origMat) red++; });
+    S.onTileTap(hx, hy, c); const sel = S.demoSel.size === 1;
+    const before = v.heritagePlacements.length;
+    S.commitDemolish();
+    const removed = v.heritagePlacements.length === before - 1 && !v.heritageLabelAt(hx, hy);
+    S.setBulldoze(false);
+    return { found: true, isHeritage, red: red > 0, sel, removed };
+  });
+  ok(dmH.found && dmH.isHeritage, 'a prebuilt shophouse / heritage building is detected by Demolish');
+  ok(dmH.red, 'hovering the prebuilt shophouse turns its 3D model red');
+  ok(dmH.sel && dmH.removed, 'Done demolishes the prebuilt shophouse (model + cell freed)');
+
+  // (3) an ambient tree: detectable, tints red, Done removes it and the clearing persists
+  const dmT = await p.evaluate(() => {
+    const v = window.__sgview, S = window.__sg;
+    let key = null; for (const [k, g] of (v.natureCells || new Map())) { if (g.visible) { key = k; break; } }
+    if (!key) return { found: false };
+    const [gx, gy] = key.split(',').map(Number), c = v.worldOfCell(gx, gy), grp = v.natureCells.get(key);
+    S.setBulldoze(true);
+    const t = S.findDemoTarget({ x: gx, y: gy }, c); const isTree = !!t && t.kind === 'tree';
+    S.onDemolishHover({ x: gx, y: gy }, c); let red = 0; grp.traverse((o) => { if (o.userData && o.userData._origMat) red++; });
+    S.onTileTap(gx, gy, c); const sel = S.demoSel.size === 1;
+    S.commitDemolish();
+    const gone = grp.visible === false, persisted = !!(v.state.removedTrees && v.state.removedTrees[key]);
+    S.setBulldoze(false);
+    return { found: true, isTree, red: red > 0, sel, gone, persisted };
+  });
+  ok(dmT.found && dmT.isTree, 'an ambient tree is detected by Demolish');
+  ok(dmT.red, 'hovering a tree turns it red');
+  ok(dmT.sel && dmT.gone && dmT.persisted, 'Done removes the tree and the clearing is saved');
+
+  // (4) roads: a freehand DRAG marks the covered portion (any length, not a whole edge) -
+  const dmR = await p.evaluate(() => {
+    const v = window.__sgview, S = window.__sg, roads = v.state.roads;
+    if (!roads || !roads.edges || !roads.edges.length) return { found: false };
+    const lineOf = (e) => { if (e.poly && e.poly.length >= 2) return e.poly.map((q) => ({ x: q.x, z: q.z })); const a = roads.nodes[e.a], b = roads.nodes[e.b]; return (a && b) ? [{ x: a.x, z: a.z }, { x: b.x, z: b.z }] : []; };
+    let line = null;
+    for (const e of roads.edges) { if (e.demolish) continue; const l = lineOf(e); if (l.length >= 2 && Math.hypot(l[l.length - 1].x - l[0].x, l[l.length - 1].z - l[0].z) > 12) { line = l; break; } }
+    if (!line) return { found: false };
+    let stroke;
+    if (line.length >= 4) { const m = Math.floor(line.length / 2); stroke = [line[m - 1], line[m], line[m + 1]].map((q) => ({ x: q.x, z: q.z })); }
+    else { const A = line[0], B = line[1], lp = (t) => ({ x: A.x + (B.x - A.x) * t, z: A.z + (B.z - A.z) * t }); stroke = [lp(0.4), lp(0.5), lp(0.6)]; }
+    S.setBulldoze(true);
+    const before = roads.edges.length;
+    S.onDemolishStroke(stroke);
+    const marked = !!S.demoCuts && S.demoCuts.length === 1 && S.demoCuts[0].polys.length >= 1;
+    S.commitDemolish();
+    const split = roads.edges.length > before;                 // the edge was cut into pieces
+    const queued = roads.edges.some((e) => e && e.demolish);    // only the covered piece is torn down
+    S.setBulldoze(false);
+    return { found: true, marked, split, queued };
+  });
+  ok(dmR.found && dmR.marked, 'dragging along a road freely marks the covered portion (red)');
+  ok(dmR.split && dmR.queued, 'Done splits the road and tears down ONLY the dragged portion (not a fixed length)');
+
   // ---- RECLAIM menu is reachable + renders (category tabs wrap, not off-screen)
   const rc = await p.evaluate(() => {
     document.querySelector('.tool[data-panel="build"]').click();

@@ -68,46 +68,42 @@ try {
   ok(r.rotChanged && r.meshSynced, 'dragging swivels the building and keeps mesh + state angle in sync');
   ok(r.noTapMove, 'a rotate-drag does not move or commit the building');
 
-  // ---- 3) DEMOLISH: precise targeting + multi-select + toggle + timed teardown
+  // ---- 3) DEMOLISH ROADS: freehand drag (any length, not a whole edge) + timed teardown
   const d = await p.evaluate(() => {
     const v = window.__sgview, S = window.__sg;
     const C = v.worldOfCell(Math.round(v.land.length * 0.5), Math.round(v.land.length * 0.5));
     const roads = v.state.roads; const base = roads.nodes.length;
     roads.nodes.push({ x: C.x - 20, z: C.z, y: 0 }, { x: C.x + 20, z: C.z, y: 0 });         // road A
     roads.nodes.push({ x: C.x - 20, z: C.z + 5, y: 0 }, { x: C.x + 20, z: C.z + 5, y: 0 }); // road B
-    const eA = roads.edges.length; roads.edges.push({ a: base, b: base + 1, type: 'road', lanes: 2 });
-    const eB = roads.edges.length; roads.edges.push({ a: base + 2, b: base + 3, type: 'road', lanes: 2 });
+    roads.edges.push({ a: base, b: base + 1, type: 'road', lanes: 2 });
+    roads.edges.push({ a: base + 2, b: base + 3, type: 'road', lanes: 2 });
     v.rebuildRoadNet();
     const cellOf = (w) => ({ x: Math.floor((w.x / 1600 + 0.5) * v.land.length), y: Math.floor((0.5 - w.z / 1600) * v.land.length) });
-    const nearA = { x: C.x, z: C.z + 1 }, nearB = { x: C.x, z: C.z + 4 }, far = { x: C.x, z: C.z + 14 };
-    const tA = S.findDemoTarget(cellOf(nearA), nearA), tB = S.findDemoTarget(cellOf(nearB), nearB);
-    const hitsA = tA && tA.kind === 'road' && tA.i === eA;
-    const hitsB = tB && tB.kind === 'road' && tB.i === eB;
-    const farMiss = !S.findDemoTarget(cellOf(far), far);
-    // multi-select: tap road A then road B -> two selected; tap B again -> toggled off
+    // a TAP on a road no longer selects a whole fixed-length edge (roads are freehand-only now)
+    const tapRoad = S.findDemoTarget(cellOf({ x: C.x, z: C.z }), { x: C.x, z: C.z });
+    const noWholeEdge = !tapRoad || tapRoad.kind !== 'road';
     S.setBulldoze(true);
-    S.onTileTap(cellOf(nearA).x, cellOf(nearA).y, nearA);
-    S.onTileTap(cellOf(nearB).x, cellOf(nearB).y, nearB);
-    const selectedTwo = S.demoSel.size === 2;
-    S.onTileTap(cellOf(nearB).x, cellOf(nearB).y, nearB);   // tap the red one again -> undo
-    const toggledOff = S.demoSel.size === 1 && S.demoSel.has(S.demoKey(tA));
-    // re-add B, then commit -> nothing removed yet (timed), both still present
-    S.onTileTap(cellOf(nearB).x, cellOf(nearB).y, nearB);
-    const before = roads.edges.length;
+    // freehand-drag the MIDDLE of road A, then the middle of road B -> two cuts accumulate
+    // (each drag adds exactly one cut, however much tarmac it covers)
+    S.onDemolishStroke([{ x: C.x - 6, z: C.z }, { x: C.x, z: C.z }, { x: C.x + 6, z: C.z }]);
+    S.onDemolishStroke([{ x: C.x - 6, z: C.z + 5 }, { x: C.x, z: C.z + 5 }, { x: C.x + 6, z: C.z + 5 }]);
+    const markedTwo = S.demoCuts.length === 2;
+    const beforeEdges = roads.edges.length;
     S.commitDemolish();
-    const queuedNotGone = roads.edges.length === before && roads.edges[eA].demolish && roads.edges[eB].demolish;
-    const selCleared = S.demoSel.size === 0;
-    S.tick(6);                                              // a few days pass -> teardown completes
-    const bothGone = v.state.roads.edges.length === before - 2;
+    const split = v.state.roads.edges.length > beforeEdges;                                  // each road cut into pieces
+    const queued = v.state.roads.edges.filter((e) => e && e.demolish).length >= 2;           // a covered piece per road, timed
+    const cutsCleared = S.demoCuts.length === 0;
+    S.tick(6);                                                                                // a few days pass -> covered pieces torn down
+    const middlesGone = !v.state.roads.edges.some((e) => e && e.demolish);
+    const remnantsRemain = v.state.roads.edges.length > 0;                                    // end pieces survive (not a whole-edge wipe)
     S.setBulldoze(false);
-    return { hitsA, hitsB, farMiss, selectedTwo, toggledOff, queuedNotGone, selCleared, bothGone };
+    return { noWholeEdge, markedTwo, split, queued, cutsCleared, middlesGone, remnantsRemain };
   });
-  ok(d.hitsA && d.hitsB, 'demolish targets the road actually under the cursor (A vs B distinguished)');
-  ok(d.farMiss, 'a point away from all roads targets NOTHING (no fat 6-unit grab radius)');
-  ok(d.selectedTwo, 'tapping multiple roads accumulates them in the demolish selection');
-  ok(d.toggledOff, 'tapping a selected (red) item again removes it from the selection (undo)');
-  ok(d.queuedNotGone && d.selCleared, '✓ Done queues a TIMED teardown — nothing is removed instantly');
-  ok(d.bothGone, 'after a few days the queued roads are actually torn down');
+  ok(d.noWholeEdge, 'tapping a road no longer selects a whole fixed-length edge (freehand only)');
+  ok(d.markedTwo, 'dragging along two roads accumulates two freehand cuts');
+  ok(d.split && d.queued, '✓ Done splits the roads and queues only the dragged portions (timed, not instant)');
+  ok(d.cutsCleared, '✓ Done clears the pending freehand cuts');
+  ok(d.middlesGone && d.remnantsRemain, 'after a few days the dragged portions are torn down while the rest of the road survives');
 
   // ---- 3b) BUILDING teardown is timed and stops functioning immediately ------
   const d2 = await p.evaluate(() => {

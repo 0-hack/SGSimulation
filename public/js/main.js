@@ -6,6 +6,7 @@ import {
   reclaimLand, reclaimCost, buildingCost, priced,
   routeLength, addRoadwork, smoothRoute, spliceRoad,
   polyArea, reclaimAreaCost, addReclaimArea,
+  roadEraseCover, eraseRoadsAlong,
 } from './engine.js';
 import { Scene3D } from './scene3d.js';
 import { refreshRoadsLive } from './roadsLive.js';
@@ -75,6 +76,8 @@ const G = {
   adjust: null,                 // { x, y, key, theme, rot, wx, wz } — a placed-but-not-yet-committed object being positioned (wx/wz = exact world spot)
   demoSel: new Map(),           // Demolish multi-select: key -> target ({kind,x,y|i,poly,label}). Committed (timed) on Done.
   demoHover: null,              // the Demolish target currently under the cursor (shown red alongside the selection)
+  demoCuts: [],                 // freehand road-erase strokes: { id, stroke:[{x,z}], radius, polys:[[{x,z}]] }. Committed on Done.
+  demoCutId: 0,                 // running id for road-erase strokes
   pieceRot: 0,                  // running orientation of the road piece being aimed (for the dial)
   road: { tool: null, type: 'road', elevated: false, pending: [] },
   reclaim: { active: false },  // land-reclamation tool: tap sea to fill land
@@ -111,9 +114,9 @@ function boot() {
 
   // ✓ Done: confirm the object you're positioning / commit the demolish selection,
   // else exit place mode.
-  $('tool-banner-stop').onclick = () => { if (G.adjust) commitAdjust(); else if (G.build.bulldoze && G.demoSel.size) commitDemolish(); else cancelTools(); };
+  $('tool-banner-stop').onclick = () => { if (G.adjust) commitAdjust(); else if (G.build.bulldoze && demoCount()) commitDemolish(); else cancelTools(); };
   // 🗑 Remove: discard the object you're positioning, or clear the demolish selection.
-  $('tool-banner-remove').onclick = () => { if (G.adjust) cancelAdjust('Removed.'); else if (G.build.bulldoze && G.demoSel.size) { clearDemoSelection(); toast('Selection cleared.'); } };
+  $('tool-banner-remove').onclick = () => { if (G.adjust) cancelAdjust('Removed.'); else if (G.build.bulldoze && demoCount()) { clearDemoSelection(); toast('Selection cleared.'); } };
   // ⛰ Cut / 🏗 Lift: switch a sloped building between excavated and elevated.
   $('tool-banner-found').onclick = () => toggleFoundation();
   $('tool-banner-rotate').onclick = () => {
@@ -129,7 +132,7 @@ function boot() {
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
     if (e.key === 'Escape' && G._pendingCommit) { closeCommit(true); toast('Discarded.'); e.preventDefault(); return; }
     if (e.key === 'Escape' && G.adjust) { cancelAdjust('Cancelled.'); e.preventDefault(); return; }
-    if (e.key === 'Escape' && G.build.bulldoze && G.demoSel.size) { clearDemoSelection(); toast('Selection cleared.'); e.preventDefault(); return; }
+    if (e.key === 'Escape' && G.build.bulldoze && demoCount()) { clearDemoSelection(); toast('Selection cleared.'); e.preventDefault(); return; }
     if (e.key === 'Escape' && activeTool()) { cancelTools(); toast('Stopped placing.'); e.preventDefault(); }
     if (e.key === 'r' || e.key === 'R') {
       if (G.adjust) { rotateAdjust(Math.PI / 4); e.preventDefault(); }
@@ -238,7 +241,7 @@ function showGameShell(playing = true) {
   $('toolbar').classList.remove('hidden');
   if (!G.view) {
     try {
-      G.view = new Scene3D($('city'), { onTileTap: onTileTap, onGroundTap: onGroundTap, onDemolishHover: onDemolishHover, onAdjustRotate: onAdjustRotate });
+      G.view = new Scene3D($('city'), { onTileTap: onTileTap, onGroundTap: onGroundTap, onDemolishHover: onDemolishHover, onDemolishStroke: onDemolishStroke, onAdjustRotate: onAdjustRotate });
       window.__sgview = G.view; // exposed for debugging / disaster FX hooks
     } catch (err) {
       reportSceneError(err);
@@ -505,7 +508,7 @@ function onTileTap(x, y, world) {
     // Multi-select: a tap TOGGLES the item under the cursor in/out of the teardown
     // selection (tap a red one again to undo). Nothing is removed until ✓ Done.
     const t = findDemoTarget({ x, y }, world);
-    if (!t) { toast('Nothing here to select — tap a building or road.'); return; }
+    if (!t) { toast('Nothing to select here — tap a building, shophouse or tree, or drag along a road.'); return; }
     const key = demoKey(t);
     if (G.demoSel.has(key)) G.demoSel.delete(key);          // tap a selected (red) item again -> undo
     else G.demoSel.set(key, { ...t, key });
@@ -673,7 +676,7 @@ function updateToolBanner() {
     const rotHint = G.build.selected ? ' · drag to rotate after placing' : '';
     $('tool-banner-text').innerHTML = `<b>⏸ Edit mode · ${t.label}</b><br><span class="tb-sub">Time paused — tap the map to ${t.verb}${rotHint}</span>`;
   }
-  const demoReady = G.build.bulldoze && G.demoSel.size > 0;
+  const demoReady = G.build.bulldoze && demoCount() > 0;
   const found = $('tool-banner-found'); if (found) {
     const show = adjusting && G.adjust.flo != null;
     found.classList.toggle('hidden', !show);
@@ -711,9 +714,11 @@ function rotDialState() {
 }
 // Drop the pending object without UI/toast — used when the tool/selection changes.
 function clearAdjustSilently() { if (G.adjust) { if (G.view) G.view.clearAdjust(); G.adjust = null; } }
+// How many things are staged for demolition (tapped objects + freehand road cuts).
+function demoCount() { return G.demoSel.size + ((G.demoCuts && G.demoCuts.length) || 0); }
 // Empty the Demolish selection (no teardown happens) and clear its red highlights.
 function clearDemoSelection() {
-  G.demoSel.clear(); G.demoHover = null;
+  G.demoSel.clear(); G.demoHover = null; G.demoCuts = [];
   if (G.view) G.view.demoSetSelection([]);
   updateToolBanner();
 }
@@ -763,7 +768,7 @@ function setEditPause(on) {
 }
 function cancelTools() {
   clearAdjustSilently();
-  if (G.demoSel.size || G.demoHover) clearDemoSelection();
+  if (demoCount() || G.demoHover) clearDemoSelection();
   G.build.selected = null; G.build.bulldoze = false; G.reclaim.active = false;
   G.plant.active = false; G.plant.kind = null; G.surface.active = false;
   G.road.tool = null; G.road.pending = [];
@@ -775,7 +780,7 @@ function cancelTools() {
 // Surface-paint tool: pick a ground surface and drag to paint it over the land.
 function selectSurface(type) {
   clearAdjustSilently();
-  if (G.demoSel.size || G.demoHover) clearDemoSelection();
+  if (demoCount() || G.demoHover) clearDemoSelection();
   G.surface.type = type; G.surface.active = true;
   G.build.selected = null; G.build.bulldoze = false; G.reclaim.active = false; G.plant.active = false; G.plant.kind = null; G.road.tool = null;
   if (G.view) { G.view.setPreview(null); G.view.setBulldoze(false); G.view.setRoadMode(false); G.view.setDrawMode(false); G.view.setPieceMode(false); G.view.setPlantMode(false); G.view.setRoundaboutPreview(false); G.view.showRoadPreview([]); G.view.setPaintMode(true, onPaintSurface, G.surface.scale); }
@@ -796,7 +801,7 @@ function onPaintSurface(x, y) {
 // Plants tool: pick a tropical species and start placing single specimens.
 function selectPlant(kind) {
   clearAdjustSilently();
-  if (G.demoSel.size || G.demoHover) clearDemoSelection();
+  if (demoCount() || G.demoHover) clearDemoSelection();
   G.plant.active = true; G.plant.kind = kind;
   G.build.selected = null; G.build.bulldoze = false; G.reclaim.active = false; G.road.tool = null;
   if (G.view) { G.view.setPreview(null); G.view.setBulldoze(false); G.view.setRoadMode(false); G.view.setDrawMode(false); G.view.setPieceMode(false); G.view.setPaintMode(false); G.view.setRoundaboutPreview(false); G.view.showRoadPreview([]); G.view.setPlantMode(true, kind); }
@@ -836,18 +841,24 @@ function placeRoundabout(x, z) {
 function findDemoTarget(cell, world) {
   if (cell) {
     const here = G.state.grid[cell.y] && G.state.grid[cell.y][cell.x];
-    if (here && !here.demolish) {                          // already being torn down -> nothing to select
-      const name = here.heritage ? (here.name || BUILDINGS[here.k]?.name) : BUILDINGS[here.k]?.name;
-      return { kind: 'building', x: cell.x, y: cell.y, label: name || 'building' };
+    if (here && !here.demolish) {                          // (a cell already being torn down is skipped below)
+      // a prebuilt heritage building seeded into the grid -> target it as HERITAGE so its
+      // real 3D model (which lives in the heritage group, not this.buildings) turns red.
+      if (here.heritage) return { kind: 'heritage', x: cell.x, y: cell.y, label: here.name || BUILDINGS[here.k]?.name || 'Heritage building' };
+      return { kind: 'building', x: cell.x, y: cell.y, label: BUILDINGS[here.k]?.name || 'building' };
     }
-    if (!here) { const h = G.view.heritageAt && G.view.heritageAt(cell.x, cell.y); if (h) return { kind: 'heritage', x: cell.x, y: cell.y, label: h }; }
+    if (!here) {
+      const hl = G.view.heritageLabelAt && G.view.heritageLabelAt(cell.x, cell.y);  // named landmark OR decorative shophouse
+      if (hl) return { kind: 'heritage', x: cell.x, y: cell.y, label: hl };
+      if (G.view.hasTreeAt && G.view.hasTreeAt(cell.x, cell.y)) return { kind: 'tree', x: cell.x, y: cell.y, label: 'Trees' };
+    }
   }
   if (world) return findInfraTarget(world.x, world.z);
   return null;
 }
 // A stable key for a demolish target (so the selection can toggle it).
 function demoKey(t) {
-  return t.kind === 'building' ? `b:${t.x},${t.y}` : t.kind === 'heritage' ? `h:${t.x},${t.y}` : `${t.kind}:${t.i}`;
+  return t.kind === 'building' ? `b:${t.x},${t.y}` : t.kind === 'heritage' ? `h:${t.x},${t.y}` : t.kind === 'tree' ? `t:${t.x},${t.y}` : `${t.kind}:${t.i}`;
 }
 // The live state-object behind an infra target (for queueing its timed teardown).
 function infraRef(t) {
@@ -862,6 +873,8 @@ function refreshDemoVisual() {
   if (!G.view) return;
   const arr = [...G.demoSel.values()];
   if (G.demoHover && !G.demoSel.has(G.demoHover.key)) arr.push(G.demoHover);
+  // freehand road cuts: a red ribbon for every covered road sub-piece
+  for (const cut of (G.demoCuts || [])) (cut.polys || []).forEach((poly, j) => arr.push({ kind: 'roadcut', key: `cut:${cut.id}:${j}`, poly }));
   G.view.demoSetSelection(arr);
 }
 // Nearest road / railway / MRT viaduct / runway to (x,z), within its own tight hit
@@ -874,15 +887,9 @@ function findInfraTarget(x, z) {
     let d = 1e9; for (let k = 0; k < poly.length - 1; k++) d = Math.min(d, segPointDistW(x, z, poly[k], poly[k + 1]));
     if (d <= hit && d < bestD) { bestD = d; best = { kind, i, poly, label }; }
   };
-  const roads = G.state.roads;
-  roads.edges.forEach((e, i) => {
-    const T = ROAD_TYPES[e.type] || ROAD_TYPES.road;
-    const hit = (T.renderHW || T.width / 2) + 1.6;        // on or just beside the tarmac
-    let poly;
-    if (e.poly && e.poly.length) poly = e.poly;
-    else { const a = roads.nodes[e.a], b = roads.nodes[e.b]; if (!a || !b) return; poly = e.ctrl ? [a, e.ctrl, b] : [a, b]; }
-    consider('road', i, poly, hit, 'Road');
-  });
+  // NB: roads are no longer tap-targeted as whole fixed-length edges — they're
+  // demolished by dragging a freehand stroke over them (onDemolishStroke). Only
+  // the singular landmarks (railway/MRT viaduct, runway) are whole-edge tap targets.
   (G.state.railways || []).forEach((e, i) => {
     const pts = (e.pts || e).map((p) => ({ x: p[0], z: p[1] }));
     consider('rail', i, pts, (e.mrt ? ROAD_TYPES.mrt.width : ROAD_TYPES.railway.width) / 2 + 1.8, e.mrt ? 'MRT viaduct' : 'Railway');
@@ -895,22 +902,46 @@ function findInfraTarget(x, z) {
 }
 // ✓ Done in Demolish mode: commit the whole red selection as TIMED teardowns
 // (they come down over a few days, like construction in reverse), then clear the
-// selection. Heritage landmarks (decorative, outside the economy) come down at once.
+// selection. Heritage landmarks & trees (decorative, outside the economy) come down
+// at once; freehand road strokes split the roads and queue the covered pieces.
 function commitDemolish() {
-  if (!G.demoSel.size) { cancelTools(); return; }
+  const cuts = G.demoCuts || [];
+  if (!G.demoSel.size && !cuts.length) { cancelTools(); return; }
   const items = [];
   for (const t of G.demoSel.values()) {
     if (t.kind === 'building') items.push({ kind: 'building', x: t.x, y: t.y });
     else if (t.kind === 'heritage') { if (G.view.removeHeritageVisual) G.view.removeHeritageVisual(t.x, t.y); }
+    else if (t.kind === 'tree') { if (G.view.removeTreeAt) G.view.removeTreeAt(t.x, t.y); }
     else { const ref = infraRef(t); if (ref) items.push({ kind: t.kind, ref }); }
   }
-  const n = G.demoSel.size;
+  // freehand road erasers: split each covered road and queue the covered pieces
+  let roadsRebuilt = false;
+  for (const cut of cuts) {
+    const pieces = eraseRoadsAlong(G.state.roads, cut.stroke, cut.radius || 4);
+    for (const ref of pieces) items.push({ kind: 'road', ref });
+    if (pieces.length) roadsRebuilt = true;
+  }
+  const n = G.demoSel.size + cuts.length;
   if (items.length) queueDemolish(G.state, items);
-  G.demoSel.clear(); G.demoHover = null;
+  G.demoSel.clear(); G.demoHover = null; G.demoCuts = [];
   G.view.demoSetSelection([]);          // drop the selection tint; the teardown visuals take over
+  if (roadsRebuilt && G.view.rebuildRoadNet) G.view.rebuildRoadNet();   // show the freshly-split road geometry
   G.view.syncDemolition(G.state);       // start the teardown immediately
   afterEdit();
   toast(`Demolishing ${n} item${n > 1 ? 's' : ''} — they come down over a few days. 🚜`);
+  updateToolBanner();
+}
+// Dragged a freehand stroke in Demolish mode (like drawing a road, in reverse):
+// mark every road portion the brush covered as a red, removable selection.
+function onDemolishStroke(stroke) {
+  if (G.readOnly || !G.build.bulldoze) return;
+  if (!stroke || stroke.length < 1) return;
+  const radius = 4;
+  const polys = roadEraseCover(G.state.roads, stroke, radius);
+  if (!polys.length) { toast('No road under that stroke — drag along a road to demolish it.'); return; }
+  G.demoCuts = G.demoCuts || [];
+  G.demoCuts.push({ id: ++G.demoCutId, stroke: stroke.map((p) => ({ x: p.x, z: p.z })), radius, polys });
+  refreshDemoVisual();
   updateToolBanner();
 }
 // Cursor moved in Demolish mode: track what's under it and show it red alongside
@@ -932,11 +963,11 @@ function onAdjustRotate(rad) {
 function updateDemoBanner() {
   if (!G.build.bulldoze || G.adjust) return;
   const txt = $('tool-banner-text'); if (!txt) return;
-  const n = G.demoSel.size, hov = G.demoHover;
+  const n = demoCount(), hov = G.demoHover;
   const head = n ? `🚜 Demolish · ${n} selected` : '🚜 Demolish';
   let sub;
   if (hov) { const sel = G.demoSel.has(hov.key); sub = `${sel ? 'Tap again to keep' : 'Tap to select'} ${hov.label}` + (n ? ' · ✓ Done to tear down' : ''); }
-  else sub = n ? 'Tap more to add/remove · ✓ Done tears them down over time' : 'Tap buildings & roads to select them, then ✓ Done';
+  else sub = n ? 'Tap more or drag a road to add · ✓ Done tears them down over time' : 'Tap a building/shophouse/tree, or drag along a road, then ✓ Done';
   txt.innerHTML = `<b>${head}</b><br><span class="tb-sub">${sub}</span>`;
 }
 // Distance from point (x,z) to segment a-b ({x,z}).
@@ -1155,7 +1186,7 @@ function refreshPanel() {
       },
       toggleBulldoze: () => {
         clearAdjustSilently();
-        G.demoSel.clear(); G.demoHover = null;
+        G.demoSel.clear(); G.demoHover = null; G.demoCuts = [];
         G.build.bulldoze = !G.build.bulldoze;
         G.build.selected = null; G.reclaim.active = false; G.view.setPaintMode(false);
         G.road.tool = null; G.view.setRoadMode(false); G.view.showRoadPreview([]);
@@ -1442,14 +1473,15 @@ window.addEventListener('beforeunload', () => { if (!G.readOnly) saveLocal(); })
 
 // Minimal hook for automated tests to drive the place-then-adjust flow directly.
 window.__sg = {
-  onTileTap, rotateAdjust, commitAdjust, findDemoTarget, onDemolishHover, onAdjustRotate, commitDemolish, demoKey,
+  onTileTap, rotateAdjust, commitAdjust, findDemoTarget, onDemolishHover, onDemolishStroke, onAdjustRotate, commitDemolish, demoKey,
   cancelAdjust: (m) => cancelAdjust(m),
   selectBuilding: (k) => { clearAdjustSilently(); G.build.selected = k; G.build.bulldoze = false; if (G.view) G.view.setPreview(k, G.build.theme); updateToolBanner(); },
-  setBulldoze: (on) => { clearAdjustSilently(); G.demoSel.clear(); G.demoHover = null; G.build.selected = null; G.build.bulldoze = !!on; if (G.view) G.view.setBulldoze(!!on); updateToolBanner(); },
+  setBulldoze: (on) => { clearAdjustSilently(); G.demoSel.clear(); G.demoHover = null; G.demoCuts = []; G.build.selected = null; G.build.bulldoze = !!on; if (G.view) G.view.setBulldoze(!!on); updateToolBanner(); },
   selectPlant, selectSurface, setSurfaceScale, toggleFoundation,
   tick: (n = 1) => { for (let i = 0; i < n; i++) tickDay(G.state); if (G.view) { G.view.syncConstruction(G.state); G.view.syncDemolition(G.state); } },
   get adjust() { return G.adjust; },
   get demoSel() { return G.demoSel; },
+  get demoCuts() { return G.demoCuts; },
   get state() { return G.state; },
   get build() { return G.build; },
   get plant() { return G.plant; },

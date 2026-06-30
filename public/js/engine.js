@@ -78,6 +78,7 @@ export function newGame({ name = 'New Singapore', owner = 'Anonymous' } = {}) {
     demolishing: [],          // [x,y] cells whose building is being torn down (timed teardown)
     plants: [],               // individually-placed tropical plants: { x, z, kind, rot, s } in world coords
     surfaces: {},             // painted ground surfaces, sparse: "x,y" -> surface type (cosmetic only)
+    removedTrees: {},         // ambient trees the player bulldozed, sparse: "x,y" -> 1 (so clearings persist)
     landmarks: [],            // 3D-designed landmarks saved into THIS world (per-player; for build menu + visitors)
     projects: [],             // active guided national projects the player is building toward
     projectsDone: [],         // ids of completed national projects
@@ -164,6 +165,7 @@ export function ensureGrid(state) {
   if (!Array.isArray(state.airstrips)) state.airstrips = [];
   if (!Array.isArray(state.plants)) state.plants = [];
   if (!state.surfaces || typeof state.surfaces !== 'object') state.surfaces = {};
+  if (!state.removedTrees || typeof state.removedTrees !== 'object') state.removedTrees = {};
   if (!state.economy) state.economy = { inflation: 0.02, priceIndex: 1, currency: 1 };
   // Rebuild the active-construction & demolition lists from the grid (robust across saves).
   state.constructing = [];
@@ -591,6 +593,109 @@ export function spliceRoad(roads, P, meta) {
     sub.push({ x: B.x, z: B.z });
     if (sub.length >= 2) edges.push({ a: A.node, b: B.node, ctrl: null, poly: sub, type: meta.type, lanes: meta.lanes, elevated: meta.elevated });
   }
+}
+
+// ---------------------------------------------------------------------------
+// Freehand road eraser. Demolishing roads is now a drag, not a whole-edge tap:
+// the player drags a stroke along (or across) the tarmac and ONLY the portion
+// under the brush is removed — any length, any sub-segment. We sample each road's
+// polyline, find the runs within `radius` of the stroke, and split the edge at
+// those run boundaries so the covered pieces become their own edges (which the
+// caller queues for a timed teardown) while the rest of the road stays live.
+// ---------------------------------------------------------------------------
+// Min distance from a world point to a freehand stroke (polyline of {x,z}).
+function _strokeDist(x, z, stroke) {
+  if (stroke.length === 1) return Math.hypot(x - stroke[0].x, z - stroke[0].z);
+  let d = Infinity;
+  for (let i = 0; i < stroke.length - 1; i++) { const pr = _projSeg({ x, z }, stroke[i], stroke[i + 1]); if (pr.d < d) d = pr.d; }
+  return d;
+}
+// Point at arc-length `s` along a polyline `line` (with prefix-sum `arc`).
+function _ptAtArc(line, arc, s) {
+  const total = arc[arc.length - 1];
+  if (s <= 0) return { x: line[0].x, z: line[0].z };
+  if (s >= total) return { x: line[line.length - 1].x, z: line[line.length - 1].z };
+  for (let i = 0; i < line.length - 1; i++) {
+    if (s <= arc[i + 1]) { const t = (s - arc[i]) / Math.max(1e-6, arc[i + 1] - arc[i]); return { x: line[i].x + (line[i + 1].x - line[i].x) * t, z: line[i].z + (line[i + 1].z - line[i].z) * t }; }
+  }
+  return { x: line[line.length - 1].x, z: line[line.length - 1].z };
+}
+// Sub-polyline of `line` between arc lengths s0..s1 (keeps interior vertices).
+function _sliceLine(line, arc, s0, s1) {
+  const out = [_ptAtArc(line, arc, s0)];
+  for (let i = 0; i < line.length; i++) if (arc[i] > s0 + 1e-6 && arc[i] < s1 - 1e-6) out.push({ x: line[i].x, z: line[i].z });
+  out.push(_ptAtArc(line, arc, s1));
+  return out;
+}
+// Walk a road polyline and split it into alternating covered / uncovered runs
+// (a run = { s0, s1, cov }) by sampling the distance to the stroke every ~1 unit.
+function _coverRuns(line, stroke, radius) {
+  const arc = [0]; for (let i = 1; i < line.length; i++) arc.push(arc[i - 1] + Math.hypot(line[i].x - line[i - 1].x, line[i].z - line[i - 1].z));
+  const total = arc[arc.length - 1];
+  if (total < 1e-3) return { arc, total, runs: [] };
+  const nS = Math.max(3, Math.ceil(total) + 1);
+  const flags = [];
+  for (let k = 0; k < nS; k++) { const p = _ptAtArc(line, arc, total * k / (nS - 1)); flags.push(_strokeDist(p.x, p.z, stroke) <= radius); }
+  const bounds = [0], cov = [flags[0]];
+  for (let k = 1; k < nS; k++) if (flags[k] !== flags[k - 1]) { bounds.push(total * (k - 0.5) / (nS - 1)); cov.push(flags[k]); }
+  bounds.push(total);
+  const runs = []; for (let i = 0; i < cov.length; i++) runs.push({ s0: bounds[i], s1: bounds[i + 1], cov: cov[i] });
+  return { arc, total, runs };
+}
+// PREVIEW only: the covered road sub-polylines (no mutation) for the red highlight.
+export function roadEraseCover(roads, stroke, radius = 4) {
+  const out = [];
+  if (!roads || !roads.edges || !stroke || !stroke.length) return out;
+  const S = stroke.length >= 2 ? stroke : [stroke[0], { x: stroke[0].x + 0.01, z: stroke[0].z + 0.01 }];
+  let minX = Infinity, minZ = Infinity, maxX = -Infinity, maxZ = -Infinity;
+  for (const p of S) { minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x); minZ = Math.min(minZ, p.z); maxZ = Math.max(maxZ, p.z); }
+  minX -= radius + 4; minZ -= radius + 4; maxX += radius + 4; maxZ += radius + 4;
+  for (const e of roads.edges) {
+    if (!e || e.demolish) continue;
+    const line = _edgeLine(roads, e); if (line.length < 2) continue;
+    let exmin = Infinity, exmax = -Infinity, ezmin = Infinity, ezmax = -Infinity;
+    for (const p of line) { exmin = Math.min(exmin, p.x); exmax = Math.max(exmax, p.x); ezmin = Math.min(ezmin, p.z); ezmax = Math.max(ezmax, p.z); }
+    if (exmax < minX || exmin > maxX || ezmax < minZ || ezmin > maxZ) continue;
+    const { arc, runs } = _coverRuns(line, S, radius);
+    for (const r of runs) if (r.cov) out.push(_sliceLine(line, arc, r.s0, r.s1));
+  }
+  return out;
+}
+// COMMIT: split every road the stroke covers and return the covered pieces (now
+// live edges in roads.edges) so the caller can queue them for a timed teardown.
+export function eraseRoadsAlong(roads, stroke, radius = 4) {
+  if (!roads || !roads.edges || !stroke || !stroke.length) return [];
+  const S = stroke.length >= 2 ? stroke : [stroke[0], { x: stroke[0].x + 0.01, z: stroke[0].z + 0.01 }];
+  let minX = Infinity, minZ = Infinity, maxX = -Infinity, maxZ = -Infinity;
+  for (const p of S) { minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x); minZ = Math.min(minZ, p.z); maxZ = Math.max(maxZ, p.z); }
+  minX -= radius + 4; minZ -= radius + 4; maxX += radius + 4; maxZ += radius + 4;
+  const nodes = roads.nodes;
+  const nodeAt = (x, z) => { for (let i = 0; i < nodes.length; i++) { const n = nodes[i]; if (Math.hypot(n.x - x, n.z - z) < 1.0) return i; } nodes.push({ x, z, y: 0 }); return nodes.length - 1; };
+  const newEdges = [], cut = [];
+  for (const e of roads.edges) {
+    if (!e || e.demolish) { newEdges.push(e); continue; }
+    const line = _edgeLine(roads, e); if (line.length < 2) { newEdges.push(e); continue; }
+    let exmin = Infinity, exmax = -Infinity, ezmin = Infinity, ezmax = -Infinity;
+    for (const p of line) { exmin = Math.min(exmin, p.x); exmax = Math.max(exmax, p.x); ezmin = Math.min(ezmin, p.z); ezmax = Math.max(ezmax, p.z); }
+    if (exmax < minX || exmin > maxX || ezmax < minZ || ezmin > maxZ) { newEdges.push(e); continue; }
+    const { arc, total, runs } = _coverRuns(line, S, radius);
+    if (!runs.some((r) => r.cov)) { newEdges.push(e); continue; }     // stroke missed this road
+    const straight = !(e.poly && e.poly.length >= 2) && !e.ctrl;
+    const A = roads.nodes[e.a], B = roads.nodes[e.b];
+    const stops = [{ x: A.x, z: A.z, node: e.a }];
+    for (let i = 1; i < runs.length; i++) { const p = _ptAtArc(line, arc, runs[i].s0); stops.push({ x: p.x, z: p.z, node: nodeAt(p.x, p.z) }); }
+    stops.push({ x: B.x, z: B.z, node: e.b });
+    for (let i = 0; i < runs.length; i++) {
+      const s = stops[i], t = stops[i + 1]; if (s.node === t.node) continue;   // degenerate sliver
+      const piece = { a: s.node, b: t.node, ctrl: null, type: e.type, lanes: e.lanes, elevated: e.elevated };
+      if (e.traced) piece.traced = true; if (e.oneway) piece.oneway = e.oneway; if (e.roadClass != null) piece.roadClass = e.roadClass;
+      if (!straight) piece.poly = _sliceLine(line, arc, runs[i].s0, runs[i].s1);
+      newEdges.push(piece);
+      if (runs[i].cov) cut.push(piece);
+    }
+  }
+  roads.edges = newEdges;
+  return cut;
 }
 
 // Advance route construction; finished routes become real roads/railways.

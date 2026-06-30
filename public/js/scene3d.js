@@ -154,11 +154,12 @@ const AIRPORT = {
 };
 
 export class Scene3D {
-  constructor(canvas, { onTileTap, onGroundTap, onDemolishHover, onAdjustRotate } = {}) {
+  constructor(canvas, { onTileTap, onGroundTap, onDemolishHover, onDemolishStroke, onAdjustRotate } = {}) {
     this.canvas = canvas;
     this.onTileTap = onTileTap;
     this.onGroundTap = onGroundTap;       // freeform road drawing taps
     this.onDemolishHover = onDemolishHover; // cursor moved in Demolish mode -> classify+highlight target
+    this.onDemolishStroke = onDemolishStroke; // dragged a freehand stroke in Demolish mode -> mark roads under it
     this.onAdjustRotate = onAdjustRotate;   // drag-rotated the pending building -> sync angle to UI
     this.roadMode = false;
     this.edgePts = []; this.edgeLen = []; this.edgeMeta = []; this.edgeN1 = []; this.edgeN2 = []; this.edgeMid = []; this.navAdj = []; this.navNodes = [];
@@ -775,6 +776,7 @@ export class Scene3D {
     const carves = this._carves || [];
     for (const [key, g] of this.natureCells) {
       const [x, y] = key.split(',').map(Number);
+      if (this._removedTrees && this._removedTrees.has(key)) { g.visible = false; continue; } // bulldozed by the player
       if (this.state?.grid?.[y]?.[x]) { g.visible = false; continue; }   // hidden under a building
       // a railway cutting / runway pad excavated this spot — clear the trees that were on the hill
       const c = cellToWorld(x, y);
@@ -787,6 +789,20 @@ export class Scene3D {
       g.visible = !inCut;
       if (g.visible) g.position.y = this.terrainHeight(x, y);   // re-settle onto the (possibly re-cut) terrain
     }
+  }
+  // Is there a visible ambient tree clump on this cell (so the Demolish tool can target it)?
+  hasTreeAt(gx, gy) { const g = this.natureCells && this.natureCells.get(gx + ',' + gy); return !!(g && g.visible); }
+  // Bulldoze the ambient trees on a cell: hide them, remember it (persisted in state
+  // so the clearing survives saves), and puff a little leaf-dust.
+  removeTreeAt(gx, gy) {
+    const key = gx + ',' + gy;
+    const g = this.natureCells && this.natureCells.get(key); if (!g) return false;
+    this._tintObjectRed(g, false);          // drop any red selection tint before hiding
+    g.visible = false;
+    (this._removedTrees || (this._removedTrees = new Set())).add(key);
+    if (this.state) { (this.state.removedTrees || (this.state.removedTrees = {}))[key] = 1; }
+    const c = cellToWorld(gx, gy); this._spawnDust(c.x, c.z, 0x4a6b32, 18);
+    return true;
   }
 
   // Singapore (Paya Lebar) Airport: a straight ~N–S runway in the east, a
@@ -1085,6 +1101,15 @@ export class Scene3D {
   }
   // The name of the 1965 heritage building on a cell (for the inspect tooltip).
   heritageAt(x, y) { return this.heritageInfo ? this.heritageInfo.get(`${x},${y}`) : null; }
+  // A demolish label for ANY prebuilt heritage on a cell — named landmark OR a
+  // decorative town shophouse (which only lives in heritageMask/_shopMask). Returns
+  // a string, or null if there's nothing prebuilt here.
+  heritageLabelAt(x, y) {
+    const info = this.heritageInfo && this.heritageInfo.get(`${x},${y}`);
+    if (info) return typeof info === 'string' ? info : (info.name || 'Heritage building');
+    if (this.heritageMask?.[y]?.[x]) return (this._shopMask?.[y]?.[x]) ? 'Old shophouse' : 'Heritage building';
+    return null;
+  }
   // Fill the 1966 urban districts with a dense mass of small shophouse blocks — the
   // packed, fine-grained low-rise town the survey map shows. These are decorative
   // (rendered as two instanced meshes for the whole town, so it's just a couple of
@@ -1238,6 +1263,8 @@ export class Scene3D {
       if (this.heritageMask && this.heritageMask[cy]) this.heritageMask[cy][cx] = false;
       if (this._shopMask && this._shopMask[cy]) this._shopMask[cy][cx] = 0;
       if (this.heritageInfo) this.heritageInfo.delete(`${cx},${cy}`);
+      const row = this.state && this.state.grid && this.state.grid[cy];   // free the seeded grid cell (named landmarks)
+      if (row && row[cx] && row[cx].heritage) row[cx] = null;
     }
     this.heritagePlacements.splice(i, 1);
     const c = cellToWorld(p.gx, p.gy); this._spawnDust(c.x, c.z, 0xbfb09a, 26);
@@ -1549,6 +1576,14 @@ export class Scene3D {
       if (this.paintMode && this.onPaint && !this._panDrag && this._pointers.size === 1) {
         this._painting = true; this._paintSeen = new Set(); this._paintAt(pos(e));
       }
+      // demolish mode: a DRAG traces a freehand stroke that marks the roads under it
+      // (like drawing a road, in reverse). A plain TAP still falls through to toggle a
+      // building / heritage / tree under the cursor.
+      if (this.bulldoze && this.onDemolishStroke && !this._panDrag && this._pointers.size === 1) {
+        const g = this._raycastGround(pos(e));
+        this._demoDrawing = true; this._demoStroke = g ? [{ x: g.x, z: g.z }] : [];
+        this._lastSamplePx = pos(e);
+      }
       // Sims-style rotate: grabbing the pending building and dragging swivels it to
       // face the cursor (instead of orbiting the camera). Only when pressing on it.
       this._rotDrag = false;
@@ -1586,6 +1621,18 @@ export class Scene3D {
           }
           // ALWAYS draw the line right up to the cursor so there's zero lag/direction delay
           this._renderDrawPreview(this._stroke.concat([{ x: g.x, z: g.z }]));
+        }
+        return;
+      }
+      if (this._demoDrawing) {                              // drag traces a freehand demolish stroke over roads
+        const g = this._raycastGround(p);
+        if (g) {
+          const lp = this._lastSamplePx;
+          if (!lp || Math.hypot(p.x - lp.x, p.y - lp.y) > 5) {
+            const last = this._demoStroke[this._demoStroke.length - 1];
+            if (!last || Math.hypot(g.x - last.x, g.z - last.z) > 0.3) { this._demoStroke.push({ x: g.x, z: g.z }); this._lastSamplePx = p; }
+          }
+          if (this._moved) this._renderDemoStrokePreview(this._demoStroke.concat([{ x: g.x, z: g.z }]));
         }
         return;
       }
@@ -1630,6 +1677,19 @@ export class Scene3D {
         if (this._pointers.size === 0) this._panDrag = false;
         return;
       }
+      if (this._demoDrawing) {                 // finish a freehand demolish stroke
+        const stroke = this._demoStroke;
+        this._demoDrawing = false; this._demoStroke = null; this._clearDemoStrokePreview();
+        if (this._moved && stroke && stroke.length >= 1) {
+          const g = this._raycastGround(p); if (g) stroke.push({ x: g.x, z: g.z });
+          this._pointers.delete(e.pointerId);
+          if (this._pointers.size < 2) { this._lastPinch = 0; this._lastMid = null; }
+          if (this._pointers.size === 0) this._panDrag = false;
+          if (this.onDemolishStroke) this.onDemolishStroke(stroke);
+          return;
+        }
+        // not a real drag -> fall through to the tap path below (toggle the object under the cursor)
+      }
       const quick = performance.now() - this._downTime < 400;
       if (!this._moved && quick && this._pointers.size <= 1 && !wasRot) {
         if (this.pieceMode && this.onPieceChain) {           // stage a Lego piece into the pending chain
@@ -1654,7 +1714,7 @@ export class Scene3D {
     };
     c.addEventListener('pointerup', end);
     c.addEventListener('pointercancel', end);
-    c.addEventListener('pointerleave', () => { if (this.ghost) this.ghost.visible = false; this._hideHoverTile(); if (this.bulldoze && this.onDemolishHover) this.onDemolishHover(null, null); this._clearSnapMarker(); this._hideDrawCursor(); if (this.pieceMode) this.clearRoadPreview(); });
+    c.addEventListener('pointerleave', () => { if (this.ghost) this.ghost.visible = false; this._hideHoverTile(); if (this.bulldoze && this.onDemolishHover) this.onDemolishHover(null, null); if (this._demoDrawing) { this._demoDrawing = false; this._demoStroke = null; this._clearDemoStrokePreview(); } this._clearSnapMarker(); this._hideDrawCursor(); if (this.pieceMode) this.clearRoadPreview(); });
     c.addEventListener('wheel', (e) => {
       e.preventDefault();
       this.cam.radius = THREE.MathUtils.clamp(this.cam.radius * (e.deltaY < 0 ? 0.92 : 1.08), this.MIN_R, this.MAX_R);
@@ -2110,30 +2170,42 @@ export class Scene3D {
   }
   clearDemoSelection() { this.demoSetSelection([]); }
   _demoShow(t) {
-    if (t.kind === 'building') this._setBuildingRed(t.x, t.y, true);
-    else if (t.kind === 'heritage') this._demoTile(t.key, t.x, t.y, true);
-    else this._demoRibbon(t.key, t.poly, true);
+    if (t.kind === 'building') this._tintObjectRed(this._buildingGroup(t.x, t.y), true);
+    else if (t.kind === 'heritage') { const m = this._heritageMeshAt(t.x, t.y); if (m) this._tintObjectRed(m, true); else this._demoTile(t.key, t.x, t.y, true); }
+    else if (t.kind === 'tree') this._tintObjectRed(this.natureCells && this.natureCells.get(`${t.x},${t.y}`), true);
+    else this._demoRibbon(t.key, t.poly, true);   // road cut / rail / runway ribbon
   }
   _demoUnshow(t) {
-    if (t.kind === 'building') this._setBuildingRed(t.x, t.y, false);
-    else if (t.kind === 'heritage') this._demoTile(t.key, null, null, false);
+    if (t.kind === 'building') this._tintObjectRed(this._buildingGroup(t.x, t.y), false);
+    else if (t.kind === 'heritage') { const m = this._heritageMeshAt(t.x, t.y); if (m) this._tintObjectRed(m, false); else this._demoTile(t.key, null, null, false); }
+    else if (t.kind === 'tree') this._tintObjectRed(this.natureCells && this.natureCells.get(`${t.x},${t.y}`), false);
     else this._demoRibbon(t.key, null, false);
   }
-  // Reversibly tint a placed building's whole mesh red (clones materials once,
-  // stashing the originals so it can be restored when deselected).
-  _setBuildingRed(x, y, on) {
-    const e = this.buildings.get(`${x},${y}`); if (!e || !e.group) return;
-    e.group.traverse((o) => {
+  _buildingGroup(x, y) { const e = this.buildings.get(`${x},${y}`); return e && e.group; }
+  // The 3D mesh of the prebuilt heritage landmark (shophouse/kampong) covering a cell.
+  _heritageMeshAt(gx, gy) {
+    if (!this.heritagePlacements) return null;
+    const p = this.heritagePlacements.find((pl) => (pl.gx === gx && pl.gy === gy) || (pl.cells && pl.cells.some(([cx, cy]) => cx === gx && cy === gy)));
+    return p ? (p.mesh || null) : null;
+  }
+  // Reversibly tint ANY object group's whole mesh red so the player can SEE what's
+  // selected for demolition — works for placed buildings, prebuilt heritage shophouses
+  // and ambient trees alike. Clones each material once, stashing the original so it can
+  // be restored on deselect.
+  _tintObjectRed(group, on) {
+    if (!group) return;
+    const redden = (mat) => { if (!mat) return mat; const c = mat.clone(); if (c.color) c.color.setHex(0xe23b2a); if (c.emissive) c.emissive.setHex(0x3a0a06); return c; };
+    group.traverse((o) => {
       if (!o.material) return;
       if (on) {
-        if (!o.userData._origMat) { o.userData._origMat = o.material; o.material = o.material.clone(); }
-        if (o.material.color) o.material.color.setHex(0xe23b2a);
-        if (o.material.emissive) o.material.emissive.setHex(0x3a0a06);
+        if (!o.userData._origMat) { o.userData._origMat = o.material; o.material = Array.isArray(o.material) ? o.material.map(redden) : redden(o.material); }
       } else if (o.userData._origMat) {
         o.material = o.userData._origMat; o.userData._origMat = null;
       }
     });
   }
+  // Back-compat shim for the timed-teardown animation (operates by cell on placed buildings).
+  _setBuildingRed(x, y, on) { this._tintObjectRed(this._buildingGroup(x, y), on); }
   _demoRibbon(key, poly, on) {
     if (!this._demoRibbons) { this._demoRibbons = new Map(); this._demoRibbonGroup = new THREE.Group(); this.scene.add(this._demoRibbonGroup); }
     const existing = this._demoRibbons.get(key);
@@ -2153,6 +2225,19 @@ export class Scene3D {
       new THREE.MeshBasicMaterial({ color: 0xff4632, transparent: true, opacity: 0.42, depthWrite: false }));
     m.rotation.x = -Math.PI / 2; const c = cellToWorld(x, y); m.position.set(c.x, this.terrainHeight(x, y) + 0.16, c.z);
     this._demoTileGroup.add(m); this._demoTiles.set(key, m);
+  }
+  // Live red trail under the cursor while dragging a freehand demolish stroke over roads.
+  _renderDemoStrokePreview(pts) {
+    if (!pts || pts.length < 2) return;
+    if (!this._demoStrokeGroup) { this._demoStrokeGroup = new THREE.Group(); this.scene.add(this._demoStrokeGroup); }
+    this._clearDemoStrokePreview();
+    const v = pts.map((p) => new THREE.Vector3(p.x, this._heightAt(p.x, p.z) + 0.6, p.z));
+    const geo = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(v), Math.max(6, v.length * 2), 1.7, 7, false);
+    const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0xff4632, transparent: true, opacity: 0.5, depthTest: false }));
+    m.renderOrder = 8; this._demoStrokeGroup.add(m); this._demoStrokeMesh = m;
+  }
+  _clearDemoStrokePreview() {
+    if (this._demoStrokeMesh && this._demoStrokeGroup) { this._demoStrokeGroup.remove(this._demoStrokeMesh); this._demoStrokeMesh.geometry.dispose(); this._demoStrokeMesh = null; }
   }
   // Advance the visible teardown of buildings (red + shrinking with progress) and
   // pop them when the engine finishes the demolition; rebuild infra once when the
@@ -2554,7 +2639,9 @@ export class Scene3D {
     return g;
   }
   // ---- external API (mirrors the 2D view) ----------------------------------
-  setState(state) { this.state = state; this.rebuildRoadNet(); this._relocateHeritageOffRoads(); this.applyHeritageToGrid(state); this._syncReclaimed(); this.syncAll(); this._buildPlayerRailways(state); this._buildPlayerAirstrips(state); this.syncRoadworks(state); this._buildPlayerPlants(state); this._syncSurfaces(state); this.refreshFoundationCarves(); }
+  setState(state) { this.state = state; this._loadRemovedTrees(state); this.rebuildRoadNet(); this._relocateHeritageOffRoads(); this.applyHeritageToGrid(state); this._syncReclaimed(); this.syncAll(); this._buildPlayerRailways(state); this._buildPlayerAirstrips(state); this.syncRoadworks(state); this._buildPlayerPlants(state); this._syncSurfaces(state); this.refreshFoundationCarves(); }
+  // Restore which ambient trees the player has bulldozed (so they stay gone across saves).
+  _loadRemovedTrees(state) { this._removedTrees = new Set(Object.keys((state && state.removedTrees) || {})); }
   setShortages(s) { this.shortages = s; }
   setPreview(key, theme) {
     this.previewKey = key; this.previewTheme = theme; this.bulldoze = false;
@@ -2566,7 +2653,7 @@ export class Scene3D {
   setBulldoze(on) {
     this.bulldoze = on; this.previewKey = null;
     this._makeGhost(null);
-    if (!on) { this._hideHoverTile(); this.clearDemoSelection(); }   // leaving Demolish clears all red highlights
+    if (!on) { this._hideHoverTile(); this.clearDemoSelection(); this._demoDrawing = false; this._demoStroke = null; this._clearDemoStrokePreview(); }   // leaving Demolish clears all red highlights
   }
 
   _makeGhost(key) {

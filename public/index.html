@@ -117,6 +117,16 @@
   <!-- ===================== TOAST ===================== -->
   <div id="toast" class="toast hidden"></div>
 
+  <!-- Loading overlay — shown while a new game seeds and the 3D scene (terrain +
+       the dense 1966 road network) is built, so the player knows it's working. -->
+  <div id="loading" class="loading hidden" aria-live="polite">
+    <div class="loading-card">
+      <div class="loading-spinner" aria-hidden="true"></div>
+      <div class="loading-title">Building your Singapore</div>
+      <div id="loading-msg" class="loading-msg">Laying out the island…</div>
+    </div>
+  </div>
+
   <!-- Active placement tool indicator — shows while building/reclaiming so you
        always know you're in "place mode", with a clear way to stop. -->
   <div id="tool-banner" class="tool-banner hidden">

@@ -158,6 +158,9 @@ function boot() {
   const m = location.pathname.match(/^\/world\/([\w-]+)/);
   if (m) { showGameShell(false); visitWorld(m[1]); }
 
+  // If a New Game reloaded the page to pick up a base-map edit, show the loading
+  // overlay straight away so the menu doesn't flash before the game resumes.
+  try { if (sessionStorage.getItem('sg-newgame')) showLoading('Building the 3D city…'); } catch {}
   // Record the base-map signature; and if a New Game reloaded the page to pick up
   // a coast/reservoir/sands edit, resume that New Game now that the scene is fresh.
   fetchMapSig().then((s) => {
@@ -218,6 +221,17 @@ function reportSceneError(err) {
   box.onclick = () => box.remove();
 }
 
+// ---- loading overlay -------------------------------------------------------
+// Building a new game seeds the state and (re)builds the 3D scene — terrain plus
+// the dense 1966 road network — which blocks for a moment. Show an overlay so the
+// player sees it's working instead of a frozen menu.
+function showLoading(msg) { const el = $('loading'); if (!el) return; setLoadingMsg(msg || 'Laying out the island…'); el.classList.remove('hidden', 'fade'); }
+function setLoadingMsg(msg) { const m = $('loading-msg'); if (m && msg) m.textContent = msg; }
+function hideLoading() { const el = $('loading'); if (!el) return; el.classList.add('fade'); setTimeout(() => el.classList.add('hidden'), 380); }
+// Resolve only after the browser has actually painted (double rAF), so an overlay
+// shown right before heavy synchronous work is visible while that work runs.
+const nextPaint = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+
 function showGameShell(playing = true) {
   $('menu').classList.add('hidden');
   $('game').classList.remove('hidden');
@@ -256,6 +270,8 @@ async function startNew() {
   const name = $('m-nation').value.trim() || 'New Singapura';
   const owner = $('m-owner').value.trim() || 'Anonymous';
   localStorage.setItem(LS_NAME, owner);
+  showLoading('Seeding 1965 Singapore…');
+  await nextPaint();                       // let the overlay paint before the heavy work
   // Pull the freshest base map before seeding, so a road edit saved via the tracer
   // ("Save to map") shows up in this new game without needing a browser reload.
   // First-ever game also builds Scene3D after this, so its mask/decor are fresh too.
@@ -265,34 +281,44 @@ async function startNew() {
   // rebuild the scene cleanly, resuming this New Game right after (see boot()).
   const sig = await fetchMapSig();
   if (mapSig !== null && sig && sig !== mapSig) {
+    setLoadingMsg('Updating the base map…');
     try { sessionStorage.setItem('sg-newgame', JSON.stringify({ name, owner })); } catch {}
-    location.reload(); return;
+    location.reload(); return;             // overlay stays up; boot() resumes with it on reload
   }
   G.state = newGame({ name, owner });
   G.cloud = null;
   G.readOnly = false;
   G.dirty = true;
   $('visit-banner').classList.add('hidden');
+  setLoadingMsg('Building the 3D city…');
+  await nextPaint();
   showGameShell();
+  await nextPaint();                       // tick the spinner between the two heavy steps
   attachState();
   saveLocal();
+  hideLoading();
   toast('A new nation is born. 🇸🇬');
   // Start on the clean map (no build sheet) so the player sees the whole island first.
 }
 
-function continueGame() {
+async function continueGame() {
   const raw = localStorage.getItem(LS_SAVE);
   if (!raw) return;
   try {
     const data = JSON.parse(raw);
+    showLoading('Loading your saved nation…');
+    await nextPaint();
     G.state = data.state;
     G.cloud = data.cloud || null;
     G.readOnly = false;
     $('visit-banner').classList.add('hidden');
     showGameShell();
+    await nextPaint();
     attachState();
+    hideLoading();
     toast('Welcome back, Prime Minister.');
   } catch {
+    hideLoading();
     toast('Could not load saved game.');
   }
 }

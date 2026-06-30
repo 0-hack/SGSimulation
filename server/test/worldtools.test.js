@@ -11,7 +11,15 @@ try {
   await p.setViewport({ width: 520, height: 880, isMobile: true, hasTouch: true });
   const errs = []; p.on('pageerror', e => errs.push(e.message)); p.on('console', m => { if (m.type() === 'error') errs.push(m.text()); });
   await p.goto(base, { waitUntil: 'networkidle0' });
-  await p.click('#btn-new'); await p.waitForSelector('#game:not(.hidden)');
+  // loading overlay should exist and start hidden, appear during New Game, then hide
+  const loadStart = await p.evaluate(() => { const el = document.getElementById('loading'); return !!el && el.classList.contains('hidden'); });
+  await p.click('#btn-new');
+  const loadShown = await p.waitForFunction(() => !document.getElementById('loading').classList.contains('hidden'), { timeout: 5000 }).then(() => true).catch(() => false);
+  await p.waitForSelector('#game:not(.hidden)');
+  const loadHidden = await p.waitForFunction(() => document.getElementById('loading').classList.contains('hidden'), { timeout: 8000 }).then(() => true).catch(() => false);
+  ok(loadStart, 'loading overlay exists and starts hidden');
+  ok(loadShown, 'clicking New Game shows the loading overlay (so you know it\'s working)');
+  ok(loadHidden, 'the overlay clears once the game is ready');
 
   // ---- PLANTS: place, render, remove --------------------------------------
   const pl = await p.evaluate(() => {

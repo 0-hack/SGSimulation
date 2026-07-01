@@ -627,11 +627,11 @@ export const POLICIES = {
   },
   cpf: {
     name: 'CPF Savings Scheme', type: 'level', year: 1968, icon: '🏦',
-    desc: 'Compulsory savings for housing, health and retirement.',
+    desc: 'Compulsory savings for housing, health and retirement. As the nation ages, CPF is what lets the elderly fund their own retirement instead of leaning on the treasury.',
     options: [
       { id: 'off', label: 'Disabled', fx: {} },
-      { id: 'mod', label: 'Moderate', fx: { housingAfford: 0.12, approval: 3, growth: 0.02 } },
-      { id: 'high', label: 'High Contribution', fx: { housingAfford: 0.22, approval: -2, growth: 0.03, taxMult: 0.1 } },
+      { id: 'mod', label: 'Moderate', fx: { housingAfford: 0.12, approval: 3, growth: 0.02, cpfRetire: 0.5 } },
+      { id: 'high', label: 'High Contribution', fx: { housingAfford: 0.22, approval: -2, growth: 0.03, taxMult: 0.1, cpfRetire: 0.8 } },
     ],
     default: 'off',
   },

@@ -296,6 +296,10 @@ export function renderDash(state, ctx = {}) {
   const d = derive(state);
   const wrap = el('div');
   const popReal = state.population * POP_SCALE;
+  const workPct = state.population > 0 ? Math.round(d.working / state.population * 100) : 0;
+  const oldPct = state.population > 0 ? Math.round(d.elderly / state.population * 100) : 0;
+  const youngPct = Math.max(0, 100 - workPct - oldPct);
+  const dep = (d.dependency || 0).toFixed(2);
   const occ = Math.round(d.housingPressure * 100);           // people per 100 homes
   const emp = (1 - d.unemployment) * 100;
   const infl = inflationRate(state) * 100;
@@ -315,6 +319,12 @@ export function renderDash(state, ctx = {}) {
       { valStyle: `color:${occ <= 100 ? 'var(--good)' : 'var(--bad)'};font-size:16px` }),
     metric('💼 Jobs', num(d.jobs), `${pct(emp)} employed`,
       'Jobs your port, factories, godowns, shops and offices provide. Employed workers earn wages and pay income tax. Too few jobs for the workforce means unemployment — build industry, trade and services to create work.'),
+    metric('🧑‍🤝‍🧑 Working age', `${workPct}%`, `${youngPct}% young · ${oldPct}% elderly`,
+      'The share of the nation of working age — this IS your workforce and tax base. Cohorts age over the decades: births (set by Family Planning policy) feed the young, migrants (Immigration policy) top up the working-age, and better healthcare lengthens old age. An ageing nation has fewer workers supporting more people.',
+      { bar: bar(workPct, workPct >= 58 ? 'var(--good)' : workPct >= 48 ? 'var(--warn)' : 'var(--bad)'), valStyle: `color:${workPct >= 58 ? 'var(--good)' : workPct >= 48 ? 'var(--warn)' : 'var(--bad)'}` }),
+    metric('🧓 Old-age support', `${dep} : 1`, oldPct >= 18 ? 'ageing society' : oldPct >= 9 ? 'maturing' : 'young nation',
+      'Dependents (children + elderly) each worker must support. As the nation greys this climbs, straining pensions and healthcare — costs the treasury bears unless CPF lets people fund their own retirement. Keep it low with births, immigration, and by growing the economy faster than it ages.',
+      { bar: bar(Math.min(100, (d.dependency || 0.6) * 55), (d.dependency || 0.6) <= 0.7 ? 'var(--good)' : (d.dependency || 0.6) <= 1 ? 'var(--warn)' : 'var(--bad)') }),
   ]));
 
   // ---- SUPPLY CHAIN (resources the city needs) -----------------------------
@@ -383,8 +393,9 @@ export function renderDash(state, ctx = {}) {
     ledger.append(row('Income tax', f.incomeTax, 'pos'));
     if (f.gst > 0) ledger.append(row('GST', f.gst, 'pos'));
     ledger.append(row('Business & trade', f.business, 'pos'));
-    const svc = f.upkeep - (f.interest || 0);
+    const svc = f.upkeep - (f.interest || 0) - (f.social || 0);
     ledger.append(row('Upkeep & services', -svc, 'neg'));
+    if (f.social > 0.05) ledger.append(row('Pensions & elder care', -f.social, 'neg'));
     if (f.interest > 0.005) ledger.append(row('Bond interest', -f.interest, 'neg'));
     const net = el('div', 'row');
     net.style.cssText = 'border-top:1px solid var(--line);padding-top:5px;font-weight:800';

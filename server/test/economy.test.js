@@ -104,6 +104,47 @@ try {
   ok(fire.lit && fire.cleared, 'a fire that is not doused burns the building down (removed from the map & economy)');
   ok(fire.cost > 0 && fire.approvalDropped && fire.logged, `the blaze costs an emergency response ($${fire.cost}M), dents approval, and makes the news`);
 
+  // ---- Age-structured population, driven by POLICY ---------------------------
+  const demo = await p.evaluate(() => {
+    const st = window.__sg.state;
+    const c0 = st.cohorts, sumOk = Math.abs((c0.young + c0.work + c0.old) - st.population) < 2;
+    const startWorkPct = c0.work / st.population * 100, startOldPct = c0.old / st.population * 100;
+    const snap = () => ({ y: st.cohorts.young, w: st.cohorts.work, o: st.cohorts.old, p: st.population, h: st.health, pol: { ...st.policies }, date: { ...st.date }, gb: st.growthBuf });
+    const restore = (s) => { st.cohorts = { young: s.y, work: s.w, old: s.o }; st.population = s.p; st.health = s.h; st.policies = { ...s.pol }; st.date = { ...s.date }; st.growthBuf = s.gb; };
+    const base = snap();
+
+    // Family Planning (from 1972): "Have Three" grows the young, "Stop at Two" shrinks it
+    st.date = { y: 1975, m: 6, d: 1 }; st.policies.family_policy = 'three'; window.__sg.tick(365 * 2); const yThree = st.cohorts.young; restore(base);
+    st.date = { y: 1975, m: 6, d: 1 }; st.policies.family_policy = 'stop2'; window.__sg.tick(365 * 2); const yStop2 = st.cohorts.young; restore(base);
+
+    // Immigration (with housing room): "Open Doors" grows the working-age faster than "Strict"
+    const room = () => { st.population = 30000; st.cohorts = { young: 9000, work: 18000, old: 3000 }; st.date = { y: 1975, m: 6, d: 1 }; };
+    room(); st.policies.immigration = 'open'; window.__sg.tick(365 * 2); const wOpen = st.cohorts.work; restore(base);
+    room(); st.policies.immigration = 'strict'; window.__sg.tick(365 * 2); const wStrict = st.cohorts.work; restore(base);
+
+    // CPF (from 1968): on an aged society, high contribution self-funds retirement → smaller pension bill
+    const aged = () => { st.population = 45000; st.cohorts = { young: 10000, work: 20000, old: 15000 }; st.date = { y: 1980, m: 6, d: 1 }; };
+    aged(); st.policies.cpf = 'off'; window.__sg.tick(31); const socOff = st.lastFinance.social; restore(base);
+    aged(); st.policies.cpf = 'high'; window.__sg.tick(31); const socHigh = st.lastFinance.social; restore(base);
+
+    // Long run: decades of low births + closed borders greys the nation
+    st.policies.family_policy = 'stop2'; st.policies.immigration = 'strict'; window.__sg.tick(365 * 22);
+    const agedOldPct = st.cohorts.old / st.population * 100, agedWorkPct = st.cohorts.work / st.population * 100, agedDep = window.__sg.derive().dependency;
+
+    return {
+      sumOk, startWorkPct: +startWorkPct.toFixed(0), startOldPct: +startOldPct.toFixed(0),
+      yThree: Math.round(yThree), yStop2: Math.round(yStop2), wOpen: Math.round(wOpen), wStrict: Math.round(wStrict),
+      socOff: +socOff.toFixed(1), socHigh: +socHigh.toFixed(1),
+      agedOldPct: +agedOldPct.toFixed(0), agedWorkPct: +agedWorkPct.toFixed(0), agedDep: +agedDep.toFixed(2),
+    };
+  });
+  ok(demo.sumOk && demo.startWorkPct >= 58 && demo.startOldPct <= 6, `1965 opens as a young nation — cohorts sum to the population (${demo.startWorkPct}% working, ${demo.startOldPct}% elderly)`);
+  ok(demo.yThree > demo.yStop2 + 500, `Family Planning bites: "Have Three" grows the young vs "Stop at Two" (${demo.yThree} vs ${demo.yStop2})`);
+  ok(demo.wOpen > demo.wStrict + 200, `Immigration bites: "Open Doors" grows the working-age vs "Strict" (${demo.wOpen} vs ${demo.wStrict})`);
+  ok(demo.socHigh < demo.socOff - 5, `CPF bites: high contribution shrinks the state pension bill ($${demo.socOff}M → $${demo.socHigh}M)`);
+  ok(demo.agedOldPct > demo.startOldPct + 8 && demo.agedWorkPct < demo.startWorkPct - 8 && demo.agedDep > 0.85,
+    `decades of low births + closed borders grey the nation (elderly ${demo.startOldPct}%→${demo.agedOldPct}%, working ${demo.startWorkPct}%→${demo.agedWorkPct}%, dependency ${demo.agedDep})`);
+
   // ---- WHERE you build matters: local service access & industrial blight ------
   const cov = await p.evaluate(() => {
     const st = window.__sg.state, D = () => window.__sg.derive();

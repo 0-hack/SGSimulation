@@ -57,6 +57,14 @@ export function newGame({ name = 'New Singapore', owner = 'Anonymous' } = {}) {
     // pressing problem of 1965 — and the labour force outnumbers the jobs the young
     // economy offers (~11% unemployment). The player grows the nation out of both.
     population: 51500,
+    // Age structure. 1965 Singapore was a strikingly YOUNG society — a post-war baby
+    // boom, few elderly — with a wide working-age base. Cohorts age over the decades:
+    // births feed the young (family policy), migrants top up the working-age
+    // (immigration policy), and the elderly grow as healthcare lengthens lives —
+    // driving pension & healthcare costs (softened by CPF). The working cohort IS
+    // the workforce, so an ageing nation faces a shrinking tax base.
+    cohorts: { young: 18025, work: 31930, old: 1545 },   // 35% / 62% / 3% of 51,500
+
     approval: 58,
     education: 20,
     health: 25,
@@ -156,6 +164,8 @@ export function ensureGrid(state) {
   unpackState(state); // expand a sparse-saved grid back to the dense 2D array
   if (typeof state.debt !== 'number') state.debt = 0;
   if (!state.climate) state.climate = { water: 1, heat: 0.3 };
+  // Older saves stored population as one number — split it into age cohorts once.
+  if (!state.cohorts) { const P = state.population || 0; state.cohorts = { young: Math.round(P * 0.30), work: Math.round(P * 0.63), old: Math.round(P * 0.07) }; }
   if (!state.roads) state.roads = { nodes: [], edges: [], islands: [] };
   if (!Array.isArray(state.reclaimed)) state.reclaimed = [];
   if (!Array.isArray(state.reclaiming)) state.reclaiming = [];
@@ -771,6 +781,7 @@ function policyMods(state) {
     housingAfford: 0, eduMult: 1, healthMult: 1, productivity: 0,
     incomeMult: 0, jobsBoost: 0, stability: 0, upkeep: 0,
     gstRevenue: 0, pollutionMult: 0, waterDemandMult: 0,
+    cpfRetire: 0,   // share of elderly support self-funded through CPF (vs borne by the treasury)
   };
   const add = (fx) => {
     if (!fx) return;
@@ -892,9 +903,14 @@ export function derive(state) {
   const powerRatio = powerUse > 0 ? powerGen / powerUse : 2;
   const waterRatio = waterUse > 0 ? waterGen / waterUse : 2;
 
-  const workforce = pop * 0.62;
+  // The workforce IS the working-age cohort (15–64), so an ageing society has fewer
+  // taxpayers per head. Falls back to 62% of the population for older saves.
+  const co = state.cohorts || { young: pop * 0.32, work: pop * 0.62, old: pop * 0.06 };
+  const workforce = co.work;
   const employed = Math.min(workforce, mods_jobs);
   const unemployment = workforce > 0 ? clamp((workforce - employed) / workforce, 0, 1) : 0;
+  // Old-age dependency: non-working (young + elderly) supported per working adult.
+  const dependency = workforce > 0 ? (co.young + co.old) / workforce : 0;
 
   // Housing pressure: >1 means overcrowded.
   const housingPressure = homes > 0 ? pop / homes : (pop > 0 ? 3 : 0);
@@ -914,6 +930,7 @@ export function derive(state) {
     eduCap, healthCap, safetyCap,
     workforce, employed, unemployment, housingPressure,
     serviceAccess: cov.serviceAccess, blight: cov.blight,
+    young: co.young, working: co.work, elderly: co.old, dependency,
     mods,
   };
 }
@@ -926,6 +943,9 @@ function approvalTarget(state, d) {
   t += d.housingPressure <= 1 ? 8 : -clamp((d.housingPressure - 1) * 30, 0, 30);
   // Jobs
   t -= d.unemployment * 45;
+  // An ageing, dependency-heavy society strains services and stokes anxiety about
+  // pensions and care (eased by immigration keeping the workforce young).
+  t -= clamp(((d.dependency || 0.6) - 0.62) * 14, 0, 10);
   // Utilities
   t += d.powerRatio >= 1 ? 6 : -clamp((1 - d.powerRatio) * 40, 0, 40);
   t += d.waterRatio >= 1 ? 6 : -clamp((1 - d.waterRatio) * 40, 0, 40);
@@ -1188,6 +1208,17 @@ function monthlyUpdate(state, d) {
   upkeep += m.upkeep;                       // policy running costs
   upkeep += popReal * 0.00012;              // general public-service cost
 
+  // Ageing society — the elderly draw a state pension and cost more in healthcare.
+  // CPF (m.cpfRetire) lets them fund their own retirement, so the treasury bears only
+  // the uncovered share; a generous healthcare subsidy (m.healthMult) costs more but
+  // buys longer, healthier lives. Negligible for the young 1965 nation, a heavy burden
+  // once it greys — exactly Singapore's central fiscal question.
+  const elderly = (state.cohorts && state.cohorts.old) || 0;
+  const pension = elderly * 0.0011 * (1 - m.cpfRetire);
+  const elderCare = elderly * 0.0007 * m.healthMult;
+  const social = pension + elderCare;
+  upkeep += social;
+
   // Debt servicing — interest on outstanding government bonds.
   const interest = (state.debt || 0) * bondRate(state) / 12;
   upkeep += interest;
@@ -1195,36 +1226,48 @@ function monthlyUpdate(state, d) {
   const net = grossIncome - upkeep;
   state.treasury += net;
   state.lastFinance = {
-    incomeTax, gst, business, grossIncome, upkeep, interest, net,
+    incomeTax, gst, business, grossIncome, upkeep, interest, social, net,
   };
 
-  // --- Population dynamics ---
-  // Birth/death
-  const birthRate = 0.011 * m.birth * (0.7 + state.health / 200);
-  const deathRate = 0.006 * (1.3 - state.health / 160);
-  let dPop = popReal * (birthRate - deathRate) / 12; // monthly slice
+  // --- Population dynamics, by AGE COHORT (monthly slices) ------------------
+  const co = state.cohorts || (state.cohorts = { young: Math.round(popReal * 0.32), work: Math.round(popReal * 0.62), old: Math.round(popReal * 0.06) });
 
-  // Migration: attractiveness from jobs surplus, approval, housing room.
+  // BIRTHS feed the young. Driven by the family-planning policy (m.birth: "Stop at
+  // Two" halves it, "Have Three" lifts it), by health, and by the demographic
+  // transition — as a nation grows richer and greyer, couples simply have fewer
+  // children (Singapore's real, stubborn low-fertility trap).
+  const fertility = m.birth * (0.6 + state.health / 250) * clamp(1 - (co.old / (popReal || 1)) * 0.8, 0.45, 1);
+  const births = co.work * 0.052 * fertility / 12;
+
+  // AGEING — children become workers (~15 yrs), workers retire (~48 yrs of working life).
+  const yToW = co.young / (15 * 12);
+  const wToO = co.work / (48 * 12);
+  // DEATHS — mostly the elderly; better healthcare (m.healthMult) and public health
+  // (state.health) lengthen old age, so people live longer AND the elderly pile up.
+  const oldMonths = 12 * (9 + (state.health / 100) * 9 + (m.healthMult - 1) * 22);
+  const deathsOld = co.old / oldMonths;
+  const bgDeath = 0.0006 / 12;                          // low background mortality of the young & working
+
+  // MIGRATION is working-age: foreign workers & talent, set by the immigration policy
+  // (m.migration: Strict repels, Open Doors pulls) plus jobs, approval and housing room.
   const housingRoom = d.homes - popReal;
   const jobSurplus = d.jobs - d.employed;
-  const attract = (state.approval - 50) * 0.02
-    + (jobSurplus > 0 ? 0.04 : -0.08)
-    + m.migration * 0.05;
-  let migration = popReal * 0.004 * attract;
-  // Can't grow into nonexistent homes; overcrowding pushes people out.
-  if (housingRoom <= 0) migration = Math.min(migration, 0) - popReal * 0.003;
+  const attract = (state.approval - 50) * 0.02 + (jobSurplus > 0 ? 0.04 : -0.08) + m.migration * 0.06;
+  let migration = co.work * 0.004 * attract;
+  if (housingRoom <= 0) migration = Math.min(migration, 0) - co.work * 0.003;   // no homes → no new arrivals, some leave
   else migration = Math.min(migration, housingRoom * 0.25);
 
-  // Growth buffer (events/policies) decays over time.
-  const growthMod = (state.growthBuf || 0) + m.growth;
-  dPop += popReal * growthMod / 12;
+  // Growth buffer (events/policies) + utility-shortage emigration, spread across ages.
+  const growthAdd = popReal * ((state.growthBuf || 0) + m.growth) / 12;
   state.growthBuf = (state.growthBuf || 0) * 0.85;
+  let shortage = 0;
+  if (d.powerRatio < 1) shortage += popReal * (1 - d.powerRatio) * 0.01;
+  if (d.waterRatio < 1) shortage += popReal * (1 - d.waterRatio) * 0.012;
 
-  // Utility shortages cause real harm (health/emigration).
-  if (d.powerRatio < 1) { dPop -= popReal * (1 - d.powerRatio) * 0.01; }
-  if (d.waterRatio < 1) { dPop -= popReal * (1 - d.waterRatio) * 0.012; }
-
-  state.population = Math.max(0, Math.round(popReal + dPop + migration));
+  co.young = Math.max(0, co.young + births - yToW - co.young * bgDeath + growthAdd * 0.30 - shortage * 0.30);
+  co.work = Math.max(0, co.work + yToW - wToO + migration - co.work * bgDeath + growthAdd * 0.60 - shortage * 0.65);
+  co.old = Math.max(0, co.old + wToO - deathsOld + growthAdd * 0.10 - shortage * 0.05);
+  state.population = Math.max(0, Math.round(co.young + co.work + co.old));
 
   // Approval glides toward its target.
   state.approval = clamp(approach(state.approval, approvalTarget(state, d), 0.25), 0, 100);

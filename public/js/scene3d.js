@@ -3387,6 +3387,26 @@ export class Scene3D {
     for (const ag of this.people) ag.mesh.visible = false;
   }
 
+  // ---- soft particle sprites (so smoke/rain/embers aren't hard squares) -----
+  // A soft round puff (white core fading to transparent) — used for smoke & embers.
+  _softTex() {
+    if (this._softTexCache) return this._softTexCache;
+    const c = document.createElement('canvas'); c.width = c.height = 64; const g = c.getContext('2d');
+    const gr = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+    gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.45, 'rgba(255,255,255,0.5)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = gr; g.beginPath(); g.arc(32, 32, 32, 0, Math.PI * 2); g.fill();
+    return (this._softTexCache = new THREE.CanvasTexture(c));
+  }
+  // A vertical rain streak (a soft bright line fading at both ends).
+  _streakTex() {
+    if (this._streakTexCache) return this._streakTexCache;
+    const c = document.createElement('canvas'); c.width = 32; c.height = 64; const g = c.getContext('2d');
+    const gr = g.createLinearGradient(0, 0, 0, 64);
+    gr.addColorStop(0, 'rgba(214,232,250,0)'); gr.addColorStop(0.5, 'rgba(214,232,250,0.95)'); gr.addColorStop(1, 'rgba(214,232,250,0)');
+    g.fillStyle = gr; g.fillRect(13, 0, 6, 64);
+    return (this._streakTexCache = new THREE.CanvasTexture(c));
+  }
+
   // ---- weather --------------------------------------------------------------
   _initWeather() {
     this.cloudMat = new THREE.MeshToonMaterial({ color: 0xffffff, transparent: true, opacity: 0, depthWrite: false, gradientMap: toonGradient() });
@@ -3408,7 +3428,7 @@ export class Scene3D {
     this._rainCloud = new Int16Array(count);
     for (let i = 0; i < count; i++) { p[i * 3] = 0; p[i * 3 + 1] = -9999; p[i * 3 + 2] = 0; this._rainCloud[i] = i % this.clouds.length; }
     geo.setAttribute('position', new THREE.BufferAttribute(p, 3));
-    this.rain = new THREE.Points(geo, new THREE.PointsMaterial({ color: 0xbcd6ee, size: 1.3, transparent: true, opacity: 0, depthWrite: false }));
+    this.rain = new THREE.Points(geo, new THREE.PointsMaterial({ map: this._streakTex(), color: 0xcfe1f3, size: 6.5, sizeAttenuation: true, transparent: true, opacity: 0, depthWrite: false }));
     this.rain.visible = false; this.scene.add(this.rain);
     this._cloudBaseCol = new THREE.Color(0xffffff);
     this._bolts = []; this._boltTimer = 4 + Math.random() * 6; this._flash = 0; this._windDrift = 0;
@@ -3488,26 +3508,35 @@ export class Scene3D {
     }
     if (this._flash > 0) {
       this._flash = Math.max(0, this._flash - dt * 4.5);
-      if (this.hemi) this.hemi.intensity += this._flash * 1.7;            // the whole scene lights up
-      if (this.skyTop) { this.skyTop.lerp(white, this._flash * 0.6); this.skyBot.lerp(white, this._flash * 0.6); }
+      const fl = this._flash * (0.62 + 0.38 * Math.abs(Math.sin(performance.now() / 24)));   // the flash flickers as it fades
+      if (this.hemi) this.hemi.intensity += fl * 1.9;                     // the whole scene lights up
+      if (this.skyTop) { this.skyTop.lerp(white, fl * 0.6); this.skyBot.lerp(white, fl * 0.6); }
     }
     for (let i = this._bolts.length - 1; i >= 0; i--) {
-      const b = this._bolts[i]; b.life -= dt; b.mesh.material.opacity = Math.max(0, b.life / b.dur);
-      if (b.life <= 0) { this.scene.remove(b.mesh); b.mesh.geometry.dispose(); this._bolts.splice(i, 1); }
+      const b = this._bolts[i]; b.life -= dt; const o = Math.max(0, b.life / b.dur);
+      b.mesh.traverse((c) => { if (c.material) c.material.opacity = (c.userData.baseOp ?? 1) * o; });
+      if (b.life <= 0) { this.scene.remove(b.mesh); b.mesh.traverse((c) => { if (c.geometry) c.geometry.dispose(); }); this._bolts.splice(i, 1); }
     }
   }
-  // A jagged lightning bolt from a near storm cloud down to the ground (fades fast).
+  // A forked lightning bolt from a near storm cloud down to the ground: a bright
+  // white core wrapped in a soft blue glow, with a couple of branches. Fades fast.
   _spawnBolt() {
     const near = this.clouds.filter((c) => Math.hypot(c.position.x - this.target.x, c.position.z - this.target.z) < 420);
     const cl = (near.length ? near : this.clouds)[Math.floor(Math.random() * (near.length || this.clouds.length))];
     if (!cl) return;
-    const x0 = cl.position.x + (Math.random() - 0.5) * 40, z0 = cl.position.z + (Math.random() - 0.5) * 40, y0 = cl.position.y;
-    const pts = []; let x = x0, z = z0;
-    const steps = 9;
-    for (let i = 0; i <= steps; i++) { const y = y0 * (1 - i / steps); pts.push(new THREE.Vector3(x, y, z)); x += (Math.random() - 0.5) * 14; z += (Math.random() - 0.5) * 14; }
-    const g = new THREE.BufferGeometry().setFromPoints(pts);
-    const m = new THREE.Line(g, new THREE.LineBasicMaterial({ color: 0xfdfdff, transparent: true, opacity: 1 }));
-    m.renderOrder = 9; this.scene.add(m); this._bolts.push({ mesh: m, life: 0.22, dur: 0.22 });
+    const jag = (sx, sy, sz, ey, spread) => {
+      const out = []; let x = sx, z = sz; const steps = Math.max(4, Math.round((sy - ey) / 11));
+      for (let i = 0; i <= steps; i++) { out.push(new THREE.Vector3(x, sy + (ey - sy) * (i / steps), z)); x += (Math.random() - 0.5) * spread; z += (Math.random() - 0.5) * spread; }
+      return out;
+    };
+    const grp = new THREE.Group(); grp.renderOrder = 9;
+    const addLine = (pts, col, op) => { const m = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: col, transparent: true, opacity: op, depthWrite: false, blending: THREE.AdditiveBlending })); m.userData.baseOp = op; grp.add(m); };
+    const main = jag(cl.position.x + (Math.random() - 0.5) * 40, cl.position.y, cl.position.z + (Math.random() - 0.5) * 40, 0, 15);
+    addLine(main, 0x9fc4ff, 0.5);        // soft blue glow (drawn first, behind)
+    addLine(main, 0xfdfdff, 1);          // bright white core
+    const nb = 1 + Math.floor(Math.random() * 2);
+    for (let b = 0; b < nb; b++) { const s = main[2 + Math.floor(Math.random() * (main.length - 4))]; addLine(jag(s.x, s.y, s.z, s.y * (0.2 + Math.random() * 0.3), 13), 0xdce9ff, 0.85); }
+    this.scene.add(grp); this._bolts.push({ mesh: grp, life: 0.26, dur: 0.26 });
   }
 
   // ---- fire & smoke ---------------------------------------------------------
@@ -3534,18 +3563,30 @@ export class Scene3D {
     for (let i = this._fires.length - 1; i >= 0; i--) {
       const f = this._fires[i];
       f.life -= dt * (w.rain > 0.3 ? 4 + w.rain * 7 : 1);          // rain douses it fast
-      const k = Math.max(0, f.life / f.dur), flick = 0.7 + 0.3 * Math.sin(performance.now() / 55 + f.seed);
-      if (f.flame) { f.flame.scale.setScalar((0.6 + 0.4 * flick) * (0.4 + 0.6 * k) * f.scale); f.flame.rotation.y += dt * 3.5; }
-      if (f.light) f.light.intensity = (1.3 + flick) * k;
+      const k = Math.max(0, f.life / f.dur), now = performance.now();
+      // flame tongues writhe: each stretches/squashes and leans on its own phase
+      for (const t of (f.tongues || [])) {
+        const s = 0.75 + 0.32 * Math.sin(now / 68 + t.phase) + 0.14 * Math.sin(now / 21 + t.phase * 2);
+        t.mesh.scale.set(0.9 + 0.15 * Math.sin(now / 95 + t.phase), (0.45 + 0.55 * k) * s, 0.9 + 0.15 * Math.cos(now / 88 + t.phase));
+        t.mesh.position.x = t.ox + Math.sin(now / 130 + t.phase) * 0.5;
+        t.mesh.material.opacity = 0.85 * Math.min(1, k * 1.5 + 0.2);
+      }
+      if (f.light) f.light.intensity = (1.15 + 0.65 * Math.sin(now / 55 + f.seed) + 0.35 * Math.random()) * k;
+      const localWx = wx * (3 + w.wind * 11), localWz = wz * (3 + w.wind * 11);   // wind, in the fire's (unrotated) local frame
       const sp = f.smoke.geometry.attributes.position.array;
       for (let j = 0; j < sp.length; j += 3) {
-        sp[j] += (wx * (4 + w.wind * 16) + (Math.random() - 0.5) * 2.5) * dt;
-        sp[j + 1] += (11 + Math.random() * 7) * dt;
-        sp[j + 2] += (wz * (4 + w.wind * 16) + (Math.random() - 0.5) * 2.5) * dt;
-        if (sp[j + 1] > f.baseY + 50) { sp[j] = f.x + (Math.random() - 0.5) * 3; sp[j + 1] = f.baseY + Math.random() * 3; sp[j + 2] = f.z + (Math.random() - 0.5) * 3; }
+        sp[j] += (localWx + (Math.random() - 0.5) * 1.8) * dt; sp[j + 1] += (7 + Math.random() * 4) * dt; sp[j + 2] += (localWz + (Math.random() - 0.5) * 1.8) * dt;
+        if (sp[j + 1] > 42) { sp[j] = (Math.random() - 0.5) * 2; sp[j + 1] = Math.random() * 3; sp[j + 2] = (Math.random() - 0.5) * 2; }
       }
       f.smoke.geometry.attributes.position.needsUpdate = true;
       f.smoke.material.opacity = 0.5 * Math.min(1, k * 1.6 + 0.25);
+      const ep = f.embers.geometry.attributes.position.array;
+      for (let j = 0; j < ep.length; j += 3) {
+        ep[j] += (localWx * 0.5 + (Math.random() - 0.5) * 3) * dt; ep[j + 1] += (11 + Math.random() * 10) * dt; ep[j + 2] += (localWz * 0.5 + (Math.random() - 0.5) * 3) * dt;
+        if (ep[j + 1] > 17) { ep[j] = (Math.random() - 0.5) * 1.4; ep[j + 1] = Math.random() * 2; ep[j + 2] = (Math.random() - 0.5) * 1.4; }
+      }
+      f.embers.geometry.attributes.position.needsUpdate = true;
+      f.embers.material.opacity = 0.9 * k;
       f.spread -= dt;
       if (f.spread <= 0 && k > 0.4 && this._dryness > 0.62 && this._fires.length < 6) {
         f.spread = 2 + Math.random() * 3;
@@ -3594,21 +3635,31 @@ export class Scene3D {
   _igniteFire(x, z, kind, key) {
     if (!this._fireGroup) { this._fireGroup = new THREE.Group(); this.scene.add(this._fireGroup); }
     const baseY = this._meshTriY(x, z);
-    const grp = new THREE.Group(); grp.position.set(x, baseY, z); this._fireGroup.add(grp);
-    const flame = new THREE.Group();
-    for (const [c, s, h] of [[0xff7b1a, 1.0, 4.2], [0xffd23a, 0.58, 2.6]]) {
-      const cone = new THREE.Mesh(new THREE.ConeGeometry(0.9 * s, h, 7), new THREE.MeshBasicMaterial({ color: c, transparent: true, opacity: 0.92, depthWrite: false }));
-      cone.position.y = h / 2; flame.add(cone);
+    const scale = kind === 'building' ? 1.7 : kind === 'tree' ? 1.2 : 0.7;
+    const grp = new THREE.Group(); grp.position.set(x, baseY, z); grp.scale.setScalar(scale); this._fireGroup.add(grp);
+    // Layered flame tongues — a deep-red core, an orange body, a yellow tip and two
+    // leaning side tongues — each flickering on its own phase (additive glow).
+    const flame = new THREE.Group(); flame.renderOrder = 8; const tongues = [];
+    for (const [col, r, h, ox] of [[0xd42d12, 1.15, 3.2, 0], [0xff5f10, 0.85, 4.6, 0], [0xffc22a, 0.5, 3.6, 0], [0xff861a, 0.6, 3.0, 1.05], [0xff861a, 0.6, 3.0, -1.05]]) {
+      const cone = new THREE.Mesh(new THREE.ConeGeometry(r, h, 8), new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.85, depthWrite: false, blending: THREE.AdditiveBlending }));
+      cone.position.set(ox, h / 2, 0); flame.add(cone); tongues.push({ mesh: cone, h, ox, phase: Math.random() * 6.28 });
     }
-    flame.renderOrder = 8; grp.add(flame);
-    const light = new THREE.PointLight(0xff7a2a, 1.6, 64, 2); light.position.y = 3; grp.add(light);
-    const N = 26, spos = new Float32Array(N * 3);
-    for (let i = 0; i < N; i++) { spos[i * 3] = x + (Math.random() - 0.5) * 3; spos[i * 3 + 1] = baseY + Math.random() * 44; spos[i * 3 + 2] = z + (Math.random() - 0.5) * 3; }
-    const sg = new THREE.BufferGeometry(); sg.setAttribute('position', new THREE.BufferAttribute(spos, 3));
-    const smoke = new THREE.Points(sg, new THREE.PointsMaterial({ color: 0x4a4a4a, size: 5, transparent: true, opacity: 0.5, depthWrite: false }));
-    this._fireGroup.add(smoke);
+    grp.add(flame);
+    const light = new THREE.PointLight(0xff7a2a, 1.6, 64 * scale, 2); light.position.y = 3; grp.add(light);
+    // soft rising smoke (round puffs), in local coords so it cleans up with the group
+    const N = 24, spos = new Float32Array(N * 3);
+    for (let i = 0; i < N; i++) { spos[i * 3] = (Math.random() - 0.5) * 2; spos[i * 3 + 1] = Math.random() * 34; spos[i * 3 + 2] = (Math.random() - 0.5) * 2; }
+    const smoke = new THREE.Points(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(spos, 3)),
+      new THREE.PointsMaterial({ map: this._softTex(), color: 0x3b3b3b, size: 9, sizeAttenuation: true, transparent: true, opacity: 0.5, depthWrite: false }));
+    grp.add(smoke);
+    // bright embers flicking up from the flames
+    const E = 14, epos = new Float32Array(E * 3);
+    for (let i = 0; i < E; i++) { epos[i * 3] = (Math.random() - 0.5) * 2; epos[i * 3 + 1] = Math.random() * 8; epos[i * 3 + 2] = (Math.random() - 0.5) * 2; }
+    const embers = new THREE.Points(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(epos, 3)),
+      new THREE.PointsMaterial({ map: this._softTex(), color: 0xffb445, size: 1.6, sizeAttenuation: true, transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false }));
+    grp.add(embers);
     const dur = 8 + Math.random() * 10;
-    this._fires.push({ x, z, baseY, kind, key, flame, light, smoke, grp, life: dur, dur, seed: Math.random() * 9, scale: kind === 'building' ? 1.7 : kind === 'tree' ? 1.2 : 0.7, spread: 2.5 });
+    this._fires.push({ x, z, baseY, kind, key, flame, tongues, light, smoke, embers, grp, life: dur, dur, seed: Math.random() * 9, scale, spread: 2.5 });
     if (kind === 'tree' && this.natureCells) { const g = this.natureCells.get(key); if (g) g.userData._fire = true; }
     if (kind === 'building') { const e = this.buildings.get(key); if (e && e.group) e.group.userData._fire = true; }
     this._spawnDust(x, z, 0x5a5a5a, 8);
@@ -3619,8 +3670,9 @@ export class Scene3D {
     if (f.kind === 'tree' && this.natureCells) { const g = this.natureCells.get(f.key); if (g) { g.visible = false; g.userData._fire = false; (this._removedTrees || (this._removedTrees = new Set())).add(f.key); } }   // burned this session; regrows on reload
     else if (f.kind === 'plant' && this.removePlantNear) this.removePlantNear(f.x, f.z, 2.0);
     else if (f.kind === 'building') { const e = this.buildings.get(f.key); if (e && e.group) e.group.userData._fire = false; }
-    if (f.grp && this._fireGroup) this._fireGroup.remove(f.grp);
-    if (f.smoke && this._fireGroup) { this._fireGroup.remove(f.smoke); f.smoke.geometry.dispose(); }
+    if (f.grp && this._fireGroup) this._fireGroup.remove(f.grp);   // removes flame/light/smoke/embers together
+    if (f.smoke) f.smoke.geometry.dispose(); if (f.embers) f.embers.geometry.dispose();
+    (f.tongues || []).forEach((t) => t.mesh.geometry.dispose());
     this._spawnDust(f.x, f.z, 0x8a8a8a, 16);
     this._fires.splice(i, 1);
   }

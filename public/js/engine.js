@@ -971,6 +971,16 @@ export function derive(state) {
   const materialsImport = (pop / 1000) * 0.34;
   const importBill = (foodImport + energyImport + materialsImport) * currencyFactor;
 
+  // TRAFFIC CONGESTION — the daily commute. Car use grows with the population and its
+  // wealth (motorisation), reined in by the car-quota / ERP policy; MRT and rail
+  // stations carry commuters off the roads. Gridlock wastes working hours (productivity),
+  // chokes the air and infuriates commuters — Singapore's answer was the world's first
+  // road-pricing scheme AND a world-class metro.
+  const carQuota = !!(state.policies && state.policies.car_quota);
+  const motorDemand = (pop / 1000) * (0.6 + (state.education || 20) / 130) * (carQuota ? 0.78 : 1);
+  const transitCap = (counts.mrt || 0) * 35 + (counts.rail_station || 0) * 16;
+  const congestion = clamp((motorDemand - transitCap) / 300, 0, 1);
+
   return {
     homes, jobs: mods_jobs, baseJobs: jobs, counts,
     food, foodNeed, foodSelf,
@@ -984,6 +994,7 @@ export function derive(state) {
     defenceCap, defence, threat, defenceNeed, security, insecurity,
     crimeRisk, diseaseRisk, accidentRisk,
     importBill, foodImport, energyImport, materialsImport,
+    congestion,
     mods,
   };
 }
@@ -1017,6 +1028,7 @@ function approvalTarget(state, d) {
   // transit lifts approval; living in the shadow of heavy industry drags it down.
   t += (d.serviceAccess - 0.5) * 12;      // well-served neighbourhoods (+6) vs service deserts (−6)
   t -= (d.blight || 0) * 12;              // homes packed against factories/power stations
+  t -= (d.congestion || 0) * 8;           // a soul-crushing daily commute sours the mood
   // Home-grown food is a modest resilience/pride boost (no penalty for importing)
   t += clamp(d.foodSelf || 0, 0, 1) * 4;
   // Policy approval
@@ -1250,12 +1262,14 @@ function monthlyUpdate(state, d) {
   state.health = approach(state.health, healthTarget, 0.15);
   state.safety = approach(state.safety, safetyTarget, 0.15);
 
-  // Pollution accumulates from sources, decays naturally + via green/MRT.
-  const pollTarget = clamp(d.pollutionSrc * 1.2 * (1 + m.pollutionMult), 0, 100);
+  // Pollution accumulates from sources, decays naturally + via green/MRT — and now
+  // from traffic: gridlocked, idling cars foul the air.
+  const pollTarget = clamp((d.pollutionSrc + (d.congestion || 0) * 12) * 1.2 * (1 + m.pollutionMult), 0, 100);
   state.pollution = clamp(approach(state.pollution, pollTarget, 0.2), 0, 100);
 
   // --- Finances ($ millions / month) ---
-  const productivity = 1 + m.productivity + (state.education - 20) * 0.004;
+  // Congestion wastes working hours, so it drags productivity (and thus tax revenue).
+  const productivity = (1 + m.productivity + (state.education - 20) * 0.004) * (1 - (d.congestion || 0) * 0.16);
   const popReal = state.population;
   // Income tax scales with employed workforce, productivity & policy multiplier.
   const taxBase = (d.employed / 1000) * 0.9 * productivity;

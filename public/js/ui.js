@@ -341,6 +341,10 @@ export function renderDash(state, ctx = {}) {
     metric('📦 Import bill', `${money(d.importBill || 0)}/mo`, trade - (d.importBill || 0) >= 0 ? `trade surplus ${money(trade - (d.importBill || 0))}/mo` : `trade deficit ${money((d.importBill || 0) - trade)}/mo`,
       'What the island must buy from abroad each month — food it doesn\'t grow, fuel for its fossil power stations, and general materials. It swells when the currency is weak or an oil shock hits, and shrinks as you build self-sufficiency: farms for food, and solar/nuclear for clean, fuel-free power. The eternal vulnerability of a resource-poor city-state.',
       { valStyle: `color:${trade - (d.importBill || 0) >= 0 ? 'var(--good)' : 'var(--bad)'}` }),
+    (() => { const cg = Math.round((d.congestion || 0) * 100); const cc = cg <= 30 ? 'var(--good)' : cg <= 60 ? 'var(--warn)' : 'var(--bad)';
+      return metric('🚦 Traffic', `${cg}%`, cg <= 30 ? 'free-flowing' : cg <= 60 ? 'congested' : 'gridlock',
+        'Road congestion on the daily commute. It grows with the population and its car ownership, and is relieved by the MRT and rail (which carry commuters off the roads) and the Car Quota / ERP policy. Gridlock wastes working hours (cutting productivity and tax), fouls the air and frustrates commuters. Build the metro and price the roads.',
+        { bar: bar(cg, cc), valStyle: `color:${cc}` }); })(),
   ]));
 
   // ---- ECONOMY -------------------------------------------------------------

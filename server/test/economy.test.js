@@ -231,6 +231,24 @@ try {
   ok(trade.shock > trade.noShock + 10, `an oil shock spikes the fuel import bill ($${trade.noShock}M → $${trade.shock}M)`);
   ok(trade.food1 < trade.food0 - 5, `growing your own food cuts food imports ($${trade.food0}M → $${trade.food1}M)`);
 
+  // ---- Traffic congestion: grows with the city, eased by the MRT & ERP --------
+  const cong = await p.evaluate(() => {
+    const st = window.__sg.state, v = window.__sg.state, D = () => window.__sg.derive();
+    const view = window.__sgview;
+    const start = D().congestion;
+    st.population = 220000; st.cohorts = { young: 66000, work: 132000, old: 22000 }; st.date = { y: 1995, m: 6, d: 1 };
+    st.policies.car_quota = false; const big = D().congestion;
+    st.policies.car_quota = true; const quota = D().congestion;
+    st.policies.car_quota = false;
+    let placed = 0;
+    for (let y = 4; y < st.grid.length - 4 && placed < 8; y++) for (let x = 4; x < st.grid[y].length - 4 && placed < 8; x++) if (!st.grid[y][x] && view.isLand(x, y)) { st.grid[y][x] = { k: 'mrt' }; placed++; }
+    const mrt = D().congestion;
+    return { start: +start.toFixed(2), big: +big.toFixed(2), quota: +quota.toFixed(2), mrt: +mrt.toFixed(2) };
+  });
+  ok(cong.big > cong.start + 0.15, `traffic congestion grows as the city grows (${cong.start} → ${cong.big})`);
+  ok(cong.quota < cong.big, `the Car Quota / ERP policy eases congestion (${cong.big} → ${cong.quota})`);
+  ok(cong.mrt < cong.big - 0.15, `building the MRT carries commuters off the roads (${cong.big} → ${cong.mrt})`);
+
   // ---- WHERE you build matters: local service access & industrial blight ------
   const cov = await p.evaluate(() => {
     const st = window.__sg.state, D = () => window.__sg.derive();

@@ -808,6 +808,7 @@ function setEditPause(on) {
 }
 function cancelTools() {
   clearAdjustSilently();
+  hideHoverInfo();
   if (demoCount() || G.demoHover) clearDemoSelection();
   G.build.selected = null; G.build.bulldoze = false; G.reclaim.active = false;
   G.plant.active = false; G.plant.kind = null; G.surface.active = false;
@@ -990,10 +991,56 @@ function onDemolishStroke(stroke) {
 // Cursor moved in Demolish mode: track what's under it and show it red alongside
 // the existing selection, so you can see what a tap will toggle. `landmark` is a
 // fixed structure (e.g. the airport) the 3D pick hit directly.
+// ---- hover-info: tell the player WHAT a building is before they keep/remove it ----
+let _hoverInfoEl = null;
+document.addEventListener('pointermove', (e) => { G._cursor = { x: e.clientX, y: e.clientY }; }, { passive: true });
+function hoverInfoEl() {
+  if (!_hoverInfoEl) { _hoverInfoEl = document.createElement('div'); _hoverInfoEl.className = 'hover-info'; _hoverInfoEl.style.display = 'none'; document.body.appendChild(_hoverInfoEl); }
+  return _hoverInfoEl;
+}
+function hideHoverInfo() { if (_hoverInfoEl) _hoverInfoEl.style.display = 'none'; }
+function showHoverInfo(html) {
+  const el = hoverInfoEl(); el.innerHTML = html; el.style.display = 'block';
+  const vw = window.innerWidth, vh = window.innerHeight, pad = 10, cur = G._cursor || { x: vw / 2, y: 80 };
+  const w = el.offsetWidth, h = el.offsetHeight;
+  let x = cur.x + 16; if (x + w > vw - pad) x = cur.x - w - 16;
+  let y = cur.y + 18; if (y + h > vh - pad) y = Math.max(pad, cur.y - h - 12);
+  el.style.left = `${Math.max(pad, x)}px`; el.style.top = `${Math.max(pad, y)}px`;
+}
+// A compact line of what a building does, from its data.
+function buildingStatLine(b) {
+  const s = [];
+  if (b.homes) s.push(`🏠 ${num(b.homes * POP_SCALE)} homes`);
+  if (b.jobs) s.push(`💼 ${num(b.jobs)} jobs`);
+  if (b.food) s.push(`🌾 feeds ${num(b.food * POP_SCALE)}`);
+  if (b.power) s.push(`⚡ ${b.power > 0 ? '+' : ''}${b.power}`);
+  if (b.water) s.push(`💧 ${b.water > 0 ? '+' : ''}${b.water}`);
+  if (b.defence) s.push(`🛡️ ${b.defence} def`);
+  if (b.income) s.push(`💵 +$${b.income}/mo`);
+  if (b.education) s.push(`📚 +${b.education}`);
+  if (b.health) s.push(`⚕️ +${b.health}`);
+  if (b.safety) s.push(`👮 +${b.safety}`);
+  if (b.happiness) s.push(`🙂 ${b.happiness > 0 ? '+' : ''}${b.happiness}`);
+  return s.join(' · ');
+}
+// The name / description / stats for whatever the demolish cursor is over.
+function demoInfoHtml(t) {
+  if (!t) return null;
+  if (t.kind === 'landmark') return `<b>${escapeHtml(t.label || 'Landmark')}</b><div class="hi-body">A fixed national landmark. Removing it clears the land.</div>`;
+  if (t.kind === 'tree') return `<b>🌳 Tree</b><div class="hi-body">Greenery that cleans the air and cools the city.</div>`;
+  const c = G.state.grid?.[t.y]?.[t.x], b = c && BUILDINGS[c.k];
+  if (!b) return `<b>${t.kind === 'heritage' ? '🏚️ Heritage building' : 'Building'}</b><div class="hi-body">Part of the standing 1965 town.</div>`;
+  const nm = (c.name ? `${escapeHtml(c.name)} · ` : '') + escapeHtml(b.name);
+  const stats = buildingStatLine(b);
+  return `<b>${b.icon || ''} ${nm}</b>${stats ? `<div class="hi-stats">${stats}</div>` : ''}<div class="hi-body">${escapeHtml(b.desc || '')}</div>`;
+}
+
 function onDemolishHover(cell, world, landmark) {
-  if (G.readOnly || !G.build.bulldoze) return;
+  if (G.readOnly || !G.build.bulldoze) { hideHoverInfo(); return; }
   const t = landmark ? { kind: 'landmark', id: landmark.id, label: landmark.label } : findDemoTarget(cell, world);
   G.demoHover = t ? { ...t, key: demoKey(t) } : null;
+  const info = t ? demoInfoHtml(t) : null;   // show the player what it is before they decide
+  if (info) showHoverInfo(info); else hideHoverInfo();
   // Cities-Skylines-style live bulldozer feedback: when NOT pointing at a discrete
   // object, light up (in orange-red) the road chunk a click would tear out right here.
   let preview = null;
@@ -1527,7 +1574,7 @@ window.__sg = {
   onTileTap, rotateAdjust, commitAdjust, findDemoTarget, onDemolishHover, onDemolishStroke, onAdjustRotate, commitDemolish, demoKey,
   cancelAdjust: (m) => cancelAdjust(m),
   selectBuilding: (k) => { clearAdjustSilently(); G.build.selected = k; G.build.bulldoze = false; if (G.view) G.view.setPreview(k, G.build.theme); updateToolBanner(); },
-  setBulldoze: (on) => { clearAdjustSilently(); G.demoSel.clear(); G.demoHover = null; G.demoCuts = []; G.build.selected = null; G.build.bulldoze = !!on; if (G.view) G.view.setBulldoze(!!on); updateToolBanner(); },
+  setBulldoze: (on) => { clearAdjustSilently(); if (!on) hideHoverInfo(); G.demoSel.clear(); G.demoHover = null; G.demoCuts = []; G.build.selected = null; G.build.bulldoze = !!on; if (G.view) G.view.setBulldoze(!!on); updateToolBanner(); },
   selectPlant, selectSurface, setSurfaceScale, toggleFoundation,
   tick: (n = 1) => { for (let i = 0; i < n; i++) tickDay(G.state); if (G.view) { G.view.syncConstruction(G.state); G.view.syncDemolition(G.state); } },
   derive: () => derive(G.state),

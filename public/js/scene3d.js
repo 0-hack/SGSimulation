@@ -3281,12 +3281,21 @@ export class Scene3D {
           return ((owOcc.get(g) || 0) + (owEnter.has(g) ? 1 : 0)) === 0; // only enter an EMPTY one-way road
         } : null;
         const nx = this._pickNetEdge(node, a.edge, a.group === 'ped', head, allow);
-        if (!nx) { a.dir *= -1; a.t = THREE.MathUtils.clamp(a.t, 0, 1); }
+        // Safety net: never step onto an edge whose entry point is far from where we
+        // are — that would be a teleport across a gap between two separate roads.
+        let jump = false;
+        if (nx) { const np = this.edgePts[nx.edge]; const entry = nx.fwd ? np[0] : np[np.length - 1]; if (Math.hypot(entry.x - p1.x, entry.z - p1.z) > 1.6) jump = true; }
+        if (!nx || jump) { a.dir *= -1; a.t = THREE.MathUtils.clamp(a.t, 0, 1); }
         else {
           a.edge = nx.edge; a.dir = nx.fwd ? 1 : -1; a.t = nx.fwd ? 0.001 : 0.999;
           if (owEnter) { const ng = this._owGroupOf[a.edge]; if (ng >= 0 && ng !== curG) owEnter.add(ng); } // claim it
           this._assignLane(a);
         }
+        // Re-place on the (new) edge THIS frame. Skipping it left the mesh frozen at
+        // the old spot for a frame — and on short edges an agent can hop several
+        // edges across frames while its mesh stays put, then pop tens of units. Now
+        // the mesh always matches the agent's live (edge,t), so there is no teleport.
+        this._placeNetAgent(a, dt, true);
         continue;
       }
       this._placeNetAgent(a, dt, moving);
@@ -3362,10 +3371,11 @@ export class Scene3D {
     // bus fills the carriageway, instead of spilling far onto the verge as before.
     const VS = 0.26; mesh.scale.setScalar(VS);
     this.scene.add(mesh);
-    // realistic urban road speeds (km/h) — a car cruises ~46, a motorbike a touch
-    // faster, a trishaw barely faster than a brisk walk, buses & lorries slower.
-    const speed = { car: KMH(46), taxi: KMH(46), bike: KMH(52), trishaw: KMH(11), lorry: KMH(35), bus: KMH(33) }[kind];
-    const cruise = speed * (0.88 + Math.random() * 0.24);
+    // realistic urban road speeds (km/h) on the tight old streets — a car ambles
+    // ~38, a motorbike a touch faster, a trishaw barely faster than a brisk walk,
+    // buses & lorries slower. Kept modest so nothing races across the map.
+    const speed = { car: KMH(38), taxi: KMH(38), bike: KMH(40), trishaw: KMH(11), lorry: KMH(30), bus: KMH(28) }[kind];
+    const cruise = speed * (0.85 + Math.random() * 0.18);
     const ag = {
       mesh, len: len * VS, group: 'veh', kind, edge: this._pickEdge(),
       dir: Math.random() < 0.5 ? 1 : -1, t: Math.random(), phase: 0,
@@ -4905,9 +4915,14 @@ export class Scene3D {
   // player's freeform roads, merged where their endpoints meet.
   _buildNavGraph() {
     this.edgePts = []; this.edgeLen = []; this.edgeMeta = []; this.edgeN1 = []; this.edgeN2 = []; this.edgeMid = [];
-    const nodes = [], adj = [], MERGE = 3.6;
+    // Only endpoints that genuinely COINCIDE at a junction are merged into one nav
+    // node. A loose tolerance used to fuse two SEPARATE nearby roads into one node,
+    // so cars teleported across the gap between them; keep it well under a tile (2.5).
+    const nodes = [], adj = [], MERGE = 1.4;
     const nodeAt = (x, z, y) => {
-      for (let i = 0; i < nodes.length; i++) { const n = nodes[i]; if (Math.abs(n.x - x) < MERGE && Math.abs(n.z - z) < MERGE && Math.abs(n.y - y) < 3) return i; }
+      let best = -1, bestD = MERGE * MERGE;
+      for (let i = 0; i < nodes.length; i++) { const n = nodes[i]; if (Math.abs(n.y - y) >= 3) continue; const d = (n.x - x) * (n.x - x) + (n.z - z) * (n.z - z); if (d < bestD) { bestD = d; best = i; } }
+      if (best >= 0) return best;
       nodes.push({ x, z, y }); adj.push([]); return nodes.length - 1;
     };
     const add = (pts, lanes, type, elevated, walk, traced, oneway) => {

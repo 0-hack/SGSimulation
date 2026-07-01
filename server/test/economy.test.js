@@ -64,16 +64,21 @@ try {
       const wantCats = ['Housing & People', 'Supply Chain & Utilities', 'Economy', 'Society & Environment', 'Financial Planning'];
       const hasCats = wantCats.every((c) => titles.includes(c));
       const tipCards = [...document.querySelectorAll('#sheet-content .metric.has-tip')];
-      const allHaveTips = tipCards.length >= 8 && tipCards.every((c) => { const t = c.querySelector('.m-tip'); return t && t.textContent.trim().length > 30; });
-      // reveal one tooltip and confirm it becomes visible (in-flow, non-zero height)
-      const one = tipCards[0]; one.classList.add('show-tip');
-      const tip = one.querySelector('.m-tip'); const shows = tip.offsetHeight > 0;
-      return res({ hasCats, tipCount: tipCards.length, allHaveTips, shows });
+      // tooltips are now a body-level floating overlay (not a child of the card), so
+      // revealing one must NOT be an in-card element and must NOT resize the card.
+      const noChildTips = tipCards.every((c) => !c.querySelector('.m-tip'));
+      const one = tipCards[0]; const h0 = one.offsetHeight;
+      one.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
+      const float = document.querySelector('.stat-tip');
+      const shows = !!float && getComputedStyle(float).display !== 'none' && float.textContent.trim().length > 30;
+      const noShift = one.offsetHeight === h0;   // card size unchanged when the tip shows
+      one.dispatchEvent(new MouseEvent('mouseleave', { bubbles: true }));
+      return res({ hasCats, tipCount: tipCards.length, allHaveTips: tipCards.length >= 8 && noChildTips, shows, noShift });
     }, 400));
   });
   ok(dash.hasCats, 'the dashboard is organised into categories (Housing, Supply Chain, Economy, Society, Finance)');
   ok(dash.allHaveTips, `each stat carries a plain-language explanation (${dash.tipCount} metrics with tooltips)`);
-  ok(dash.shows, 'hovering/tapping a stat reveals its explanation');
+  ok(dash.shows && dash.noShift, 'hovering a stat reveals a floating explanation without resizing its card');
 
   // ---- Weather feeds the sim: drought squeezes water, heat lifts power --------
   const climate = await p.evaluate(() => {

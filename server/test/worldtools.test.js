@@ -355,6 +355,37 @@ try {
   ok(veh.maxSpeed < 5 && veh.minSpeed > 0, `vehicle speeds are realistic & slower (fastest ${veh.maxSpeed} u/s — was 7)`);
   ok(veh.eased, 'a stopped vehicle accelerates back up smoothly (no instant jump to cruise)');
 
+  // vehicles must never TELEPORT between separate roads — no per-step jump
+  const jump = await p.evaluate(() => {
+    const v = window.__sgview; if (!v.vehicles || !v.vehicles.length) return { max: 0, n: 0 };
+    let maxJump = 0; const prev = new Map();
+    for (let f = 0; f < 60; f++) {
+      for (const a of v.vehicles) prev.set(a, { x: a.mesh.position.x, z: a.mesh.position.z });
+      v._advanceNet(v.vehicles, 0.25);
+      for (const a of v.vehicles) { if (!a.mesh.visible) continue; const p = prev.get(a); const d = Math.hypot(a.mesh.position.x - p.x, a.mesh.position.z - p.z); if (d > maxJump) maxJump = d; }
+    }
+    return { max: +maxJump.toFixed(2), n: v.vehicles.length };
+  });
+  ok(jump.max < 3, `no vehicle teleports between separate roads (largest step ${jump.max}u over 0.25s across ${jump.n} vehicles)`);
+
+  // ---- HOVER-INFO: Demolish mode tells you what a building is -----------------
+  const hi = await p.evaluate(() => {
+    const v = window.__sgview, sg = window.__sg, st = sg.state;
+    sg.setBulldoze(true);
+    let gx = -1, gy = -1;
+    for (let y = 0; y < st.grid.length && gx < 0; y++) for (let x = 0; x < st.grid[y].length; x++) { const c = st.grid[y][x]; if (c && c.heritage) { gx = x; gy = y; break; } }
+    const w = v.worldOfCell(gx, gy);
+    sg.onDemolishHover({ x: gx, y: gy }, w, null);
+    const el = document.querySelector('.hover-info');
+    const shown = !!el && getComputedStyle(el).display !== 'none';
+    const txt = el ? el.textContent : '';
+    sg.setBulldoze(false);
+    const gone = (() => { const e = document.querySelector('.hover-info'); return !e || getComputedStyle(e).display === 'none'; })();
+    return { shown, txtLen: txt.length, hasName: /station|shophouse|kampong|hospital|market|godown|port|building|flat/i.test(txt), gone };
+  });
+  ok(hi.shown && hi.hasName && hi.txtLen > 20, 'hovering a building in Demolish mode shows what it is (name + what it does)');
+  ok(hi.gone, 'the building info clears when you leave Demolish mode');
+
   // ---- TRAINS: reduced line speeds + accel/braking ---------------------------
   const trn = await p.evaluate(() => {
     const v = window.__sgview, N = v.land.length, C = v.worldOfCell(Math.round(N * 0.5), Math.round(N * 0.5));

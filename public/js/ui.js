@@ -496,14 +496,42 @@ function occColor(pressure) {
 // A metric card. `tip` (optional) adds a hover/tap explanation so players learn
 // what the term means and what it does; `opts.bar` appends a meter, `opts.valStyle`
 // styles the value, `opts.span2` widens the card to both columns.
+// A single body-level tooltip, positioned by JS next to whatever card is hovered.
+// Being a fixed overlay (not a child of the card), it never changes the card's size
+// or nudges its neighbours — the whole point of moving it out of the grid.
+let _statTip = null, _tipFor = null;
+function statTipEl() {
+  if (!_statTip) {
+    _statTip = document.createElement('div'); _statTip.className = 'stat-tip'; _statTip.style.display = 'none';
+    document.body.appendChild(_statTip);
+    document.addEventListener('pointerdown', (e) => { if (!e.target.closest('.metric.has-tip')) hideStatTip(); }, true);
+    window.addEventListener('scroll', hideStatTip, true);
+  }
+  return _statTip;
+}
+function showStatTip(card, text) {
+  const t = statTipEl(); t.textContent = text; _tipFor = card;
+  t.style.display = 'block';
+  const vw = window.innerWidth, vh = window.innerHeight, pad = 8;
+  const tw = Math.min(300, vw - pad * 2); t.style.width = tw + 'px';
+  const r = card.getBoundingClientRect(), th = t.offsetHeight;
+  const left = Math.min(Math.max(pad, r.left), vw - tw - pad);
+  let top = r.bottom + 6; if (top + th > vh - pad) top = Math.max(pad, r.top - th - 6);   // flip above if no room below
+  t.style.left = `${left}px`; t.style.top = `${top}px`;
+}
+function hideStatTip() { if (_statTip) { _statTip.style.display = 'none'; _tipFor = null; } }
+
 function metric(label, val, sub, tip, opts = {}) {
   const m = el('div', 'metric' + (opts.span2 ? ' span2' : '') + (tip ? ' has-tip' : ''));
-  m.innerHTML = `<div class="m-label">${label}${tip ? '<span class="m-info" title="What is this?">i</span>' : ''}</div>
+  m.innerHTML = `<div class="m-label">${label}${tip ? '<span class="m-info" aria-hidden="true">i</span>' : ''}</div>
     <div class="m-val"${opts.valStyle ? ` style="${opts.valStyle}"` : ''}>${val}</div>
     ${sub ? `<div class="m-sub">${sub}</div>` : ''}
-    ${opts.bar || ''}
-    ${tip ? `<div class="m-tip">${tip}</div>` : ''}`;
-  if (tip) m.addEventListener('click', () => m.classList.toggle('show-tip'));   // tap to reveal on touch devices
+    ${opts.bar || ''}`;
+  if (tip) {
+    m.addEventListener('mouseenter', () => showStatTip(m, tip));
+    m.addEventListener('mouseleave', hideStatTip);
+    m.addEventListener('click', (e) => { e.stopPropagation(); (_tipFor === m) ? hideStatTip() : showStatTip(m, tip); });   // tap to toggle on touch
+  }
   return m;
 }
 function meterMetric(label, v, invert = false, tip) {

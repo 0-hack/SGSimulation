@@ -400,10 +400,10 @@ export function renderDash(state, ctx = {}) {
   const stanceLabel = { nonaligned: 'Non-Aligned', regional: 'Regional (ASEAN)', western: 'Western-Aligned', armed_neutral: 'Armed Neutrality' }[state.policies && state.policies.foreign_policy] || 'Non-Aligned';
   wrap.append(section('Defence & Security', [
     metric('🛡️ Defence strength', num(d.defence || 0), `need ${num(Math.round(d.defenceNeed || 0))} vs the threat`,
-      'The military might of the SAF — camps, naval & air bases and the arms industry, multiplied by National Service, the defence budget and R&D innovation. It must at least match what the external threat demands. Build it up, especially before the British garrison leaves in 1971.',
+      'The military might of your armed forces — camps, naval & air bases and the arms industry, multiplied by National Service, the defence budget and R&D innovation. It must at least match what the external threat demands. Build it up before a foreign-affairs crisis forces the issue.',
       { bar: bar(Math.min(100, sec * 55), secColor), valStyle: `color:${secColor}` }),
     metric('⚔️ External threat', `${threatPct}%`, `${threatWord} · stance: ${stanceLabel}`,
-      'How dangerous the region is for a small nation. High in the Konfrontasi 1960s, easing later. Your International Stance (in Policies) shifts it — Regional Cooperation and alliances lower it, isolation raises it — and events (a hostile neighbour, the British pull-out) can spike it.',
+      'How dangerous the region is for a small nation. It runs high in the early years and eases as the world settles. Your International Stance (in Policies) shifts it — Regional Cooperation and alliances lower it, isolation raises it — and foreign-affairs decisions (a hostile neighbour, a garrison leaving) can spike it.',
       { bar: bar(threatPct, threatPct >= 55 ? 'var(--bad)' : threatPct >= 35 ? 'var(--warn)' : 'var(--good)') }),
     metric('🏰 Security', `${sec.toFixed(2)} : 1`, secWord,
       'Defence strength versus the threat. Below 1 the nation is exposed — approval falls, investors take fright (trade income drops), and hostile provocations can strike. At or above 1 the little red dot can hold its own, reassuring citizens and capital alike.',

@@ -137,7 +137,7 @@ export const BUILDINGS = {
     name: 'Kampong', cat: 'residential', icon: '🛖', color: '#8d6e4f',
     cost: 5, upkeep: 0.2, year: 1965, homes: 1200, jobs: 0,
     power: -1, water: -2, pollution: 1, happiness: 2,
-    desc: 'A cluster of attap-roofed village huts on stilts. Cheap, but cramped and prone to fire & flooding. In 1965 over a third of Singaporeans still lived in kampongs and squatter colonies.',
+    desc: 'A cluster of attap-roofed village huts on stilts. Cheap to throw up, but cramped and prone to fire and flooding. Much of the population lives this way when nation-building begins.',
   },
   shophouse: {
     name: 'Shophouse Row', cat: 'residential', icon: '🏚️', color: '#d98f5a', customizable: true,
@@ -149,7 +149,7 @@ export const BUILDINGS = {
     name: 'HDB Flat', cat: 'residential', icon: '🏢', color: '#cf9b5f', customizable: true,
     cost: 30, upkeep: 1.2, year: 1965, homes: 5000, jobs: 0,
     power: -6, water: -8, pollution: 1, happiness: 5,
-    desc: 'Public housing from the Housing & Development Board. A 1-room "Emergency" flat (23 m²) cost about $6,000 to build and rented for ~$20/month; the HDB had already put up 54,000 flats by 1965. Affordable homes for the masses.',
+    desc: 'Public housing blocks — small, decent, cheap flats put up fast to clear the kampongs and shelter families en masse. The quickest way to house a growing nation.',
   },
   terrace: {
     name: 'Terrace Houses', cat: 'residential', icon: '🏘️', color: '#d9b58a', customizable: true,
@@ -164,10 +164,10 @@ export const BUILDINGS = {
     desc: 'A detached single-storey house with a porch and garden — comfortable middle-class living. Houses few, but lifts land value and happiness.',
   },
   walkup: {
-    name: 'SIT Walk-up Flats', cat: 'residential', icon: '🏢', color: '#e3d3a6', customizable: true,
+    name: 'Walk-up Flats', cat: 'residential', icon: '🏢', color: '#e3d3a6', customizable: true,
     cost: 20, upkeep: 0.8, year: 1965, homes: 3200, jobs: 120,
     power: -4, water: -6, pollution: 1, happiness: 5,
-    desc: 'Four-storey walk-up flats in the style the Singapore Improvement Trust built through the 1950s — no lifts, long common corridors, but solid, affordable homes that rehoused thousands from the kampongs.',
+    desc: 'Four-storey walk-up flats — no lifts, long common corridors, but solid, affordable homes that rehouse thousands from the kampongs. A no-frills early answer to the housing shortage.',
   },
   hdb_newtown: {
     name: 'HDB New Town', cat: 'residential', icon: '🏙️', color: '#e0a85e', customizable: true,
@@ -220,19 +220,19 @@ export const BUILDINGS = {
     name: 'Waste-to-Energy Plant', cat: 'power', icon: '♻️', color: '#7d8a5c',
     cost: 150, upkeep: 3.0, year: 1979, homes: 0, jobs: 110,
     power: 180, water: -4, pollution: 6, happiness: -1, health: 2,
-    desc: 'An incineration plant that burns refuse to raise steam for electricity — Singapore opened its first at Ulu Pandan in 1979. Powers the city AND shrinks the rubbish mountain.',
+    desc: 'An incineration plant that burns refuse to raise steam for electricity. Powers the city AND shrinks the rubbish mountain in one stroke.',
   },
   nuclear: {
     name: 'Nuclear Power Plant', cat: 'power', icon: '⚛️', color: '#8fd1c0',
     cost: 600, upkeep: 9.0, year: 1968, homes: 0, jobs: 300,
     power: 1200, water: -30, pollution: 1, happiness: -10,
-    desc: 'Enormous, near-zero-carbon baseload from nuclear fission — proven in the world from the 1950s, though Singapore (small and dense) never built one. Vast output, but huge cost, wary residents and a long shadow if it ever goes wrong.',
+    desc: 'Enormous, near-zero-carbon baseload from nuclear fission. Vast output, but a huge bill, wary residents on a crowded island, and a long shadow if it ever goes wrong.',
   },
   gas_power: {
     name: 'Combined-Cycle Gas', cat: 'power', icon: '🔥', color: '#5a8aa8',
     cost: 240, upkeep: 5.0, year: 1992, homes: 0, jobs: 140,
     power: 620, water: -10, pollution: 7, happiness: -2,
-    desc: 'A high-efficiency natural-gas plant — the workhorse that took over Singapore’s grid once piped gas arrived in the 1990s. Cleaner than oil, far more output per dollar.',
+    desc: 'A high-efficiency natural-gas plant — a modern grid workhorse once piped gas is available. Cleaner than oil, far more output per dollar.',
   },
 
   // ---- Water ----
@@ -246,7 +246,7 @@ export const BUILDINGS = {
     name: 'Major Reservoir', cat: 'water', icon: '🌊', color: '#3f86c4',
     cost: 90, upkeep: 1.5, year: 1965, homes: 0, jobs: 40,
     power: -4, water: 260, pollution: -3, happiness: 6, health: 4,
-    desc: 'A large dammed reservoir — the kind that grew into MacRitchie, Upper Seletar and, later, the Marina Barrage. A strategic store of fresh water that weans the nation off imported supply.',
+    desc: 'A large dammed reservoir catching and storing rainwater across a whole catchment. A strategic store of fresh water that weans the nation off imported supply.',
   },
   desal: {
     name: 'Desalination Plant', cat: 'water', icon: '🌊', color: '#2f6f9f',
@@ -266,13 +266,13 @@ export const BUILDINGS = {
     name: 'Factory', cat: 'industry', icon: '🏗️', color: '#a98c6b',
     cost: 50, upkeep: 1.5, year: 1965, homes: 0, jobs: 2500,
     power: -25, water: -15, pollution: 10, happiness: -3, income: 6,
-    desc: 'Light manufacturing in industrial estates like Jurong. Jobs and exports, with pollution.',
+    desc: 'Light manufacturing in purpose-built industrial estates. Jobs and exports, with a haze of pollution.',
   },
   port: {
     name: 'Container Port', cat: 'industry', icon: '🚢', color: '#5a7a8c',
     cost: 220, upkeep: 5.0, year: 1965, homes: 0, jobs: 5000,
     power: -40, water: -10, pollution: 8, happiness: -1, income: 22,
-    desc: 'A world-class transhipment hub. Enormous revenue and jobs — Singapore\'s lifeline.',
+    desc: 'A world-class transhipment hub. Enormous revenue and jobs — the trading nation\'s lifeline.',
   },
   office: {
     name: 'Business District', cat: 'industry', icon: '🏦', color: '#4a6fa5',
@@ -310,7 +310,7 @@ export const BUILDINGS = {
     name: 'Municipal Building', cat: 'civic', icon: '🏛️', color: '#efe7d4',
     cost: 60, upkeep: 2.0, year: 1965, homes: 0, jobs: 500,
     power: -6, water: -6, pollution: 0, happiness: 6, safety: 6, income: 2,
-    desc: 'A grand British colonial civic hall with columns and a clock tower — the administrative seat inherited from the empire.',
+    desc: 'A grand colonial-era civic hall with columns and a clock tower — the administrative seat inherited from the old empire.',
   },
   mrt: {
     name: 'MRT Station', cat: 'roads', icon: '🚇', color: '#9fb6c4', customizable: true,
@@ -322,7 +322,7 @@ export const BUILDINGS = {
     name: 'Train Station', cat: 'roads', icon: '🚉', color: '#c7a05a',
     cost: 24, upkeep: 0.6, year: 1965, homes: 0, jobs: 120,
     power: -4, water: -2, pollution: 1, happiness: 4,
-    desc: 'An old-school 1965 railway station in the colonial style — a long platform canopy, a clock-towered booking hall and a steam/diesel train at the platform. Put it on the railway line so trains stop in town.',
+    desc: 'An old-school railway station in the colonial style — a long platform canopy, a clock-towered booking hall and a steam/diesel train at the platform. Put it on the railway line so trains stop in town.',
   },
   street_lamp: {
     name: 'Street Lamp', cat: 'roads', icon: '💡', color: '#d8c27a',
@@ -389,19 +389,19 @@ export const BUILDINGS = {
     name: 'Standpipe & Mains', cat: 'water', icon: '🚰', color: '#6fa8cc',
     cost: 8, upkeep: 0.3, year: 1965, homes: 0, jobs: 40,
     power: -1, water: 120, pollution: -1, happiness: 4, health: 4,
-    desc: 'Piped water mains and communal standpipes for the kampongs. In 1965 many villagers still queued at a shared tap — clean water cut disease sharply. Cheap and weather-proof.',
+    desc: 'Piped water mains and communal standpipes for the kampongs, where many still queue at a shared tap. Clean water cuts disease sharply. Cheap and weather-proof.',
   },
   sewage: {
     name: 'Sewerage Works', cat: 'water', icon: '🚽', color: '#7d8a6f',
     cost: 45, upkeep: 2.0, year: 1965, homes: 0, jobs: 200,
     power: -14, water: -2, pollution: -10, happiness: 4, health: 12,
-    desc: 'Modern sewers and treatment to replace the night-soil bucket system still used across 1960s Singapore. Banishes filth and disease — vital, unglamorous nation-building.',
+    desc: 'Modern sewers and treatment to replace the night-soil bucket system of the old town. Banishes filth and disease — vital, unglamorous nation-building.',
   },
   community_centre: {
     name: 'Community Centre', cat: 'civic', icon: '🤝', color: '#d8a24e',
     cost: 10, upkeep: 0.5, year: 1965, homes: 0, jobs: 80,
     power: -3, water: -3, pollution: 0, happiness: 6, safety: 6, education: 4,
-    desc: 'A People\'s Association centre — classes, clubs and grassroots events that knit a multiracial nation together. The PA had been opening these island-wide since 1960.',
+    desc: 'A neighbourhood hall — classes, clubs and grassroots events that knit a multiracial nation together, one estate at a time.',
   },
   clinic: {
     name: 'Outpatient Clinic', cat: 'civic', icon: '🩺', color: '#d99a9a',
@@ -413,7 +413,7 @@ export const BUILDINGS = {
     name: 'Fire Station', cat: 'civic', icon: '🚒', color: '#cc5a4a',
     cost: 26, upkeep: 1.6, year: 1965, homes: 0, jobs: 250,
     power: -4, water: -6, pollution: 0, happiness: 2, safety: 13,
-    desc: 'Fire engines and crews. After the 1961 Bukit Ho Swee fire left 16,000 homeless, fire protection for the crowded attap settlements was a matter of survival.',
+    desc: 'Fire engines and crews. In a town of tinder-dry attap huts packed wall to wall, a single blaze can leave thousands homeless — fire protection is a matter of survival.',
   },
   market: {
     name: 'Market & Hawkers', cat: 'civic', icon: '🛒', color: '#cf9050', customizable: true,
@@ -425,25 +425,25 @@ export const BUILDINGS = {
     name: 'Technical Institute', cat: 'civic', icon: '🔧', color: '#7fa07f',
     cost: 55, upkeep: 3.0, year: 1965, homes: 0, jobs: 500,
     power: -10, water: -10, pollution: 0, happiness: 2, education: 16,
-    desc: 'Vocational and technical training — fitters, electricians, draughtsmen — to staff the new Jurong factories. A skilled workforce was the bet behind industrialisation.',
+    desc: 'Vocational and technical training — fitters, electricians, draughtsmen — to staff the new factories. A skilled workforce is the bet behind industrialisation.',
   },
   godown: {
     name: 'Godown & Wharf', cat: 'industry', icon: '📦', color: '#9c8463',
     cost: 45, upkeep: 1.5, year: 1965, homes: 0, jobs: 1800,
     power: -15, water: -6, pollution: 4, happiness: -1, income: 12,
-    desc: 'Riverside warehouses and quays for the entrepôt trade — bumboats lightering cargo up the Singapore River. The age-old business of buying, storing and re-exporting the region\'s goods.',
+    desc: 'Riverside warehouses and quays for the entrepôt trade — bumboats lightering cargo up the river. The age-old business of buying, storing and re-exporting the region\'s goods.',
   },
   processing: {
     name: 'Rubber & Tin Works', cat: 'industry', icon: '🛞', color: '#8a7a5a',
     cost: 48, upkeep: 1.8, year: 1965, homes: 0, jobs: 2200,
     power: -22, water: -12, pollution: 9, happiness: -3, income: 9,
-    desc: 'Mills that grade and pack the region\'s rubber and smelt its tin — the commodities Singapore lived off before industrialisation. Steady export earnings, but smoky.',
+    desc: 'Mills that grade and pack the region\'s rubber and smelt its tin — the commodities the port lived off before industrialisation. Steady export earnings, but smoky.',
   },
   cinema: {
     name: 'Cinema', cat: 'leisure', icon: '🎬', color: '#c9608f',
     cost: 18, upkeep: 0.8, year: 1965, homes: 0, jobs: 300,
     power: -8, water: -3, pollution: 0, happiness: 9, income: 5,
-    desc: 'A grand movie palace in the golden age of Cathay and Shaw — Malay, Hindi, Hokkien and Hollywood films were the cheap thrill of the masses. A big happiness lift.',
+    desc: 'A grand movie palace in the golden age of cinema — Malay, Hindi, Hokkien and Hollywood films are the cheap thrill of the masses. A big happiness lift.',
   },
   stadium: {
     name: 'Sports Stadium', cat: 'leisure', icon: '🏟️', color: '#5fa86a',
@@ -481,7 +481,7 @@ export const BUILDINGS = {
     name: 'Vertical Farm', cat: 'agriculture', icon: '🏢', color: '#46b06a',
     cost: 90, upkeep: 2.5, year: 2014, homes: 0, jobs: 200,
     power: -20, water: -10, pollution: 0, happiness: 3, income: 18, food: 40000,
-    desc: 'Stacked rotating growing towers under LED light — pioneered right here. Enormous food output from a tiny footprint, powering the "30 by 30" self-sufficiency drive.',
+    desc: 'Stacked rotating growing towers under LED light. Enormous food output from a tiny footprint — the modern drive for home-grown food security.',
   },
 
   // ---- More options, 1965 → present (priced by year + currency strength) -----
@@ -495,19 +495,19 @@ export const BUILDINGS = {
     name: 'Community Garden', cat: 'green', icon: '🌻', color: '#7fb24a',
     cost: 6, upkeep: 0.1, year: 1995, homes: 0, jobs: 20,
     power: 0, water: -2, pollution: -2, happiness: 5, income: 0, food: 800,
-    desc: 'Allotment plots tended by residents under the Community in Bloom scheme — herbs, fruit and flowers that green the estate and bring neighbours together.',
+    desc: 'Allotment plots tended by residents — herbs, fruit and flowers that green the estate and bring neighbours together.',
   },
   wafer_fab: {
     name: 'Wafer Fab', cat: 'industry', icon: '🔬', color: '#7f8fa6',
     cost: 200, upkeep: 7, year: 1987, homes: 0, jobs: 1500,
     power: -50, water: -25, pollution: 8, happiness: -2, income: 40,
-    desc: 'A semiconductor fabrication plant — clean-rooms etching silicon wafers. The high-tech manufacturing that pulled the economy up the value chain in the 1980s–90s.',
+    desc: 'A semiconductor fabrication plant — clean-rooms etching silicon wafers. The high-tech manufacturing that pulls an economy up the value chain.',
   },
   biomed_park: {
     name: 'Biomedical Park', cat: 'industry', icon: '🧬', color: '#8a6fc0',
     cost: 160, upkeep: 5, year: 2000, homes: 0, jobs: 2000,
     power: -30, water: -15, pollution: 2, happiness: 2, income: 30, education: 8,
-    desc: 'Pharma plants and research labs of the Biopolis era — vaccines, diagnostics and drug manufacturing. A new growth pillar built on brains, not just hands.',
+    desc: 'Pharma plants and research labs — vaccines, diagnostics and drug manufacturing. A new growth pillar built on brains, not just hands.',
   },
   data_centre: {
     name: 'Data Centre', cat: 'industry', icon: '🖥️', color: '#5b6b7a',
@@ -530,7 +530,7 @@ export const BUILDINGS = {
     name: 'Military Camp', cat: 'defence', icon: '🎖️', color: '#6a7152',
     cost: 40, upkeep: 3, year: 1966, homes: 0, jobs: 800,
     power: -6, water: -8, pollution: 2, happiness: -1, defence: 30,
-    desc: 'An SAF camp — barracks, a parade square and training grounds. The backbone of a citizen army built almost overnight after independence, when the new nation had barely two battalions to its name.',
+    desc: 'An army camp — barracks, a parade square and training grounds. The backbone of a citizen army raised almost from nothing after independence, when the young nation has barely a couple of battalions to its name.',
   },
   naval_base: {
     name: 'Naval Base', cat: 'defence', icon: '⚓', color: '#4a5f74',
@@ -548,13 +548,13 @@ export const BUILDINGS = {
     name: 'Defence Industries', cat: 'defence', icon: '🏭', color: '#77664f',
     cost: 75, upkeep: 3, year: 1967, homes: 0, jobs: 1500,
     power: -20, water: -10, pollution: 8, happiness: -2, income: 11, defence: 26,
-    desc: 'Ordnance and vehicle works in the spirit of Chartered Industries / ST Engineering — rifles, munitions and armour, first to equip the SAF, then a real export earner. Self-reliance you can sell.',
+    desc: 'Ordnance and vehicle works — rifles, munitions and armour, first to equip your own army, then a real export earner. Self-reliance you can sell.',
   },
   defence_lab: {
     name: 'Defence R&D Lab', cat: 'defence', icon: '🔬', color: '#6f7a86',
     cost: 95, upkeep: 4, year: 1972, homes: 0, jobs: 600,
     power: -14, water: -8, pollution: 1, happiness: 1, income: 6, education: 6, defence: 22,
-    desc: 'A DSO-style national defence laboratory — radar, electronic warfare, guided weapons and drones. Innovation that multiplies the punch of every camp, ship and jet the nation fields.',
+    desc: 'A national defence laboratory — radar, electronic warfare, guided weapons and drones. Innovation that multiplies the punch of every camp, ship and jet the nation fields.',
   },
 };
 
@@ -678,10 +678,10 @@ export const POLICIES = {
   },
   foreign_policy: {
     name: 'International Stance', type: 'level', year: 1965, icon: '🌐',
-    desc: 'How the young republic positions itself in a dangerous region and a Cold-War world. Alignment shapes external threat, trade & investment, and how citizens feel.',
+    desc: 'How the young republic positions itself in a dangerous region and a divided world. Alignment shapes external threat, trade & investment, and how citizens feel.',
     options: [
       { id: 'nonaligned', label: 'Non-Aligned', fx: {} },
-      { id: 'regional', label: 'Regional Cooperation (ASEAN)', fx: { threatMod: -0.22, approval: 4, incomeMult: 0.05, growth: 0.02 } },
+      { id: 'regional', label: 'Regional Cooperation', fx: { threatMod: -0.22, approval: 4, incomeMult: 0.05, growth: 0.02 } },
       { id: 'western', label: 'Western-Aligned', fx: { threatMod: -0.14, incomeMult: 0.12, jobsBoost: 0.05, approval: -3, migration: 0.1 } },
       { id: 'armed_neutral', label: 'Armed Neutrality', fx: { threatMod: -0.05, defenceMod: 0.25, upkeep: 5, approval: 2, stability: 6 } },
     ],
@@ -738,12 +738,12 @@ export const POLICIES = {
     default: 'low',
   },
   anti_corruption: {
-    name: 'Anti-Corruption (CPIB)', type: 'toggle', year: 1965, icon: '🕵️',
+    name: 'Anti-Corruption Drive', type: 'toggle', year: 1965, icon: '🕵️',
     desc: 'Ruthless graft-busting builds trust and attracts investment.',
     fx: { productivity: 0.1, approval: 5, stability: 8, incomeMult: 0.08 },
   },
   edb_incentives: {
-    name: 'Foreign Investment (EDB)', type: 'toggle', year: 1965, icon: '📈',
+    name: 'Foreign Investment Incentives', type: 'toggle', year: 1965, icon: '📈',
     desc: 'Tax incentives lure multinationals. Jobs and revenue, at a fiscal cost.',
     fx: { incomeMult: 0.15, jobsBoost: 0.12, upkeep: 6, growth: 0.03 },
   },
@@ -765,168 +765,362 @@ export const POLICIES = {
 };
 
 // ---------------------------------------------------------------------------
-// HISTORICAL & RANDOM EVENTS
-// `year/month` scheduled events fire once. Random events draw from the pool.
-// effects: flat deltas; choices: optional player decisions.
+// AFFAIRS OF STATE — the news the Prime Minister must answer
+//
+// There is NO fixed replay of real history here. Instead, FOREIGN and INTERNAL
+// affairs surface as briefings, driven by the state of YOUR nation and chance,
+// and each one puts a decision in your hands. Every choice pushes the country's
+// path — external threat, domestic unrest, growth, alliances — so which crises
+// come next, and how they land, are the product of the moves you have already
+// made. Two playthroughs never share the same timeline.
+//
+// Fields:
+//   scope        'foreign' | 'internal'  (how it's framed in the briefing)
+//   icon, title, body
+//   atStart      fire once at the very beginning (the founding briefing)
+//   once         fire at most once per game
+//   minYear/maxYear  era window it can appear in (tech/period appropriate)
+//   cooldownMonths   if it can recur, months before it may fire again
+//   weight       base likelihood among eligible affairs
+//   when(state,d) gate/weight by the nation's condition — return a falsy value
+//                to skip, or a NUMBER to scale its weight (a shaky, threatened
+//                nation draws more of the crises that fit its condition)
+//   effects      immediate deltas applied when the briefing opens (optional)
+//   choice       { prompt, options:[{ label, fx }] } — the PM's move; `fx`
+//                branches the nation via treasury/approval/threatSpike/growth/
+//                growthShock/incomeMult/jobsBoost/healthShock/pollutionSpike/
+//                fuelShock/unrest/flag/unlockMany/spawn/project deltas.
 // ---------------------------------------------------------------------------
-export const HISTORICAL_EVENTS = [
+export const AFFAIRS = [
+  // ---- The founding briefing (once, at the start) --------------------------
   {
-    id: 'separation', y: 1965, m: 8, title: 'A Nation Is Born',
-    body: 'On 9 August 1965, Singapore separates from Malaysia. With no natural resources and a tiny domestic market, survival is not guaranteed. The nation is in your hands.',
-    effects: { approval: 2 },
-  },
-  {
-    id: 'konfrontasi', y: 1965, m: 9, title: 'Konfrontasi',
-    body: 'Indonesia\'s armed "Confrontation" still smoulders — saboteurs have bombed MacDonald House, and a hostile neighbour rejects the new state. With barely two battalions, Singapore is dangerously exposed.',
-    effects: { approval: -3, threatSpike: 0.2 },
-  },
-  {
-    id: 'british_withdrawal', y: 1968, m: 1, title: 'British Forces Withdraw',
-    body: 'Britain announces it will pull its military out "East of Suez". Their bases were ~20% of the economy — AND the shield that guarded the island. You must create jobs fast, and build a defence of your own.',
-    effects: { treasury: -40, approval: -6, threatSpike: 0.18 },
+    id: 'founding', scope: 'internal', icon: '🇸🇬', atStart: true, once: true,
+    title: 'A Nation Is Born',
+    body: 'A young island republic stands alone: no resources, no hinterland, a tiny home market, and no guarantee it survives the decade. The whole story is unwritten — the direction is yours to set.',
     choice: {
-      prompt: 'How do you respond?',
+      prompt: 'Where do you plant the flag first?',
       options: [
-        { label: 'Industrialise — build the Jurong Estate', fx: { treasury: -20, approval: 2,
-          project: { id: 'jurong', title: 'Build the Jurong Industrial Estate',
-            hint: 'On the SW coast build Jurong Port, the Rubber & Tin works and 2 Factories',
-            need: [{ key: 'port', count: 1 }, { key: 'processing', count: 1 }, { key: 'factory', count: 2 }],
-            reward: { jobsBoost: 0.05, growth: 0.02, approval: 5 } } } },
-        { label: 'Austerity & caution', fx: { treasury: 20, approval: -4 } },
+        { label: 'Industrialise fast — chase factories & jobs', fx: { growth: 0.03, jobsBoost: 0.05, treasury: -15, approval: 1, flag: 'industry_first' } },
+        { label: 'Build institutions — clean govt, schools, housing', fx: { approval: 4, growth: 0.01, unrest: -0.06, flag: 'institutions_first' } },
+        { label: 'Stay lean — hoard reserves, take no chances', fx: { treasury: 25, approval: -3, flag: 'austerity_first' } },
       ],
     },
   },
-  {
-    id: 'oil_crisis', y: 1973, m: 10, title: '1973 Oil Crisis',
-    body: 'OPEC quadruples oil prices. For an island that imports every drop of fuel, the energy import bill soars — clean, home-grown power would soften the next one.',
-    effects: { treasury: -60, approval: -5, fuelShock: 1.4 },
-  },
-  {
-    id: 'mrt_debate', y: 1982, m: 5, title: 'The Great MRT Debate',
-    body: 'Should Singapore spend billions on a Mass Rapid Transit system, or stick with buses?',
-    choice: {
-      prompt: 'Approve the MRT?',
-      options: [
-        { label: 'Approve the MRT — build the network', fx: { treasury: -30, approval: 2, unlockMany: ['mrt'],
-          project: { id: 'mrt', title: 'Build the MRT network',
-            hint: 'Pick 🚇 MRT in Build › Transport to draw the elevated line, then place MRT Stations along it',
-            need: [{ key: 'mrt', count: 4 }], reward: { approval: 8, growth: 0.03 } } } },
-        { label: 'Buses are enough', fx: { approval: -3 } },
-      ],
-    },
-  },
-  {
-    id: 'east_coast', y: 1975, m: 6, title: 'East Coast Reclamation',
-    body: 'Dredgers have pumped a broad new shoreline up from the seabed off the east coast — hundreds of hectares of fresh, empty land. What rises on it?',
-    choice: {
-      prompt: 'Develop the reclaimed land as…',
-      options: [
-        { label: 'Develop a new HDB town there', fx: { treasury: -20, approval: 2,
-          project: { id: 'east_coast', title: 'Develop the East Coast',
-            hint: 'On the new east-coast land build an HDB New Town and a seaside Park',
-            need: [{ key: 'hdb_newtown', count: 1 }, { key: 'park', count: 1 }], reward: { approval: 6, growth: 0.02 } } } },
-        { label: 'Hold it in reserve for now', fx: { approval: -2 } },
-      ],
-    },
-  },
-  {
-    id: 'recession_85', y: 1985, m: 1, title: '1985 Recession',
-    body: 'Singapore enters its first post-independence recession. Output shrinks for the first time.',
-    effects: { treasury: -90, approval: -7, growthShock: -0.06 },
-  },
-  {
-    id: 'afc', y: 1997, m: 7, title: 'Asian Financial Crisis',
-    body: 'Currencies collapse across the region. Capital flees and trade slumps.',
-    effects: { treasury: -150, approval: -8, growthShock: -0.08 },
-  },
-  {
-    id: 'sars', y: 2003, m: 3, title: 'SARS Outbreak',
-    body: 'A deadly respiratory virus spreads through the region. Hospitals are overwhelmed — the government rushes up an isolation hospital and clinics.',
-    effects: { treasury: -80, approval: -6, healthShock: -25, spawn: [
-      { key: 'hospital', cx: 0.470, cy: 0.430 },
-      { key: 'clinic', cx: 0.488, cy: 0.446 },
-    ] },
-  },
-  {
-    id: 'gfc', y: 2008, m: 9, title: 'Global Financial Crisis',
-    body: 'Lehman Brothers collapses. Global trade and finance seize up.',
-    effects: { treasury: -160, approval: -7, growthShock: -0.07 },
-  },
-  {
-    id: 'covid', y: 2020, m: 2, title: 'COVID-19 Pandemic',
-    body: 'A global pandemic forces a "Circuit Breaker" lockdown. The economy and borders shut.',
-    effects: { treasury: -220, approval: -9, growthShock: -0.1, healthShock: -20 },
-  },
-];
 
-export const RANDOM_EVENTS = [
+  // ======================= FOREIGN AFFAIRS =================================
   {
-    id: 'flood', title: 'Flash Floods', minYear: 1965,
-    body: 'Monsoon rains overwhelm the drains. Low-lying areas are flooded.',
-    effects: { treasury: -25, approval: -4 },
-  },
-  {
-    id: 'dengue', title: 'Dengue Outbreak', minYear: 1966,
-    body: 'A surge in dengue cases strains clinics and worries residents.',
-    effects: { approval: -3, healthShock: -8 },
-  },
-  {
-    id: 'fdi', title: 'Multinational Comes Knocking', minYear: 1968,
-    body: 'A major electronics multinational is scouting for a regional base.',
+    id: 'border_incident', scope: 'foreign', icon: '⚔️', minYear: 1965, cooldownMonths: 40, weight: 3,
+    when: (s) => 0.5 + (s.threat || 0) * 2.2,
+    title: 'Forces Mass at the Strait',
+    body: 'A neighbour\'s troops and gunboats mass along the water. Saboteurs strike a landmark in town. The region is watching how the small state answers a shove.',
     choice: {
-      prompt: 'Offer them a deal?',
+      prompt: 'Your move, Prime Minister:',
       options: [
-        { label: 'Generous tax holiday', fx: { treasury: -30, incomeMult: 0.05, approval: 3,
-          project: { id: 'fdi', title: 'Host the electronics multinational',
-            hint: 'Build a Factory for the MNC to set up in',
-            need: [{ key: 'factory', count: 1 }], reward: { jobsBoost: 0.06 } } } },
-        { label: 'Decline', fx: {} },
+        { label: 'Stand firm — mobilise every reservist', fx: { threatSpike: 0.10, approval: 4, unrest: -0.05 } },
+        { label: 'Defuse it quietly through back channels', fx: { threatSpike: -0.15, incomeMult: 0.02, approval: 1 } },
+        { label: 'Seek a great power\'s protection', fx: { threatSpike: -0.22, approval: -3, flag: 'aligned' } },
       ],
     },
   },
   {
-    id: 'boom', title: 'Export Boom', minYear: 1970,
-    body: 'Global demand for your exports surges this quarter.',
-    effects: { treasury: 60, approval: 3 },
+    id: 'garrison_withdrawal', scope: 'foreign', icon: '🫡', once: true, minYear: 1967, maxYear: 1974, weight: 5,
+    title: 'The Foreign Garrison Will Leave',
+    body: 'The great-power garrison that has shielded the island — and whose bases are nearly a fifth of the economy — announces it is pulling out. The umbrella is closing. Jobs and security must now come from home.',
+    effects: { treasury: -35, approval: -5, threatSpike: 0.16 },
+    choice: {
+      prompt: 'How do you fill the void?',
+      options: [
+        { label: 'Raise a defence of our own', fx: { treasury: -15, approval: 2,
+          project: { id: 'own_defence', title: 'Stand up a national defence',
+            hint: 'Build 2 Military Camps and a home Defence Industries works',
+            need: [{ key: 'military_camp', count: 2 }, { key: 'weapons_factory', count: 1 }],
+            reward: { threatSpike: -0.14, approval: 6, jobsBoost: 0.03 } } } },
+        { label: 'Turn the bases into industry & jobs', fx: { treasury: -10,
+          project: { id: 'bases_to_industry', title: 'Convert the bases to industry',
+            hint: 'Build a Container Port and 2 Factories on the vacated land',
+            need: [{ key: 'port', count: 1 }, { key: 'factory', count: 2 }],
+            reward: { jobsBoost: 0.06, growth: 0.02, approval: 4 } } } },
+        { label: 'Retrench and hoard the reserves', fx: { treasury: 20, approval: -4, threatSpike: 0.04 } },
+      ],
+    },
   },
   {
-    id: 'haze', title: 'Transboundary Haze', minYear: 1991,
-    body: 'Smoke from regional fires blankets the island. Air quality plummets.',
-    effects: { approval: -5, pollutionSpike: 14, healthShock: -6 },
+    id: 'bloc_invite', scope: 'foreign', icon: '🤝', once: true, minYear: 1966, weight: 2.5,
+    title: 'A Regional Bloc Forms',
+    body: 'Neighbouring states propose a cooperation bloc — open markets, shared security, one voice in a rough neighbourhood. They want to know if the little republic is in.',
+    choice: {
+      prompt: 'Do you join?',
+      options: [
+        { label: 'Join wholeheartedly', fx: { threatSpike: -0.18, incomeMult: 0.05, growth: 0.02, flag: 'regionalist' } },
+        { label: 'Join, but guard our sovereignty', fx: { threatSpike: -0.08, incomeMult: 0.02, approval: 1 } },
+        { label: 'Stay fiercely independent', fx: { approval: 2, threatSpike: 0.05, flag: 'go_it_alone' } },
+      ],
+    },
   },
   {
-    id: 'water_dispute', title: 'Water Price Dispute', minYear: 1965,
-    body: 'A dispute over imported water from Johor reminds everyone how vulnerable the supply is. Invest in self-sufficiency?',
+    id: 'superpower_courtship', scope: 'foreign', icon: '🌐', cooldownMonths: 90, weight: 2, minYear: 1966,
+    when: (s) => (s.pathFlags && s.pathFlags.aligned ? 0.4 : 1) * (0.6 + (s.threat || 0) * 1.5),
+    title: 'A Superpower Comes Courting',
+    body: 'A great power dangles a security pact and a wave of investment — in return for basing rights and a tilt in its direction. Nothing is free.',
+    choice: {
+      prompt: 'Accept the embrace?',
+      options: [
+        { label: 'Sign the pact — take the money & shield', fx: { incomeMult: 0.10, jobsBoost: 0.06, threatSpike: -0.16, approval: -3, flag: 'aligned' } },
+        { label: 'Take the investment, dodge the alignment', fx: { incomeMult: 0.03, approval: 1 } },
+        { label: 'Politely decline — stay non-aligned', fx: { approval: 3, threatSpike: 0.03, flag: 'nonaligned_proud' } },
+      ],
+    },
+  },
+  {
+    id: 'oil_shock', scope: 'foreign', icon: '🛢️', minYear: 1970, cooldownMonths: 60, weight: 2,
+    title: 'Oil Shock',
+    body: 'A cartel far away chokes the taps and the price of every barrel leaps. For an island that imports every drop of fuel, the energy bill detonates.',
+    effects: { fuelShock: 1.3, treasury: -35, approval: -3 },
+    choice: {
+      prompt: 'How do you cushion the blow?',
+      options: [
+        { label: 'Subsidise fuel to shield households', fx: { treasury: -45, approval: 5 } },
+        { label: 'Push conservation & home-grown power', fx: { growth: 0.02, approval: -1, flag: 'energy_secure' } },
+        { label: 'Let prices bite, bank the savings', fx: { treasury: 15, approval: -6, unrest: 0.05 } },
+      ],
+    },
+  },
+  {
+    id: 'global_downturn', scope: 'foreign', icon: '📉', minYear: 1974, cooldownMonths: 84, weight: 2.5,
+    when: (s) => 0.7 + ((s.economy && s.economy.currency ? (1.4 - s.economy.currency) : 0) > 0 ? 0.6 : 0),
+    title: 'The World Economy Seizes Up',
+    body: 'Trade and finance freeze abroad. Order books empty, capital flees to safety, and an export economy feels the cold first.',
+    effects: { growthShock: -0.07, treasury: -60, approval: -5 },
+    choice: {
+      prompt: 'Your response to the slump:',
+      options: [
+        { label: 'Stimulus — spend to save jobs', fx: { treasury: -60, growth: 0.04, approval: 3 } },
+        { label: 'Austerity — protect the reserves', fx: { treasury: 30, approval: -5, growthShock: -0.02, unrest: 0.05 } },
+        { label: 'Retrain & climb the value chain', fx: { growth: 0.03, approval: -1, flag: 'upskilled' } },
+      ],
+    },
+  },
+  {
+    id: 'trade_dispute', scope: 'foreign', icon: '🚢', minYear: 1972, cooldownMonths: 72, weight: 1.8,
+    title: 'A Big Partner Slaps On Tariffs',
+    body: 'A major trading partner throws up a wall of tariffs, and a fat slice of exports is suddenly priced out. Retaliate, adapt, or swallow it?',
+    effects: { growthShock: -0.03, treasury: -20 },
+    choice: {
+      prompt: 'How do you answer the tariffs?',
+      options: [
+        { label: 'Hit back with our own tariffs', fx: { approval: 2, threatSpike: 0.03, growthShock: -0.02 } },
+        { label: 'Open new markets & a bigger port', fx: { growth: 0.02,
+          project: { id: 'new_markets', title: 'Chase new export markets',
+            hint: 'Expand the gateway: build a Container Port and a Business District',
+            need: [{ key: 'port', count: 1 }, { key: 'office', count: 1 }], reward: { incomeMult: 0.06, jobsBoost: 0.04 } } } },
+        { label: 'Concede to keep the peace', fx: { approval: -3, incomeMult: 0.01 } },
+      ],
+    },
+  },
+  {
+    id: 'refugee_influx', scope: 'foreign', icon: '⛵', minYear: 1975, cooldownMonths: 96, weight: 1.5,
+    when: (s) => 0.4 + (s.threat || 0) * 1.6,
+    title: 'Refugees Reach Our Shores',
+    body: 'Conflict up the coast sends boatloads of desperate people to your waters. The world is watching how a rich little state responds.',
+    choice: {
+      prompt: 'What do you do?',
+      options: [
+        { label: 'Take them in and resettle them', fx: { growth: 0.02, approval: -3, unrest: 0.05, flag: 'humanitarian' } },
+        { label: 'Grant safe passage, process a few', fx: { approval: 1, incomeMult: 0.01 } },
+        { label: 'Turn the boats away', fx: { approval: 2, threatSpike: 0.04, flag: 'hardline' } },
+      ],
+    },
+  },
+  {
+    id: 'water_dispute', scope: 'foreign', icon: '🚰', minYear: 1965, cooldownMonths: 72, weight: 2,
+    when: (s, d) => 0.6 + (d && d.waterRatio < 1 ? 1.4 : 0),
+    title: 'The Water Tap Is Weaponised',
+    body: 'A neighbour who sells you much of your drinking water hints it could turn off the tap in a quarrel. Nothing concentrates the mind like thirst.',
     choice: {
       prompt: 'Secure the water supply?',
       options: [
-        { label: 'Invest in water self-sufficiency', fx: { treasury: -15, approval: 2, unlockMany: ['reservoir_big'],
+        { label: 'Race for water self-sufficiency', fx: { treasury: -15, approval: 2, unlockMany: ['reservoir_big'],
           project: { id: 'water', title: 'Achieve water self-sufficiency',
-            hint: 'Build a Major Reservoir and 2 sets of Water Mains — now in Build › Water',
-            need: [{ key: 'reservoir_big', count: 1 }, { key: 'standpipe', count: 2 }], reward: { approval: 6 } } } },
-        { label: 'Keep relying on imports', fx: { approval: -4 } },
+            hint: 'Build a Major Reservoir and 2 sets of Water Mains (Build › Water)',
+            need: [{ key: 'reservoir_big', count: 1 }, { key: 'standpipe', count: 2 }], reward: { approval: 6, flag: 'water_secure' } } } },
+        { label: 'Negotiate a long supply treaty', fx: { treasury: -10, approval: 1, incomeMult: 0.01 } },
+        { label: 'Keep relying on imports', fx: { approval: -4, threatSpike: 0.03 } },
       ],
     },
   },
   {
-    id: 'grant', title: 'Budget Surplus Windfall', minYear: 1972,
-    body: 'Prudent reserves and strong revenue deliver an unexpected surplus.',
-    effects: { treasury: 80, approval: 4 },
-  },
-  {
-    id: 'regional_tension', title: 'Regional Tensions Flare', minYear: 1966,
-    body: 'A dispute with a neighbour sharpens — warships shadow the strait, rhetoric hardens. The region is watching how the little red dot responds.',
+    id: 'haze', scope: 'foreign', icon: '🌫️', minYear: 1980, cooldownMonths: 48, weight: 1.6,
+    title: 'Transboundary Haze',
+    body: 'Smoke from fires burning across the border blankets the island. The sky yellows, the airport dims, and every clinic fills with coughing residents.',
+    effects: { pollutionSpike: 14, approval: -4, healthShock: -6 },
     choice: {
-      prompt: 'How do you handle it?',
+      prompt: 'How do you handle the haze?',
       options: [
-        { label: 'Stand firm — mobilise the SAF', fx: { threatSpike: 0.12, approval: 3, stability: 4 } },
-        { label: 'Defuse it through diplomacy', fx: { threatSpike: -0.14, approval: 1, incomeMult: 0.02 } },
+        { label: 'Fund firefighting & press the neighbour', fx: { treasury: -20, approval: 3, incomeMult: 0.01 } },
+        { label: 'Hand out masks and wait it out', fx: { approval: -3, healthShock: -4 } },
       ],
     },
   },
   {
-    id: 'arms_deal', title: 'Arms Export Order', minYear: 1975,
-    body: 'A friendly government wants to buy from your defence industry — rifles, munitions, armoured vehicles. Good money, and a vote of confidence in home-grown technology.',
-    effects: { treasury: 55, approval: 2 },
+    id: 'arms_order', scope: 'foreign', icon: '🎯', minYear: 1975, cooldownMonths: 54, weight: 1.6,
+    when: (s, d) => (d && d.counts && d.counts.weapons_factory > 0) ? 2.5 : 0,
+    title: 'An Arms Export Order',
+    body: 'A foreign government wants to buy from your defence works — rifles, munitions, armoured vehicles. Good money, and a vote of confidence in home-grown technology.',
+    choice: {
+      prompt: 'Fill the order?',
+      options: [
+        { label: 'Sell freely — money talks', fx: { treasury: 70, threatSpike: 0.04, approval: -1 } },
+        { label: 'Sell only to friends', fx: { treasury: 40, approval: 2, flag: 'ethical_arms' } },
+        { label: 'Decline on principle', fx: { approval: 3 } },
+      ],
+    },
+  },
+
+  // ======================= INTERNAL AFFAIRS ===============================
+  {
+    id: 'labour_unrest', scope: 'internal', icon: '✊', minYear: 1965, cooldownMonths: 36, weight: 3,
+    when: (s, d) => 0.4 + (d ? d.unemployment * 8 : 0) + (s.unrest || 0) * 2,
+    title: 'The Unions Down Tools',
+    body: 'Wildcat strikes spread from the docks to the factories. Wages have not kept up, tempers have, and the wharves fall silent.',
+    choice: {
+      prompt: 'How do you break the deadlock?',
+      options: [
+        { label: 'Face down the strike, keep order', fx: { approval: -4, unrest: -0.12, growth: 0.02, flag: 'firm_hand' } },
+        { label: 'Broker a tripartite wage pact', fx: { treasury: -20, approval: 4, unrest: -0.16, growth: -0.01, flag: 'tripartite' } },
+        { label: 'Concede to the workers\' demands', fx: { approval: 5, growth: -0.03, unrest: -0.10 } },
+      ],
+    },
+  },
+  {
+    id: 'housing_crunch', scope: 'internal', icon: '🏚️', minYear: 1965, cooldownMonths: 48, weight: 3,
+    when: (s, d) => (d && d.housingPressure > 1) ? (1 + (d.housingPressure - 1) * 4) : 0.3,
+    title: 'A Housing Crisis Boils Over',
+    body: 'Families are doubling up in the kampongs, squatter colonies spread, and rents bite. The overcrowding is turning into anger on the streets.',
+    choice: {
+      prompt: 'How do you house the people?',
+      options: [
+        { label: 'Launch a mass public-housing drive', fx: { treasury: -20, approval: 2, unlockMany: ['hdb_flat', 'hdb_newtown'],
+          project: { id: 'housing_drive', title: 'Rehouse the nation',
+            hint: 'Build 3 HDB Flats (or an HDB New Town) to clear the crunch',
+            need: [{ key: 'hdb_flat', count: 3 }], reward: { approval: 8, unrest: -0.2 } } } },
+        { label: 'Impose rent controls', fx: { approval: 4, growth: -0.02, unrest: -0.06 } },
+        { label: 'Leave it to the market', fx: { approval: -6, unrest: 0.14 } },
+      ],
+    },
+  },
+  {
+    id: 'communal_tension', scope: 'internal', icon: '🕊️', minYear: 1965, cooldownMonths: 60, weight: 2,
+    when: (s) => 0.3 + (s.unrest || 0) * 3,
+    title: 'Communal Tensions Flare',
+    body: 'Rumours race through the neighbourhoods and scuffles break out between communities. A single spark could set the town alight; a curfew is on the table.',
+    choice: {
+      prompt: 'How do you keep the peace?',
+      options: [
+        { label: 'A drive for integration & harmony', fx: { treasury: -15, approval: 4, unrest: -0.18, flag: 'harmony' } },
+        { label: 'Curfew and heavy policing', fx: { approval: -3, unrest: -0.14, flag: 'firm_hand' } },
+        { label: 'Appeal for calm and hope it holds', fx: { approval: 0, unrest: -0.04 } },
+      ],
+    },
+  },
+  {
+    id: 'corruption_scandal', scope: 'internal', icon: '💼', minYear: 1966, cooldownMonths: 72, weight: 1.8,
+    when: (s) => (s.policies && s.policies.anti_corruption) ? 0.4 : 2,
+    title: 'A Minister Is Caught',
+    body: 'A senior official is exposed with his hand deep in the till. The press is circling, the public is disgusted, and every investor is watching what you do next.',
+    choice: {
+      prompt: 'How do you respond?',
+      options: [
+        { label: 'Prosecute without mercy', fx: { approval: 5, incomeMult: 0.05, unrest: -0.10, flag: 'clean_govt' } },
+        { label: 'Quiet reshuffle, no headlines', fx: { approval: -2, unrest: 0.06 } },
+        { label: 'Bury it and protect your own', fx: { approval: -6, incomeMult: -0.03, unrest: 0.14, flag: 'graft' } },
+      ],
+    },
+  },
+  {
+    id: 'epidemic', scope: 'internal', icon: '🦠', minYear: 1966, cooldownMonths: 66, weight: 2,
+    when: (s, d) => 0.6 + (d && d.healthCap < d.homes / 3000 ? 1.2 : 0),
+    title: 'An Epidemic Hits the Wards',
+    body: 'A fast-spreading disease overwhelms the hospitals. Beds run out, the sick queue in corridors, and fear empties the streets.',
+    effects: { healthShock: -16, approval: -4 },
+    choice: {
+      prompt: 'How do you fight the outbreak?',
+      options: [
+        { label: 'Lockdown & contact-trace hard', fx: { growthShock: -0.05, healthShock: 10, approval: -1 } },
+        { label: 'Rush up isolation hospitals', fx: { treasury: -40, healthShock: 6, approval: 2, spawn: [ { key: 'hospital', cx: 0.470, cy: 0.430 }, { key: 'clinic', cx: 0.488, cy: 0.446 } ] } },
+        { label: 'Ride it out, keep the economy open', fx: { healthShock: -8, approval: -5, unrest: 0.06 } },
+      ],
+    },
+  },
+  {
+    id: 'baby_bust', scope: 'internal', icon: '👶', minYear: 1982, cooldownMonths: 120, weight: 1.6,
+    when: (s, d) => (d && (d.dependency || 0) > 0.62) ? 2 : 0.5,
+    title: 'The Birth Rate Collapses',
+    body: 'Couples are having fewer children, later, or none. The maths is merciless: in a generation the workforce shrinks and the old outnumber the young.',
+    choice: {
+      prompt: 'How do you answer the demographic squeeze?',
+      options: [
+        { label: 'Pro-family baby bonuses & leave', fx: { treasury: -30, approval: 2, growth: 0.01, flag: 'pronatal' } },
+        { label: 'Open the doors to migrants', fx: { growth: 0.03, approval: -4, unrest: 0.06, flag: 'open_migration' } },
+        { label: 'Automate & lift productivity', fx: { growth: 0.02, approval: -1, flag: 'automation' } },
+      ],
+    },
+  },
+  {
+    id: 'flash_floods', scope: 'internal', icon: '🌊', minYear: 1965, cooldownMonths: 42, weight: 1.8,
+    title: 'Flash Floods',
+    body: 'A monsoon downpour overwhelms the drains. Low-lying streets vanish under brown water, shophouses are swamped, and the clean-up bill mounts.',
+    effects: { treasury: -25, approval: -3 },
+    choice: {
+      prompt: 'How do you respond?',
+      options: [
+        { label: 'Build proper canals & drainage', fx: { treasury: -25, approval: 3, growth: 0.01, flag: 'drained' } },
+        { label: 'Patch it up and hope', fx: { approval: -3, unrest: 0.05 } },
+      ],
+    },
+  },
+  {
+    id: 'fdi_courtship', scope: 'internal', icon: '🏭', minYear: 1968, cooldownMonths: 54, weight: 2,
+    title: 'A Multinational Comes Knocking',
+    body: 'A major electronics multinational is scouting the region for a base — thousands of jobs, and a signal to every other firm watching.',
+    choice: {
+      prompt: 'Offer them a deal?',
+      options: [
+        { label: 'Roll out a generous tax holiday', fx: { treasury: -30, incomeMult: 0.05, approval: 3,
+          project: { id: 'fdi', title: 'Host the multinational',
+            hint: 'Build a Factory for the firm to set up in',
+            need: [{ key: 'factory', count: 1 }], reward: { jobsBoost: 0.06, growth: 0.02 } } } },
+        { label: 'Standard terms, no giveaways', fx: { incomeMult: 0.02, approval: 1 } },
+        { label: 'Decline — keep our leverage', fx: { approval: 0 } },
+      ],
+    },
+  },
+  {
+    id: 'student_unrest', scope: 'internal', icon: '📣', minYear: 1966, maxYear: 1990, cooldownMonths: 60, weight: 1.4,
+    when: (s) => 0.3 + (s.unrest || 0) * 2.2,
+    title: 'Students Take to the Streets',
+    body: 'The campuses are in ferment — rallies, boycotts, and a list of demands. Idealism, or the thin end of something worse, depending on who you ask.',
+    choice: {
+      prompt: 'How do you meet the moment?',
+      options: [
+        { label: 'Open a dialogue and reform', fx: { approval: 3, unrest: -0.12, flag: 'reformist' } },
+        { label: 'Clamp down hard', fx: { approval: -3, unrest: -0.14, flag: 'authoritarian' } },
+      ],
+    },
+  },
+
+  // ---- Positive fortune (no choice — just good news) -----------------------
+  {
+    id: 'export_boom', scope: 'internal', icon: '📈', minYear: 1970, cooldownMonths: 36, weight: 1.4,
+    when: (s, d) => (d && d.unemployment < 0.06) ? 1.6 : 0.6,
+    title: 'Export Boom',
+    body: 'Global demand for your goods surges. Order books are full, the port runs day and night, and the treasury swells.',
+    effects: { treasury: 60, approval: 3 },
+  },
+  {
+    id: 'budget_windfall', scope: 'internal', icon: '💰', minYear: 1972, cooldownMonths: 48, weight: 1.2,
+    when: (s) => (s.treasury > 300) ? 1.5 : 0.6,
+    title: 'A Surplus Windfall',
+    body: 'Prudent reserves and strong revenue deliver an unexpected surplus. The books are healthier than the forecasts dared hope.',
+    effects: { treasury: 80, approval: 3 },
   },
 ];

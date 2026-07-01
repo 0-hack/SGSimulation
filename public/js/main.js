@@ -1335,6 +1335,11 @@ function showEvent() {
   disasterForPending();
   G.prevSpeed = G.speed || 1;
   setSpeed(0);
+  const kicker = $('event-kicker');
+  if (kicker) {
+    kicker.textContent = `${ev.icon || '📰'}  ${ev.kind || 'National News'}`;
+    kicker.className = 'event-kicker ' + (ev.scope === 'foreign' ? 'foreign' : 'internal');
+  }
   $('event-title').textContent = ev.title;
   $('event-body').textContent = ev.body;
   const actions = $('event-actions');
@@ -1360,17 +1365,17 @@ function showEvent() {
   $('event-modal').classList.remove('hidden');
 }
 
-// Map event ids to an animated disaster in the 3D scene.
+// Map affair ids to an animated disaster in the 3D scene.
 const DISASTER_FX = {
-  flood: 'flood', covid: 'haze', sars: 'haze', haze: 'haze',
-  oil_crisis: 'haze', recession_85: 'quake', afc: 'quake', gfc: 'quake',
+  flash_floods: 'flood', epidemic: 'haze', haze: 'haze',
+  oil_shock: 'haze', global_downturn: 'quake', trade_dispute: 'quake',
 };
 
 // Notify non-choice events via toast (engine stores lastEvent) + play FX.
 function maybeAnnounce() {
   if (G.state?.lastEvent) {
     const ev = G.state.lastEvent;
-    toast(`📰 ${ev.title}`);
+    toast(`${ev.icon || '📰'} ${ev.title}`);
     const fx = DISASTER_FX[ev.id];
     if (fx && G.view?.playDisaster) G.view.playDisaster(fx);
     G.state.lastEvent = null;

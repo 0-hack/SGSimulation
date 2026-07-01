@@ -2,7 +2,7 @@
 // Pure-ish logic (no DOM) so it can be unit-tested in Node as well.
 import {
   BUILDINGS, POLICIES, START_DATE, GRID_SIZE, POP_SCALE,
-  HISTORICAL_EVENTS, RANDOM_EVENTS, SANDBOX, FLEET_TIMELINE,
+  AFFAIRS, SANDBOX, FLEET_TIMELINE,
 } from './data.js';
 import { onLand, inReservoir, inRiver } from './shape.js';
 import { ROADS_LIVE } from './roadsLive.js';
@@ -73,9 +73,12 @@ export function newGame({ name = 'New Singapore', owner = 'Anonymous' } = {}) {
     debt: 0,                  // outstanding government bonds ($M)
     grid,
     policies,
-    flags: {},                // historical events fired
+    flags: {},                // affairs already fired (once-guards)
+    affairsAt: {},            // affair id -> month index it last fired (cooldowns)
+    pathFlags: {},            // choices that branch the nation's path (e.g. 'aligned')
+    unrest: 0.1,              // domestic unrest 0..1 — stoked by neglect & hard choices, drags approval, draws internal crises
     unlocked: {},             // buildings unlocked by choices
-    log: [{ d: { ...START_DATE }, text: 'Singapore gains independence. The journey begins.' }],
+    log: [{ d: { ...START_DATE }, text: 'A young republic stands alone. The journey begins — and the path is yours to write.' }],
     pendingEvent: null,       // event awaiting player choice
     roads: { nodes: [], edges: [], islands: [] }, // player-drawn freeform road network
     reclaimed: [],            // [x,y] sea cells reclaimed into finished, buildable land
@@ -166,6 +169,9 @@ export function ensureGrid(state) {
   if (typeof state.debt !== 'number') state.debt = 0;
   if (!state.climate) state.climate = { water: 1, heat: 0.3 };
   if (typeof state.threat !== 'number') state.threat = 0.5;
+  if (typeof state.unrest !== 'number') state.unrest = 0.1;
+  if (!state.affairsAt || typeof state.affairsAt !== 'object') state.affairsAt = {};
+  if (!state.pathFlags || typeof state.pathFlags !== 'object') state.pathFlags = {};
   // Older saves stored population as one number — split it into age cohorts once.
   if (!state.cohorts) { const P = state.population || 0; state.cohorts = { young: Math.round(P * 0.30), work: Math.round(P * 0.63), old: Math.round(P * 0.07) }; }
   if (!state.roads) state.roads = { nodes: [], edges: [], islands: [] };
@@ -1031,6 +1037,9 @@ function approvalTarget(state, d) {
   t -= (d.congestion || 0) * 8;           // a soul-crushing daily commute sours the mood
   // Home-grown food is a modest resilience/pride boost (no penalty for importing)
   t += clamp(d.foodSelf || 0, 0, 1) * 4;
+  // Domestic unrest — strikes, scandals, communal friction left to fester sour
+  // the national mood until they are answered.
+  t -= (state.unrest || 0) * 18;
   // Policy approval
   t += m.approval;
   // Fiscal stress — deficits and heavy national debt are unpopular
@@ -1060,6 +1069,8 @@ function applyEffects(state, fx, d) {
     state.perks.incomeMult += fx.incomeMult || 0;
   }
   if (fx.unlockMany) for (const k of fx.unlockMany) state.unlocked[k] = true;
+  if (fx.unrest) state.unrest = clamp((state.unrest || 0) + fx.unrest, 0, 1); // hard choices & neglect stoke (or calm) the streets
+  if (fx.flag) (state.pathFlags || (state.pathFlags = {}))[fx.flag] = true;    // record a branch in the nation's path
   if (fx.spawn) spawnDevelopment(state, fx.spawn); // a decision the government builds itself (e.g. an emergency hospital)
   if (fx.project) startProject(state, fx.project, d); // a decision the PLAYER is guided to build
 }
@@ -1146,15 +1157,50 @@ function nearestBuildableCell(state, gx, gy, rad) {
   return null;
 }
 
-function checkHistorical(state) {
-  for (const ev of HISTORICAL_EVENTS) {
-    if (state.flags[ev.id]) continue;
-    if (state.date.y > ev.y || (state.date.y === ev.y && state.date.m >= ev.m)) {
-      state.flags[ev.id] = true;
-      fireEvent(state, ev);
-      return; // one per tick keeps it readable
-    }
+// A month index for cooldown bookkeeping (monotonic across years).
+function monthIndex(date) { return date.y * 12 + date.m; }
+
+// How eligible an affair is right now: 0 = cannot fire, >0 = pick-weight.
+// Gates on era window, once/cooldown, and the affair's own `when(state,d)`
+// condition (which can also SCALE the weight so crises that fit the nation's
+// current condition are the ones most likely to surface).
+function affairWeight(state, d, a, mi) {
+  if (a.atStart) return 0;                                     // founding briefing is fired separately
+  if (a.minYear && state.date.y < a.minYear) return 0;
+  if (a.maxYear && state.date.y > a.maxYear) return 0;
+  if (a.once && state.flags[a.id]) return 0;
+  const at = state.affairsAt || (state.affairsAt = {});
+  if (a.cooldownMonths && at[a.id] != null && (mi - at[a.id]) < a.cooldownMonths) return 0;
+  let w = a.weight != null ? a.weight : 1;
+  if (a.when) { const r = a.when(state, d); if (!r) return 0; if (typeof r === 'number') w *= r; }
+  return w > 0 ? w : 0;
+}
+
+// Emergent affairs of state — foreign & internal news the PM must answer. No
+// fixed real-history replay: the founding briefing opens the game, then crises
+// surface from the nation's OWN condition (threat, unrest, joblessness, housing)
+// plus chance, and the player's choices push that condition — so the timeline
+// branches into each player's own path.
+function maybeAffair(state) {
+  if (state.pendingEvent) return;
+  const d = derive(state);
+  const mi = monthIndex(state.date);
+  // The founding briefing fires first, once.
+  if (!state.flags.founding) {
+    const f = AFFAIRS.find((a) => a.atStart);
+    if (f) { fireEvent(state, f); return; }
   }
+  // Monthly chance rises with external tension and domestic unrest, so a shaky,
+  // threatened nation faces more decisions to steer through — capped so even a
+  // nation in crisis isn't interrupted every single month.
+  const pressure = clamp(1 + (state.threat || 0) * 0.8 + (state.unrest || 0) * 1.2, 1, 2.2);
+  if (Math.random() > (1 / 13) * pressure) return;
+  let total = 0; const pool = [];
+  for (const a of AFFAIRS) { const w = affairWeight(state, d, a, mi); if (w > 0) { pool.push([a, w]); total += w; } }
+  if (total <= 0) return;
+  let r = Math.random() * total, pick = pool[0][0];
+  for (const [a, w] of pool) { r -= w; if (r <= 0) { pick = a; break; } }
+  fireEvent(state, pick);
 }
 
 // World-technology timeline: when a building tech or fleet generation reaches
@@ -1184,25 +1230,19 @@ function checkNewTech(state) {
   if (fresh.length) (state.newTech || (state.newTech = [])).push(...fresh);
 }
 
-function maybeRandomEvent(state) {
-  if (state.pendingEvent) return;
-  // ~ roughly one random event every ~14 months
-  if (Math.random() > 1 / (14 * DAYS_IN_MONTH)) return;
-  const pool = RANDOM_EVENTS.filter((e) => state.date.y >= (e.minYear || 0));
-  if (!pool.length) return;
-  const ev = pool[Math.floor(Math.random() * pool.length)];
-  fireEvent(state, ev);
-}
+// Short label for the news log / toast, by scope.
+function affairKind(ev) { return ev.scope === 'foreign' ? 'Foreign Affairs' : 'Internal Affairs'; }
 
 function fireEvent(state, ev) {
   const d = derive(state);
   applyEffects(state, ev.effects, d);
-  logEvent(state, ev.title);
-  if (ev.choice) {
-    state.pendingEvent = { id: ev.id, title: ev.title, body: ev.body, choice: ev.choice };
-  } else {
-    state.lastEvent = { id: ev.id, title: ev.title, body: ev.body };
-  }
+  state.flags[ev.id] = true;                                   // once-guard
+  (state.affairsAt || (state.affairsAt = {}))[ev.id] = monthIndex(state.date);   // cooldown clock
+  const icon = ev.icon || '📰';
+  logEvent(state, `${icon} ${ev.title}`);
+  const brief = { id: ev.id, scope: ev.scope || 'internal', kind: affairKind(ev), icon, title: ev.title, body: ev.body };
+  if (ev.choice) state.pendingEvent = { ...brief, choice: ev.choice };
+  else state.lastEvent = brief;
 }
 
 export function resolveEvent(state, optionIndex) {
@@ -1210,7 +1250,7 @@ export function resolveEvent(state, optionIndex) {
   if (!ev) return;
   const opt = ev.choice.options[optionIndex];
   applyEffects(state, opt?.fx, derive(state));
-  logEvent(state, `${ev.title}: ${opt?.label || 'decided'}`);
+  logEvent(state, `↳ ${ev.title}: ${opt?.label || 'decided'}`);
   state.pendingEvent = null;
 }
 
@@ -1266,6 +1306,12 @@ function monthlyUpdate(state, d) {
   // from traffic: gridlocked, idling cars foul the air.
   const pollTarget = clamp((d.pollutionSrc + (d.congestion || 0) * 12) * 1.2 * (1 + m.pollutionMult), 0, 100);
   state.pollution = clamp(approach(state.pollution, pollTarget, 0.2), 0, 100);
+
+  // Domestic unrest cools each month, but joblessness and overcrowding keep it
+  // simmering — so internal crises can brew from the ground conditions the player
+  // lets slide, not just from prior events.
+  const unrestPush = Math.max(0, d.unemployment - 0.08) * 0.5 + Math.max(0, d.housingPressure - 1) * 0.10;
+  state.unrest = clamp((state.unrest || 0) * 0.96 + unrestPush, 0, 1);
 
   // --- Finances ($ millions / month) ---
   // Congestion wastes working hours, so it drags productivity (and thus tax revenue).
@@ -1445,9 +1491,8 @@ export function tickDay(state) {
 
   if (state.date.d === 1) {
     monthlyUpdate(state, derive(state));
-    checkHistorical(state);
     checkNewTech(state);      // announce world inventions that reached their historical year
-    maybeRandomEvent(state);
+    maybeAffair(state);       // emergent foreign/internal affairs the PM must answer
   }
 
   refreshSummary(state);

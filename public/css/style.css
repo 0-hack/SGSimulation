@@ -426,7 +426,14 @@ body.edit-mode #city {
 }
 @keyframes pop { from { transform: scale(.92); opacity: 0; } to { transform: scale(1); opacity: 1; } }
 .modal-icon { width: 46px; height: 46px; margin: 0 auto; color: var(--coral); background: #fdeef0; border-radius: 14px; padding: 9px; }
-.modal-card h2 { margin: 14px 0 8px; font-size: 20px; font-weight: 800; letter-spacing: -0.3px; }
+/* Foreign vs internal affairs kicker above the title, so the PM instantly reads
+   what KIND of briefing this is before the headline. */
+.event-kicker { display: inline-flex; align-items: center; gap: 6px; margin: 12px auto 0; padding: 4px 11px;
+  border-radius: 999px; font-size: 10.5px; font-weight: 800; letter-spacing: .7px; text-transform: uppercase; }
+.event-kicker:empty { display: none; }
+.event-kicker.foreign { color: #2b6fb0; background: #e7f1fb; }
+.event-kicker.internal { color: #a8642a; background: #fbf0e2; }
+.modal-card h2 { margin: 10px 0 8px; font-size: 20px; font-weight: 800; letter-spacing: -0.3px; }
 .modal-card p { color: var(--muted); font-size: 14px; line-height: 1.55; }
 .modal-actions { display: grid; gap: 10px; margin-top: 18px; }
 

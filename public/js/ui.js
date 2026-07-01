@@ -338,6 +338,9 @@ export function renderDash(state, ctx = {}) {
       'Share of food grown on the island. Most is imported (so a low figure is historically normal), but market gardens, poultry, fish and modern farms raise resilience against supply shocks — the spirit of the "30 by 30" goal.'),
     metric('🏭 Trade & industry', `${money(trade)}/mo`, 'business revenue',
       'Monthly revenue from the entrepôt trade — the port, godowns, factories, shops and offices Singapore lived on. This is the engine of the treasury; grow it to fund housing and services.'),
+    metric('📦 Import bill', `${money(d.importBill || 0)}/mo`, trade - (d.importBill || 0) >= 0 ? `trade surplus ${money(trade - (d.importBill || 0))}/mo` : `trade deficit ${money((d.importBill || 0) - trade)}/mo`,
+      'What the island must buy from abroad each month — food it doesn\'t grow, fuel for its fossil power stations, and general materials. It swells when the currency is weak or an oil shock hits, and shrinks as you build self-sufficiency: farms for food, and solar/nuclear for clean, fuel-free power. The eternal vulnerability of a resource-poor city-state.',
+      { valStyle: `color:${trade - (d.importBill || 0) >= 0 ? 'var(--good)' : 'var(--bad)'}` }),
   ]));
 
   // ---- ECONOMY -------------------------------------------------------------
@@ -421,8 +424,9 @@ export function renderDash(state, ctx = {}) {
     ledger.append(row('Income tax', f.incomeTax, 'pos'));
     if (f.gst > 0) ledger.append(row('GST', f.gst, 'pos'));
     ledger.append(row('Business & trade', f.business, 'pos'));
-    const svc = f.upkeep - (f.interest || 0) - (f.social || 0);
+    const svc = f.upkeep - (f.interest || 0) - (f.social || 0) - (f.imports || 0);
     ledger.append(row('Upkeep & services', -svc, 'neg'));
+    if (f.imports > 0.05) ledger.append(row('Imports (food, fuel, materials)', -f.imports, 'neg'));
     if (f.social > 0.05) ledger.append(row('Pensions & elder care', -f.social, 'neg'));
     if (f.interest > 0.005) ledger.append(row('Bond interest', -f.interest, 'neg'));
     const net = el('div', 'row');

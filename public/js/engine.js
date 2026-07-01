@@ -813,6 +813,11 @@ function policyMods(state) {
 // sources — desalination, NEWater, piped mains/standpipes — are weather-proof.
 const RAIN_WATER = new Set(['reservoir', 'reservoir_big']);
 
+// Fossil-fuelled generation burns IMPORTED fuel (oil, then gas), so it adds to the
+// national import bill; clean sources (solar, nuclear) don't. The player can cut the
+// bill — and exposure to oil shocks — by going clean.
+const FOSSIL_POWER = new Set(['diesel', 'power_station', 'gas_power', 'waste_energy']);
+
 // ---------------------------------------------------------------------------
 // Neighbourhood coverage — where you build finally MATTERS. The map is bucketed
 // into coarse ~16-cell districts. Every service building (schools, clinics, parks,
@@ -849,7 +854,7 @@ function neighbourhoodCoverage(emitters, receivers) {
 }
 
 export function derive(state) {
-  let homes = 0, jobs = 0, food = 0, powerGen = 0, powerUse = 0, waterGen = 0, waterUse = 0, waterGenRain = 0;
+  let homes = 0, jobs = 0, food = 0, powerGen = 0, powerUse = 0, waterGen = 0, waterUse = 0, waterGenRain = 0, fossilGen = 0;
   let pollutionSrc = 0, happinessLocal = 0, directIncome = 0, bUpkeep = 0;
   let eduCap = 0, healthCap = 0, safetyCap = 0, defenceCap = 0;
   let counts = {};
@@ -874,7 +879,7 @@ export function derive(state) {
       homes += (b.homes || 0) * w;
       food += (b.food || 0) * w;
       jobs += (b.jobs || 0) * w;
-      if (b.power > 0) powerGen += b.power * w; else powerUse += -b.power * w;
+      if (b.power > 0) { powerGen += b.power * w; if (FOSSIL_POWER.has(cell.k)) fossilGen += b.power * w; } else powerUse += -b.power * w;
       if (b.water > 0) { if (RAIN_WATER.has(cell.k)) waterGenRain += b.water * w; else waterGen += b.water * w; } else waterUse += -b.water * w;
       pollutionSrc += (b.pollution || 0) * w;
       happinessLocal += (b.happiness || 0) * w;
@@ -954,10 +959,22 @@ export function derive(state) {
   const foodNeed = Math.max(1, pop);
   const foodSelf = clamp(food / foodNeed, 0, 1.5);
 
+  // IMPORT BILL — a resource-poor island buys most of what it eats, burns and uses.
+  // Food it doesn't grow, fuel for its fossil power stations, and general materials
+  // all come from abroad, so the bill scales DOWN with self-sufficiency (farms, clean
+  // energy) and UP when the currency is weak (imports priced in stronger money) or an
+  // oil shock strikes (state.fuelShock). Exposed exactly where the real Singapore was.
+  const cur = (state.economy && state.economy.currency) || 1;
+  const currencyFactor = clamp(2 - cur, 0.6, 1.7);         // weak SGD → dearer imports
+  const foodImport = (1 - clamp(foodSelf, 0, 1)) * (pop / 1000) * 0.42;
+  const energyImport = fossilGen * 0.02 * (1 + (state.fuelShock || 0));
+  const materialsImport = (pop / 1000) * 0.34;
+  const importBill = (foodImport + energyImport + materialsImport) * currencyFactor;
+
   return {
     homes, jobs: mods_jobs, baseJobs: jobs, counts,
     food, foodNeed, foodSelf,
-    powerGen, powerUse, powerRatio,
+    powerGen, powerUse, powerRatio, fossilGen,
     waterGen, waterUse, waterRatio,
     pollutionSrc, happinessLocal, directIncome, bUpkeep,
     eduCap, healthCap, safetyCap,
@@ -966,6 +983,7 @@ export function derive(state) {
     young: co.young, working: co.work, elderly: co.old, dependency,
     defenceCap, defence, threat, defenceNeed, security, insecurity,
     crimeRisk, diseaseRisk, accidentRisk,
+    importBill, foodImport, energyImport, materialsImport,
     mods,
   };
 }
@@ -1019,6 +1037,7 @@ function applyEffects(state, fx, d) {
   if (fx.pollutionSpike) state.pollution = clamp(state.pollution + fx.pollutionSpike, 0, 100);
   if (fx.healthShock) state.health = clamp(state.health + fx.healthShock, 0, 100);
   if (fx.threatSpike) state.threatBuf = (state.threatBuf || 0) + fx.threatSpike;  // an event ratchets external tension up (decays over months)
+  if (fx.fuelShock) state.fuelShock = (state.fuelShock || 0) + fx.fuelShock;       // an oil shock swells the energy import bill (decays)
   if (fx.unlock) state.unlocked[fx.unlock] = true;
   // growthShock / growth modifiers are temporary; store as a decaying buffer.
   if (fx.growthShock) state.growthBuf = (state.growthBuf || 0) + fx.growthShock;
@@ -1266,14 +1285,23 @@ function monthlyUpdate(state, d) {
   const social = pension + elderCare;
   upkeep += social;
 
+  // Import bill — a resource-poor island buys most of its food, fuel and materials
+  // from abroad (d.importBill). Self-sufficiency (farms, clean energy) shrinks it; a
+  // weak currency or an oil shock swells it. A real, structural drain on the treasury.
+  const imports = d.importBill || 0;
+  upkeep += imports;
+
   // Debt servicing — interest on outstanding government bonds.
   const interest = (state.debt || 0) * bondRate(state) / 12;
   upkeep += interest;
 
+  // Oil/fuel shock (from events) fades over time.
+  if (state.fuelShock) state.fuelShock *= 0.88;
+
   const net = grossIncome - upkeep;
   state.treasury += net;
   state.lastFinance = {
-    incomeTax, gst, business, grossIncome, upkeep, interest, social, net,
+    incomeTax, gst, business, grossIncome, upkeep, interest, social, imports, net,
   };
 
   // --- Population dynamics, by AGE COHORT (monthly slices) ------------------

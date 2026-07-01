@@ -210,6 +210,27 @@ try {
   ok(inc.highDis > inc.lowDis + 0.15, `disease risk tracks conditions — high when unhealthy & crowded, low when cared for (${inc.lowDis} → ${inc.highDis})`);
   ok(inc.neglected >= 6, `a neglected nation suffers a stream of incidents (${inc.neglected} crime/disease/accidents over 12 years)`);
 
+  // ---- Import-dependent economy: the island buys food, fuel & materials -------
+  const trade = await p.evaluate(() => {
+    const st = window.__sg.state, D = () => window.__sg.derive();
+    const d0 = D();
+    st.economy.currency = 1; const strong = D().importBill;
+    st.economy.currency = 0.7; const weak = D().importBill;
+    st.economy.currency = 1;
+    st.fuelShock = 0; const noShock = D().energyImport;
+    st.fuelShock = 1.4; const shock = D().energyImport;
+    st.fuelShock = 0;
+    const food0 = D().foodImport;
+    let placed = 0;
+    for (let y = 4; y < st.grid.length - 4 && placed < 16; y++) for (let x = 4; x < st.grid[y].length - 4 && placed < 16; x++) if (!st.grid[y][x] && window.__sgview.isLand(x, y)) { st.grid[y][x] = { k: 'poultry_farm' }; placed++; }
+    const food1 = D().foodImport;
+    return { bill: +d0.importBill.toFixed(1), strong: +strong.toFixed(1), weak: +weak.toFixed(1), noShock: +noShock.toFixed(1), shock: +shock.toFixed(1), food0: +food0.toFixed(1), food1: +food1.toFixed(1) };
+  });
+  ok(trade.bill > 20, `a resource-poor island runs a real import bill from day one ($${trade.bill}M/mo)`);
+  ok(trade.weak > trade.strong + 5, `a weak currency swells the import bill ($${trade.strong}M → $${trade.weak}M)`);
+  ok(trade.shock > trade.noShock + 10, `an oil shock spikes the fuel import bill ($${trade.noShock}M → $${trade.shock}M)`);
+  ok(trade.food1 < trade.food0 - 5, `growing your own food cuts food imports ($${trade.food0}M → $${trade.food1}M)`);
+
   // ---- WHERE you build matters: local service access & industrial blight ------
   const cov = await p.evaluate(() => {
     const st = window.__sg.state, D = () => window.__sg.derive();

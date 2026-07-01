@@ -798,8 +798,8 @@ export const HISTORICAL_EVENTS = [
   },
   {
     id: 'oil_crisis', y: 1973, m: 10, title: '1973 Oil Crisis',
-    body: 'OPEC quadruples oil prices. Power and fuel costs surge worldwide.',
-    effects: { treasury: -60, approval: -5, pollutionSpike: 0 },
+    body: 'OPEC quadruples oil prices. For an island that imports every drop of fuel, the energy import bill soars — clean, home-grown power would soften the next one.',
+    effects: { treasury: -60, approval: -5, fuelShock: 1.4 },
   },
   {
     id: 'mrt_debate', y: 1982, m: 5, title: 'The Great MRT Debate',

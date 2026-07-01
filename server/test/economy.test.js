@@ -145,6 +145,46 @@ try {
   ok(demo.agedOldPct > demo.startOldPct + 8 && demo.agedWorkPct < demo.startWorkPct - 8 && demo.agedDep > 0.85,
     `decades of low births + closed borders grey the nation (elderly ${demo.startOldPct}%→${demo.agedOldPct}%, working ${demo.startWorkPct}%→${demo.agedWorkPct}%, dependency ${demo.agedDep})`);
 
+  // ---- DEFENCE & FOREIGN AFFAIRS ---------------------------------------------
+  const def = await p.evaluate(() => {
+    const st = window.__sg.state, v = window.__sgview, D = () => window.__sg.derive();
+    const emptyLand = () => { for (let y = 4; y < st.grid.length - 4; y++) for (let x = 4; x < st.grid[y].length - 4; x++) if (!st.grid[y][x] && v.isLand(x, y)) return { x, y }; };
+    const clearMil = () => { for (let y = 0; y < st.grid.length; y++) for (let x = 0; x < st.grid[y].length; x++) { const c = st.grid[y][x]; if (c && ['military_camp', 'naval_base', 'air_base', 'weapons_factory', 'defence_lab'].includes(c.k)) st.grid[y][x] = null; } };
+
+    st.date = { y: 1965, m: 8, d: 9 }; st.threat = 0.5; clearMil();
+    const start = D(); // British shield in place
+
+    st.date = { y: 1975, m: 6, d: 1 };
+    const bare = D(); // British gone, no forces of our own
+
+    let c; c = emptyLand(); st.grid[c.y][c.x] = { k: 'air_base' };
+    for (let i = 0; i < 3; i++) { c = emptyLand(); st.grid[c.y][c.x] = { k: 'military_camp' }; }
+    const armed = D();
+
+    st.policies.national_service = true; const ns = D().defence; st.policies.national_service = false;
+
+    // investor confidence: business income under low vs high security
+    clearMil(); st.date = { y: 1975, m: 6, d: 1 }; window.__sg.tick(31); const bizInsecure = st.lastFinance.business;
+    c = emptyLand(); st.grid[c.y][c.x] = { k: 'air_base' }; for (let i = 0; i < 3; i++) { c = emptyLand(); st.grid[c.y][c.x] = { k: 'military_camp' }; }
+    window.__sg.tick(31); const bizSecure = st.lastFinance.business;
+
+    // International Stance: Regional Cooperation vs Non-Aligned threat (1 year)
+    const runStance = (s) => { st.threat = 0.5; st.threatBuf = 0; st.policies.foreign_policy = s; st.date = { y: 1985, m: 1, d: 1 }; window.__sg.tick(365); return st.threat; };
+    const thReg = runStance('regional'), thNon = runStance('nonaligned');
+
+    return {
+      startSec: +start.security.toFixed(2), bareSec: +bare.security.toFixed(2),
+      bareDef: Math.round(bare.defence), armedDef: Math.round(armed.defence), armedSec: +armed.security.toFixed(2), nsDef: Math.round(ns),
+      bizInsecure: +bizInsecure.toFixed(1), bizSecure: +bizSecure.toFixed(1),
+      thReg: +thReg.toFixed(2), thNon: +thNon.toFixed(2),
+    };
+  });
+  ok(def.startSec >= 1 && def.bareSec < 0.3, `the British garrison secures 1965 (${def.startSec}); after they leave in 1971 an undefended nation is exposed (${def.bareSec})`);
+  ok(def.armedDef > def.bareDef + 100 && def.armedSec > def.bareSec + 0.8, `building an air base + camps restores security (defence ${def.bareDef} → ${def.armedDef})`);
+  ok(def.nsDef > def.armedDef + 50, `National Service multiplies military strength (${def.armedDef} → ${def.nsDef})`);
+  ok(def.bizSecure > def.bizInsecure, `investors reward security — trade income is higher when the nation is safe ($${def.bizInsecure}M → $${def.bizSecure}M/mo)`);
+  ok(def.thReg < def.thNon - 0.1, `International Stance bites: Regional Cooperation lowers the external threat vs Non-Aligned (${def.thReg} vs ${def.thNon})`);
+
   // ---- WHERE you build matters: local service access & industrial blight ------
   const cov = await p.evaluate(() => {
     const st = window.__sg.state, D = () => window.__sg.derive();

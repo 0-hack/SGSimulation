@@ -84,6 +84,7 @@ export function newGame({ name = 'New Singapore', owner = 'Anonymous' } = {}) {
     reclaimedAreas: [],       // { poly, cells } finished free-shaped reclaimed land (smooth coastline)
     economy: { inflation: 0.02, priceIndex: 1, currency: 1 }, // dynamic inflation / price level / SGD strength
     climate: { water: 1, heat: 0.3 },   // live weather → reservoir yield (water) & heat/aircon load, driven by the 3D scene
+    threat: 0.5,   // external/regional danger (0 calm … 1 dire). 1965 opened tense — Konfrontasi, a hostile split from Malaysia, Britain leaving. Offset by military strength; shaped by the International Stance.
     constructing: [],         // [x,y] cells whose building is still being built
     demolishing: [],          // [x,y] cells whose building is being torn down (timed teardown)
     plants: [],               // individually-placed tropical plants: { x, z, kind, rot, s } in world coords
@@ -164,6 +165,7 @@ export function ensureGrid(state) {
   unpackState(state); // expand a sparse-saved grid back to the dense 2D array
   if (typeof state.debt !== 'number') state.debt = 0;
   if (!state.climate) state.climate = { water: 1, heat: 0.3 };
+  if (typeof state.threat !== 'number') state.threat = 0.5;
   // Older saves stored population as one number — split it into age cohorts once.
   if (!state.cohorts) { const P = state.population || 0; state.cohorts = { young: Math.round(P * 0.30), work: Math.round(P * 0.63), old: Math.round(P * 0.07) }; }
   if (!state.roads) state.roads = { nodes: [], edges: [], islands: [] };
@@ -782,6 +784,8 @@ function policyMods(state) {
     incomeMult: 0, jobsBoost: 0, stability: 0, upkeep: 0,
     gstRevenue: 0, pollutionMult: 0, waterDemandMult: 0,
     cpfRetire: 0,   // share of elderly support self-funded through CPF (vs borne by the treasury)
+    threatMod: 0,   // international stance's effect on external threat (diplomacy lowers it)
+    defenceMod: 0,  // multiplier on military strength (National Service, defence budget, posture)
   };
   const add = (fx) => {
     if (!fx) return;
@@ -847,7 +851,7 @@ function neighbourhoodCoverage(emitters, receivers) {
 export function derive(state) {
   let homes = 0, jobs = 0, food = 0, powerGen = 0, powerUse = 0, waterGen = 0, waterUse = 0, waterGenRain = 0;
   let pollutionSrc = 0, happinessLocal = 0, directIncome = 0, bUpkeep = 0;
-  let eduCap = 0, healthCap = 0, safetyCap = 0;
+  let eduCap = 0, healthCap = 0, safetyCap = 0, defenceCap = 0;
   let counts = {};
   const emitters = [], receivers = [];   // for the neighbourhood-coverage pass below
 
@@ -878,6 +882,7 @@ export function derive(state) {
       eduCap += (b.education || 0) * w;
       healthCap += (b.health || 0) * w;
       safetyCap += (b.safety || 0) * w;
+      defenceCap += (b.defence || 0) * w;
       bUpkeep += (b.upkeep || 0) * w;
     }
   }
@@ -912,6 +917,22 @@ export function derive(state) {
   // Old-age dependency: non-working (young + elderly) supported per working adult.
   const dependency = workforce > 0 ? (co.young + co.old) / workforce : 0;
 
+  // DEFENCE — military strength from camps, bases and the arms industry, multiplied
+  // by National Service, the defence budget and posture (mods.defenceMod), and by
+  // home-grown innovation (each defence R&D lab sharpens the whole force). It stands
+  // against the external THREAT: a bigger, richer nation is a bigger prize, so it
+  // needs more of it. Security ≥ 1 means the nation can hold its own.
+  const labInnov = Math.min(0.6, (counts.defence_lab || 0) * 0.09);
+  // The British garrison shielded the island at independence and drew down to nothing
+  // by the 1971 "East of Suez" withdrawal — so the early nation is protected while it
+  // races to raise its own forces, and the security crisis lands exactly when they leave.
+  const britShield = clamp((1971 - state.date.y) / 6, 0, 1) * 42;
+  const defence = defenceCap * (1 + mods.defenceMod) * (1 + labInnov) + britShield;
+  const threat = state.threat == null ? 0.5 : state.threat;
+  const defenceNeed = threat * (26 + pop / 2200 + mods_jobs / 2600);   // scales with the size of the prize
+  const security = clamp(defence / Math.max(1, defenceNeed), 0, 2);
+  const insecurity = clamp(1 - security, 0, 1);
+
   // Housing pressure: >1 means overcrowded.
   const housingPressure = homes > 0 ? pop / homes : (pop > 0 ? 3 : 0);
 
@@ -931,6 +952,7 @@ export function derive(state) {
     workforce, employed, unemployment, housingPressure,
     serviceAccess: cov.serviceAccess, blight: cov.blight,
     young: co.young, working: co.work, elderly: co.old, dependency,
+    defenceCap, defence, threat, defenceNeed, security, insecurity,
     mods,
   };
 }
@@ -946,6 +968,10 @@ function approvalTarget(state, d) {
   // An ageing, dependency-heavy society strains services and stokes anxiety about
   // pensions and care (eased by immigration keeping the workforce young).
   t -= clamp(((d.dependency || 0.6) - 0.62) * 14, 0, 10);
+  // Security: a nation that cannot defend itself against a real external threat is a
+  // frightened one; a strong, secure defence reassures (up to a point).
+  t -= (d.insecurity || 0) * 14;
+  t += clamp(((d.security || 0) - 1) * 4, 0, 4);
   // Utilities
   t += d.powerRatio >= 1 ? 6 : -clamp((1 - d.powerRatio) * 40, 0, 40);
   t += d.waterRatio >= 1 ? 6 : -clamp((1 - d.waterRatio) * 40, 0, 40);
@@ -979,6 +1005,7 @@ function applyEffects(state, fx, d) {
   if (fx.approval) state.approval = clamp(state.approval + fx.approval, 0, 100);
   if (fx.pollutionSpike) state.pollution = clamp(state.pollution + fx.pollutionSpike, 0, 100);
   if (fx.healthShock) state.health = clamp(state.health + fx.healthShock, 0, 100);
+  if (fx.threatSpike) state.threatBuf = (state.threatBuf || 0) + fx.threatSpike;  // an event ratchets external tension up (decays over months)
   if (fx.unlock) state.unlocked[fx.unlock] = true;
   // growthShock / growth modifiers are temporary; store as a decaying buffer.
   if (fx.growthShock) state.growthBuf = (state.growthBuf || 0) + fx.growthShock;
@@ -1199,7 +1226,11 @@ function monthlyUpdate(state, d) {
   const taxBase = (d.employed / 1000) * 0.9 * productivity;
   const incomeTax = taxBase * m.taxMult;
   const gst = m.gstRevenue > 0 ? (popReal / 1000) * 0.25 : 0;
-  const business = d.directIncome * (1 + m.incomeMult + perks.incomeMult);
+  // Investor confidence: capital shuns an insecure nation and rewards a safe, stable
+  // one — so trade & business income scale with security. Peace and a credible
+  // defence are, in the end, an economic policy.
+  const confidence = 0.72 + 0.28 * clamp(d.security || 1, 0, 1.25);
+  const business = d.directIncome * (1 + m.incomeMult + perks.incomeMult) * confidence;
   const grossIncome = incomeTax + gst + business;
 
   // Building upkeep — weighted, so a fractional heritage structure costs a fraction
@@ -1269,11 +1300,39 @@ function monthlyUpdate(state, d) {
   co.old = Math.max(0, co.old + wToO - deathsOld + growthAdd * 0.10 - shortage * 0.05);
   state.population = Math.max(0, Math.round(co.young + co.work + co.old));
 
+  // --- External threat & security ------------------------------------------
+  // The region's danger level eases toward an era baseline, pushed down by good
+  // diplomacy (the International Stance, m.threatMod) and up by event shocks
+  // (Konfrontasi, the British pull-out, regional flare-ups) held in a decaying buffer.
+  const threatTgt = clamp(threatBaseline(state.date.y) + m.threatMod + (state.threatBuf || 0), 0.05, 1);
+  state.threat = clamp(approach(state.threat, threatTgt, 0.06), 0, 1);
+  state.threatBuf = (state.threatBuf || 0) * 0.9;
+  // An underdefended nation facing a real threat gets TESTED — a maritime
+  // provocation, a border incident, capital taking fright. Strong defences make it
+  // vanishingly rare; weak ones invite it, and each incident ratchets tensions up.
+  if (d.insecurity > 0.35 && state.threat > 0.4 && Math.random() < d.insecurity * state.threat * 0.16) {
+    const hit = Math.round(18 + d.insecurity * 80);
+    state.treasury -= hit;
+    state.approval = clamp(state.approval - (3 + d.insecurity * 5), 0, 100);
+    state.threatBuf = (state.threatBuf || 0) + 0.06;
+    logEvent(state, `⚔️ A hostile provocation exploits weak defences — $${hit}M lost and the nation rattled. Build up the SAF.`);
+  }
+
   // Approval glides toward its target.
   state.approval = clamp(approach(state.approval, approvalTarget(state, d), 0.25), 0, 100);
 
   // Settle inflation / price level from this month's economic performance.
   updateEconomy(state, d);
+}
+
+// Baseline regional danger by era — the Cold War and Konfrontasi made the 1960s–70s
+// perilous for a tiny new state; it eased with ASEAN and prosperity, with a modest
+// modern uptick (terrorism, great-power friction). The International Stance shifts it.
+function threatBaseline(year) {
+  if (year < 1971) return 0.55;   // Konfrontasi hangover; Britain still leaving
+  if (year < 1980) return 0.44;   // post-withdrawal; racing to build the SAF
+  if (year < 2001) return 0.32;   // relative calm under a stable ASEAN
+  return 0.4;                     // 9/11-era security concerns; sharper rivalries
 }
 
 // ---------------------------------------------------------------------------

@@ -45,6 +45,7 @@ export const CATEGORIES = [
   { id: 'water', name: 'Water', icon: '💧' },
   { id: 'industry', name: 'Economy', icon: '🏭' },
   { id: 'civic', name: 'Services', icon: '🏥' },
+  { id: 'defence', name: 'Defence', icon: '🛡️' },
   { id: 'green', name: 'Environment', icon: '🌳' },
   { id: 'plants', name: 'Plants', icon: '🌿' },
   { id: 'agriculture', name: 'Farms', icon: '🌾' },
@@ -520,6 +521,41 @@ export const BUILDINGS = {
     power: -35, water: 140, pollution: 1, happiness: 1, income: 0,
     desc: 'Reverse-osmosis plant turning seawater into drinking water — the fourth national tap. Drought-proof, but thirsty for electricity.',
   },
+
+  // ---- Defence — the SAF, its bases and the home-grown arms industry. `defence`
+  //      is military strength that offsets external THREAT; camps & bases cost
+  //      upkeep (guns vs butter), the weapons works earns arms exports, and the
+  //      defence lab multiplies it all through innovation. ----------------------
+  military_camp: {
+    name: 'Military Camp', cat: 'defence', icon: '🎖️', color: '#6a7152',
+    cost: 40, upkeep: 3, year: 1966, homes: 0, jobs: 800,
+    power: -6, water: -8, pollution: 2, happiness: -1, defence: 30,
+    desc: 'An SAF camp — barracks, a parade square and training grounds. The backbone of a citizen army built almost overnight after independence, when the new nation had barely two battalions to its name.',
+  },
+  naval_base: {
+    name: 'Naval Base', cat: 'defence', icon: '⚓', color: '#4a5f74',
+    cost: 90, upkeep: 5, year: 1967, homes: 0, jobs: 1200,
+    power: -12, water: -10, pollution: 3, happiness: -1, income: 2, defence: 52,
+    desc: 'A naval station guarding the sea lanes a trading nation lives or dies by. Place it on the coast. Patrol craft, later missile corvettes and submarines, secure the Strait.',
+  },
+  air_base: {
+    name: 'Air Base', cat: 'defence', icon: '✈️', color: '#5a6470',
+    cost: 130, upkeep: 7, year: 1968, homes: 0, jobs: 1000,
+    power: -16, water: -8, pollution: 5, happiness: -3, defence: 68,
+    desc: 'Runways, hangars and fast jets — the sharp edge of deterrence. Air power is how a small state makes any aggressor think twice ("a poisonous shrimp"). Noisy neighbours, though.',
+  },
+  weapons_factory: {
+    name: 'Defence Industries', cat: 'defence', icon: '🏭', color: '#77664f',
+    cost: 75, upkeep: 3, year: 1967, homes: 0, jobs: 1500,
+    power: -20, water: -10, pollution: 8, happiness: -2, income: 11, defence: 26,
+    desc: 'Ordnance and vehicle works in the spirit of Chartered Industries / ST Engineering — rifles, munitions and armour, first to equip the SAF, then a real export earner. Self-reliance you can sell.',
+  },
+  defence_lab: {
+    name: 'Defence R&D Lab', cat: 'defence', icon: '🔬', color: '#6f7a86',
+    cost: 95, upkeep: 4, year: 1972, homes: 0, jobs: 600,
+    power: -14, water: -8, pollution: 1, happiness: 1, income: 6, education: 6, defence: 22,
+    desc: 'A DSO-style national defence laboratory — radar, electronic warfare, guided weapons and drones. Innovation that multiplies the punch of every camp, ship and jet the nation fields.',
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -637,8 +673,29 @@ export const POLICIES = {
   },
   national_service: {
     name: 'National Service', type: 'toggle', year: 1967, icon: '🎖️',
-    desc: 'Compulsory military service. Essential defence & stability; mild unpopularity.',
-    fx: { stability: 12, approval: -3, upkeep: 3 },
+    desc: 'Compulsory military service — every son serves. It turns a tiny population into a credible citizen army, multiplying the strength of every camp and base, and steadies the nation. Mildly unpopular; costs manpower.',
+    fx: { stability: 12, approval: -3, upkeep: 3, defenceMod: 0.6 },
+  },
+  foreign_policy: {
+    name: 'International Stance', type: 'level', year: 1965, icon: '🌐',
+    desc: 'How the young republic positions itself in a dangerous region and a Cold-War world. Alignment shapes external threat, trade & investment, and how citizens feel.',
+    options: [
+      { id: 'nonaligned', label: 'Non-Aligned', fx: {} },
+      { id: 'regional', label: 'Regional Cooperation (ASEAN)', fx: { threatMod: -0.22, approval: 4, incomeMult: 0.05, growth: 0.02 } },
+      { id: 'western', label: 'Western-Aligned', fx: { threatMod: -0.14, incomeMult: 0.12, jobsBoost: 0.05, approval: -3, migration: 0.1 } },
+      { id: 'armed_neutral', label: 'Armed Neutrality', fx: { threatMod: -0.05, defenceMod: 0.25, upkeep: 5, approval: 2, stability: 6 } },
+    ],
+    default: 'nonaligned',
+  },
+  defence_budget: {
+    name: 'Defence Budget', type: 'level', year: 1965, icon: '🪖',
+    desc: 'How much of the national budget goes to the armed forces — the classic "guns vs butter" choice. More spending sharpens every unit\'s strength but drains the treasury.',
+    options: [
+      { id: 'minimal', label: 'Minimal', fx: { defenceMod: -0.25, approval: 1 } },
+      { id: 'standard', label: 'Standard', fx: {} },
+      { id: 'strong', label: 'Strong (≈5% of GDP)', fx: { defenceMod: 0.3, upkeep: 8, approval: -2, incomeMult: 0.04 } },
+    ],
+    default: 'standard',
   },
   education_policy: {
     name: 'Education Policy', type: 'level', year: 1966, icon: '📚',
@@ -719,9 +776,14 @@ export const HISTORICAL_EVENTS = [
     effects: { approval: 2 },
   },
   {
+    id: 'konfrontasi', y: 1965, m: 9, title: 'Konfrontasi',
+    body: 'Indonesia\'s armed "Confrontation" still smoulders — saboteurs have bombed MacDonald House, and a hostile neighbour rejects the new state. With barely two battalions, Singapore is dangerously exposed.',
+    effects: { approval: -3, threatSpike: 0.2 },
+  },
+  {
     id: 'british_withdrawal', y: 1968, m: 1, title: 'British Forces Withdraw',
-    body: 'Britain announces it will pull its military out "East of Suez". Their bases were ~20% of the economy. You must create jobs fast.',
-    effects: { treasury: -40, approval: -6 },
+    body: 'Britain announces it will pull its military out "East of Suez". Their bases were ~20% of the economy — AND the shield that guarded the island. You must create jobs fast, and build a defence of your own.',
+    effects: { treasury: -40, approval: -6, threatSpike: 0.18 },
     choice: {
       prompt: 'How do you respond?',
       options: [
@@ -850,5 +912,21 @@ export const RANDOM_EVENTS = [
     id: 'grant', title: 'Budget Surplus Windfall', minYear: 1972,
     body: 'Prudent reserves and strong revenue deliver an unexpected surplus.',
     effects: { treasury: 80, approval: 4 },
+  },
+  {
+    id: 'regional_tension', title: 'Regional Tensions Flare', minYear: 1966,
+    body: 'A dispute with a neighbour sharpens — warships shadow the strait, rhetoric hardens. The region is watching how the little red dot responds.',
+    choice: {
+      prompt: 'How do you handle it?',
+      options: [
+        { label: 'Stand firm — mobilise the SAF', fx: { threatSpike: 0.12, approval: 3, stability: 4 } },
+        { label: 'Defuse it through diplomacy', fx: { threatSpike: -0.14, approval: 1, incomeMult: 0.02 } },
+      ],
+    },
+  },
+  {
+    id: 'arms_deal', title: 'Arms Export Order', minYear: 1975,
+    body: 'A friendly government wants to buy from your defence industry — rifles, munitions, armoured vehicles. Good money, and a vote of confidence in home-grown technology.',
+    effects: { treasury: 55, approval: 2 },
   },
 ];

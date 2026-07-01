@@ -378,6 +378,28 @@ export function renderDash(state, ctx = {}) {
       'Dirty air from industry and power stations. High pollution harms health and happiness; parks, nature, the MRT and clean energy bring it down.'),
   ]));
 
+  // ---- DEFENCE & SECURITY --------------------------------------------------
+  const threatPct = Math.round((d.threat || 0) * 100);
+  const threatWord = threatPct >= 55 ? 'dangerous' : threatPct >= 35 ? 'tense' : 'calm';
+  const sec = d.security || 0;
+  const secWord = sec >= 1 ? 'secure' : sec >= 0.7 ? 'exposed' : 'at risk';
+  const secColor = sec >= 1 ? 'var(--good)' : sec >= 0.7 ? 'var(--warn)' : 'var(--bad)';
+  const stanceLabel = { nonaligned: 'Non-Aligned', regional: 'Regional (ASEAN)', western: 'Western-Aligned', armed_neutral: 'Armed Neutrality' }[state.policies && state.policies.foreign_policy] || 'Non-Aligned';
+  wrap.append(section('Defence & Security', [
+    metric('🛡️ Defence strength', num(d.defence || 0), `need ${num(Math.round(d.defenceNeed || 0))} vs the threat`,
+      'The military might of the SAF — camps, naval & air bases and the arms industry, multiplied by National Service, the defence budget and R&D innovation. It must at least match what the external threat demands. Build it up, especially before the British garrison leaves in 1971.',
+      { bar: bar(Math.min(100, sec * 55), secColor), valStyle: `color:${secColor}` }),
+    metric('⚔️ External threat', `${threatPct}%`, `${threatWord} · stance: ${stanceLabel}`,
+      'How dangerous the region is for a small nation. High in the Konfrontasi 1960s, easing later. Your International Stance (in Policies) shifts it — Regional Cooperation and alliances lower it, isolation raises it — and events (a hostile neighbour, the British pull-out) can spike it.',
+      { bar: bar(threatPct, threatPct >= 55 ? 'var(--bad)' : threatPct >= 35 ? 'var(--warn)' : 'var(--good)') }),
+    metric('🏰 Security', `${sec.toFixed(2)} : 1`, secWord,
+      'Defence strength versus the threat. Below 1 the nation is exposed — approval falls, investors take fright (trade income drops), and hostile provocations can strike. At or above 1 the little red dot can hold its own, reassuring citizens and capital alike.',
+      { bar: bar(Math.min(100, sec * 55), secColor), valStyle: `color:${secColor};font-size:16px` }),
+    metric('🌐 Foreign policy', stanceLabel, 'set in Policies',
+      'Your chosen place in the world, decided in the Policy panel. Non-Aligned keeps a free hand; Regional Cooperation (ASEAN) calms the neighbourhood; Western-Aligned pulls in investment and defence backing at some domestic cost; Armed Neutrality deters through sheer strength. Each ripples through threat, trade and approval.',
+      { valStyle: 'font-size:15px' }),
+  ]));
+
   // ---- FINANCIAL PLANNING --------------------------------------------------
   wrap.append(el('div', 'section-title', 'Financial Planning'));
   // Finance ledger

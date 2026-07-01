@@ -6103,6 +6103,62 @@ export function makeBuilding(key, theme) {
     } else {
       for (const [x, z] of [[-2, -2], [2, -1], [0, 2], [-3, 1], [3, 2.5]]) treeAt(g, x, z, 1.1);          // generic orchard
     }
+  } else if (cat === 'defence') {
+    lawn(g, 9, 9, 0x8f8a5e);                                   // tarmac / packed-earth compound
+    // a low perimeter fence around the compound
+    for (let s = -4; s <= 4; s += 1.0) { for (const e of [[s, -4], [s, 4], [-4, s], [4, s]]) g.add(cyl(0.05, 0.05, 0.9, 0x6b6b60, e[0], 0.45, e[1], 5)); }
+    const flag = () => { g.add(cyl(0.08, 0.08, 4.2, 0xbfbfb5, -3.4, 2.1, -3.4, 6)); g.add(partBox(1.1, 0.7, 0.05, mat(0xd23b3b), -2.85, 3.6, -3.4)); }; // Singapore flag
+    if (key === 'naval_base') {
+      g.add(partBox(9, 0.4, 3, mat(0x9a978c), 0, 0.2, 2.6));   // quay
+      const hull = new THREE.Group(); hull.position.set(0, 0.55, 1.2);
+      hull.add(partBox(7.4, 1.1, 1.7, mat(0x6b7076)));          // grey hull
+      hull.add(partBox(3.0, 1.2, 1.2, mat(0x878d92), -0.4, 1.0, 0)); // superstructure
+      hull.add(cyl(0.06, 0.06, 2.2, 0xb8bcc0, 1.0, 2.0, 0, 6)); // mast
+      hull.add(partBox(1.2, 0.5, 0.5, mat(0x50565b), 2.6, 0.9, 0)); // gun turret
+      g.add(hull);
+      g.add(partBox(2.4, 2.2, 2.4, mat(0x7d8a74), -3.2, 1.1, -1.5)); // ops building
+      flag();
+    } else if (key === 'air_base') {
+      g.add(partBox(8.6, 0.3, 2.4, mat(0x55565a), 0, 0.16, 3.2)); // runway strip
+      for (let x = -3.5; x <= 3.5; x += 1.4) g.add(partBox(0.7, 0.04, 0.18, mat(0xe8e4d0), x, 0.34, 3.2)); // centreline
+      // hangar (wide, low, curved-ish roof approximated by a wide flat box + arc)
+      g.add(partBox(5.2, 2.6, 3.8, mat(0x8a8f88), -0.4, 1.3, -1.6));
+      g.add(partBox(5.4, 0.5, 4.0, mat(0x70756f), -0.4, 2.75, -1.6));
+      // control tower
+      g.add(cyl(0.55, 0.7, 4.6, 0xa7ab9e, 3.3, 2.3, -2.8, 8));
+      g.add(partBox(1.7, 1.0, 1.7, mat(0x2f4652, { glow: true }), 3.3, 5.0, -2.8)); // glazed cab
+      // a parked jet
+      const jet = new THREE.Group(); jet.position.set(2.4, 0.5, 2.6); jet.rotation.y = 0.4;
+      jet.add(partBox(2.8, 0.35, 0.45, mat(0x9aa0a6)));         // fuselage
+      jet.add(partBox(0.5, 0.08, 2.4, mat(0x878d92), 0, 0.05, 0)); // wings
+      jet.add(partBox(0.4, 0.6, 0.08, mat(0x878d92), -1.1, 0.35, 0)); // tail fin
+      g.add(jet); flag();
+    } else if (key === 'weapons_factory') {
+      g.add(partBox(6.4, 3.2, 5.4, mat(0x8a7c5f), 0, 1.6, -0.4)); // works shed
+      for (let s = -2; s <= 2; s++) { const r = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.55, 5.6, 8, 1, false, 0, Math.PI), mat(0x6f6552)); r.rotation.z = Math.PI / 2; r.rotation.y = Math.PI / 2; r.position.set(s * 1.15, 3.3, -0.4); g.add(r); } // sawtooth-ish roof vaults
+      g.add(cyl(0.4, 0.5, 4.5, 0x5b5347, 2.6, 2.25, -2.4, 8));  // chimney
+      for (const [x, z] of [[2.8, 2.6], [3.4, 2.0], [2.9, 1.5]]) g.add(box(0.9, 0.9, 0.9, 0x6f6a54, {}, x, 0.45, z)); // crates
+      flag();
+    } else if (key === 'defence_lab') {
+      g.add(partBox(6.0, 3.4, 4.6, mat(0x9096a0), 0, 1.7, 0));  // modern lab block
+      for (let fl = 0; fl < 2; fl++) for (let b2 = -2; b2 <= 2; b2++) g.add(partBox(0.7, 0.9, 0.06, mat(0x2f4652, { glow: true }), b2 * 1.1, 1.1 + fl * 1.5, 2.32));
+      const dish = new THREE.Mesh(new THREE.SphereGeometry(1.2, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2.2), mat(0xd7dae0)); dish.rotation.x = -0.7; dish.position.set(1.8, 3.9, -1.0); g.add(dish); // radar dish
+      g.add(cyl(0.07, 0.07, 2.4, 0xb8bcc0, -2.2, 4.4, -1.2, 6)); // antenna mast
+      flag();
+    } else {   // military_camp (and any other defence)
+      for (const [x, z, rot] of [[-2.2, -1.6, 0], [2.0, -1.6, 0], [-0.2, 1.8, Math.PI / 2]]) {   // barracks blocks
+        const bar = new THREE.Group(); bar.position.set(x, 0, z); bar.rotation.y = rot;
+        bar.add(partBox(4.2, 1.9, 1.9, mat(0x7f8663)));
+        bar.add(partBox(4.4, 0.5, 2.1, mat(0x606650), 0, 2.05, 0));   // roof
+        for (let w = -1.5; w <= 1.5; w += 1.0) bar.add(partBox(0.5, 0.6, 0.06, mat(0x33403a), w, 1.0, 0.98));
+        g.add(bar);
+      }
+      // guard tower
+      g.add(cyl(0.16, 0.2, 3.6, 0x6f6a52, 3.4, 1.8, 3.4, 6));
+      g.add(partBox(1.4, 1.0, 1.4, mat(0x8a8f74), 3.4, 4.0, 3.4));
+      g.add(partBox(1.7, 0.4, 1.7, mat(0x5f6450), 3.4, 4.6, 3.4));    // tower roof
+      flag();
+    }
   } else {
     g.add(box(6, 6, 6, col));
   }

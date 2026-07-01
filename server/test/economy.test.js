@@ -185,6 +185,31 @@ try {
   ok(def.bizSecure > def.bizInsecure, `investors reward security — trade income is higher when the nation is safe ($${def.bizInsecure}M → $${def.bizSecure}M/mo)`);
   ok(def.thReg < def.thNon - 0.1, `International Stance bites: Regional Cooperation lowers the external threat vs Non-Aligned (${def.thReg} vs ${def.thNon})`);
 
+  // ---- Domestic incidents: crime / disease / accidents track conditions -------
+  const inc = await p.evaluate(() => {
+    const st = window.__sg.state, D = () => window.__sg.derive();
+    const re = /🚨|🦠|⚠️ An industrial/;
+    const count = () => st.log.filter((e) => re.test(e.text)).length;
+    // risk responds to conditions: crime worse when jobless/unpoliced
+    st.safety = 90; const lowCrime = D().crimeRisk;
+    st.safety = 12; const highCrime = D().crimeRisk;
+    st.health = 90; const lowDis = D().diseaseRisk;
+    st.health = 12; const highDis = D().diseaseRisk;
+    // a persistently neglected nation (kept unsafe & unhealthy) suffers a stream of
+    // incidents; keep conditions bad each year since the stocks otherwise recover.
+    // Count via the state tally (the news log is capped, so it evicts old entries).
+    st.incidentCount = 0;
+    for (let y = 0; y < 12; y++) { st.safety = 12; st.health = 14; window.__sg.tick(365); }
+    const neglected = st.incidentCount;
+    return {
+      lowCrime: +lowCrime.toFixed(2), highCrime: +highCrime.toFixed(2),
+      lowDis: +lowDis.toFixed(2), highDis: +highDis.toFixed(2), neglected,
+    };
+  });
+  ok(inc.highCrime > inc.lowCrime + 0.15, `crime risk tracks conditions — high when jobless & unpoliced, low when safe (${inc.lowCrime} → ${inc.highCrime})`);
+  ok(inc.highDis > inc.lowDis + 0.15, `disease risk tracks conditions — high when unhealthy & crowded, low when cared for (${inc.lowDis} → ${inc.highDis})`);
+  ok(inc.neglected >= 6, `a neglected nation suffers a stream of incidents (${inc.neglected} crime/disease/accidents over 12 years)`);
+
   // ---- WHERE you build matters: local service access & industrial blight ------
   const cov = await p.evaluate(() => {
     const st = window.__sg.state, D = () => window.__sg.derive();

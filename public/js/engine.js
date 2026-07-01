@@ -936,6 +936,18 @@ export function derive(state) {
   // Housing pressure: >1 means overcrowded.
   const housingPressure = homes > 0 ? pop / homes : (pop > 0 ? 3 : 0);
 
+  // DOMESTIC INCIDENT RISK — the odds that daily life goes wrong, driven by the very
+  // conditions that breed trouble: joblessness and thin policing feed crime;
+  // overcrowding, dirty air and weak healthcare feed disease; heavy industry with
+  // poor safety feeds accidents. Managing the nation well keeps these rare.
+  const saf = (state.safety == null ? 30 : state.safety) / 100;
+  const hea = (state.health == null ? 30 : state.health) / 100;
+  const overcrowd = Math.max(0, housingPressure - 1);
+  const industryI = clamp(pollutionSrc / 45, 0, 1);
+  const crimeRisk = clamp(0.30 * unemployment + 0.34 * (1 - saf) + 0.16 * cov.blight, 0, 1);
+  const diseaseRisk = clamp(0.34 * (1 - hea) + 0.28 * overcrowd + 0.20 * ((state.pollution || 0) / 100), 0, 1);
+  const accidentRisk = clamp(0.30 * industryI + 0.26 * (1 - saf) + 0.12 * cov.blight, 0, 1);
+
   // Food self-sufficiency: locally-grown food vs the population it can feed. Most
   // food is imported (so low is normal/historical), but farms lift it — a modest
   // resilience + happiness win, in the spirit of the "30 by 30" goal.
@@ -953,6 +965,7 @@ export function derive(state) {
     serviceAccess: cov.serviceAccess, blight: cov.blight,
     young: co.young, working: co.work, elderly: co.old, dependency,
     defenceCap, defence, threat, defenceNeed, security, insecurity,
+    crimeRisk, diseaseRisk, accidentRisk,
     mods,
   };
 }
@@ -1207,10 +1220,13 @@ function monthlyUpdate(state, d) {
   // --- Stocks move toward capacity-driven targets (per 10k pop saturates) ---
   const denom = Math.max(1, d.homes / 6000);
   const eduTarget = clamp(20 + (d.eduCap / denom) * m.eduMult, 0, 100);
-  // Dirty air is a public-health drag (haze, respiratory illness), not just an
-  // eyesore — so pollution now pulls health down as well as approval.
-  const healthTarget = clamp(25 + (d.healthCap / denom) * m.healthMult - state.pollution * 0.18, 0, 100);
-  const safetyTarget = clamp(25 + (d.safetyCap / denom), 0, 100);
+  // Health & safety aren't just about how many hospitals/police you build — the
+  // social conditions matter. Overcrowding and dirty air breed illness; joblessness
+  // and slums breed crime. So chronic bad conditions hold these stocks DOWN even
+  // when capacity is there, and lift when the nation is well-run.
+  const overcrowd = Math.max(0, d.housingPressure - 1);
+  const healthTarget = clamp(25 + (d.healthCap / denom) * m.healthMult - state.pollution * 0.18 - overcrowd * 12, 0, 100);
+  const safetyTarget = clamp(25 + (d.safetyCap / denom) - (d.unemployment * 14 + d.blight * 8), 0, 100);
   state.education = approach(state.education, eduTarget, 0.15);
   state.health = approach(state.health, healthTarget, 0.15);
   state.safety = approach(state.safety, safetyTarget, 0.15);
@@ -1316,6 +1332,36 @@ function monthlyUpdate(state, d) {
     state.approval = clamp(state.approval - (3 + d.insecurity * 5), 0, 100);
     state.threatBuf = (state.threatBuf || 0) + 0.06;
     logEvent(state, `⚔️ A hostile provocation exploits weak defences — $${hit}M lost and the nation rattled. Build up the SAF.`);
+  }
+
+  // --- Domestic incidents — crime, disease, industrial accidents ------------
+  // The worse the conditions (d.*Risk), the likelier daily life goes wrong. Each
+  // strikes the relevant stock, the treasury and approval, and makes the news — the
+  // living texture of a nation that must be actively kept safe, healthy and fed.
+  if (Math.random() < d.crimeRisk * 0.34) {
+    const s = d.crimeRisk;
+    state.safety = clamp(state.safety - (2 + 4 * s), 0, 100);
+    state.approval = clamp(state.approval - (1.4 + 3 * s), 0, 100);
+    state.treasury -= 3 + 10 * s;
+    state.incidentCount = (state.incidentCount || 0) + 1;
+    logEvent(state, '🚨 A crime wave hits the estates — jobs and more policing would ease it.');
+  }
+  if (Math.random() < d.diseaseRisk * 0.30) {
+    const s = d.diseaseRisk;
+    state.health = clamp(state.health - (5 + 14 * s), 0, 100);
+    state.approval = clamp(state.approval - (1.4 + 3 * s), 0, 100);
+    state.treasury -= 8 + 20 * s;
+    state.incidentCount = (state.incidentCount || 0) + 1;
+    logEvent(state, '🦠 A disease outbreak spreads through crowded districts — clinics and sanitation are stretched.');
+  }
+  if (Math.random() < d.accidentRisk * 0.2) {
+    const s = d.accidentRisk;
+    state.treasury -= 6 + 25 * s;
+    state.approval = clamp(state.approval - (1 + 3 * s), 0, 100);
+    state.pollution = clamp(state.pollution + 3, 0, 100);
+    state.health = clamp(state.health - (1 + 3 * s), 0, 100);
+    state.incidentCount = (state.incidentCount || 0) + 1;
+    logEvent(state, '⚠️ An industrial accident at the works — casualties, clean-up and hard questions.');
   }
 
   // Approval glides toward its target.

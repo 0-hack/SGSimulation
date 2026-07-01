@@ -376,6 +376,12 @@ export function renderDash(state, ctx = {}) {
       'Public health. Hospitals, clinics, clean water and sewerage raise it, cutting death rates and softening epidemics.'),
     meterMetric('☁️ Pollution', state.pollution, true,
       'Dirty air from industry and power stations. High pollution harms health and happiness; parks, nature, the MRT and clean energy bring it down.'),
+    metric('🚨 Crime risk', `${Math.round((d.crimeRisk || 0) * 100)}%`, (d.crimeRisk || 0) <= 0.3 ? 'orderly' : (d.crimeRisk || 0) <= 0.5 ? 'watchful' : 'restless',
+      'How likely crime is to break out. Bred by joblessness, thin policing and slum conditions — not just the number of police posts. When it strikes, safety and approval fall and there\'s a bill to pay. Jobs, police and better neighbourhoods keep it low.',
+      { bar: bar(Math.round((d.crimeRisk || 0) * 100), (d.crimeRisk || 0) <= 0.3 ? 'var(--good)' : (d.crimeRisk || 0) <= 0.5 ? 'var(--warn)' : 'var(--bad)') }),
+    metric('🦠 Disease risk', `${Math.round((d.diseaseRisk || 0) * 100)}%`, (d.diseaseRisk || 0) <= 0.3 ? 'healthy' : (d.diseaseRisk || 0) <= 0.5 ? 'strained' : 'vulnerable',
+      'The chance of a disease outbreak. Rises with overcrowding, dirty air and weak healthcare & sanitation. An outbreak knocks public health and approval and strains the budget. Hospitals, clinics, sewerage, clean air and roomy housing keep it in check.',
+      { bar: bar(Math.round((d.diseaseRisk || 0) * 100), (d.diseaseRisk || 0) <= 0.3 ? 'var(--good)' : (d.diseaseRisk || 0) <= 0.5 ? 'var(--warn)' : 'var(--bad)') }),
   ]));
 
   // ---- DEFENCE & SECURITY --------------------------------------------------

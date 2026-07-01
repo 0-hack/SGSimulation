@@ -347,9 +347,17 @@ export function renderDash(state, ctx = {}) {
   ]));
 
   // ---- SOCIETY & ENVIRONMENT ----------------------------------------------
+  const access = Math.round((d.serviceAccess ?? 0.5) * 100);
+  const blight = Math.round((d.blight || 0) * 100);
   wrap.append(section('Society & Environment', [
     meterMetric('🙂 Approval', state.approval, false,
       'How happy citizens are with your leadership. Jobs, homes, utilities, services and clean air lift it; shortages, unemployment and pollution sink it. Let it fall too far and you risk unrest.'),
+    metric('🏙️ Service access', `${access}%`, access >= 66 ? 'well served' : access >= 40 ? 'patchy' : 'service desert',
+      'How many people live within reach of schools, clinics, parks, markets and the MRT. WHERE you build matters: putting homes near amenities lifts approval; isolated estates with nothing nearby drag it down.',
+      { bar: bar(access, barColor(access)), valStyle: `color:${barColor(access)}` }),
+    metric('🏭 Industrial blight', `${blight}%`, blight <= 25 ? 'clean neighbourhoods' : blight <= 55 ? 'some homes affected' : 'homes in industry\'s shadow',
+      'How many people live packed against heavy industry — factories, power stations, the port. Living in the smoke and noise angers residents. Separate homes from industry, or soften the edge with parks and green buffers.',
+      { bar: bar(blight, blight <= 25 ? 'var(--good)' : blight <= 55 ? 'var(--warn)' : 'var(--bad)'), valStyle: `color:${blight <= 25 ? 'var(--good)' : blight <= 55 ? 'var(--warn)' : 'var(--bad)'}` }),
     meterMetric('🛡️ Safety', state.safety, false,
       'Law, order and fire protection. Police posts, fire stations and community centres raise it; safe streets keep citizens and investors confident.'),
     meterMetric('📚 Education', state.education, false,

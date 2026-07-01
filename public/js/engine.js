@@ -798,11 +798,47 @@ function policyMods(state) {
 // sources — desalination, NEWater, piped mains/standpipes — are weather-proof.
 const RAIN_WATER = new Set(['reservoir', 'reservoir_big']);
 
+// ---------------------------------------------------------------------------
+// Neighbourhood coverage — where you build finally MATTERS. The map is bucketed
+// into coarse ~16-cell districts. Every service building (schools, clinics, parks,
+// the MRT, markets, community centres…) broadcasts AMENITY over a soft disk around
+// it, and every heavy polluter (factories, power stations, the port…) broadcasts
+// BLIGHT. Each home samples its own district: living near schools, parks and
+// transit is good; living in a factory's shadow is not. Returns population-weighted
+// `serviceAccess` (0–1: are people's needs within reach) and `blight` (0–1: how
+// many live under industrial nuisance). Cheap: one stamp per emitter + one sample
+// per home, no extra full-grid rescan.
+const COARSE = 16;
+function neighbourhoodCoverage(emitters, receivers) {
+  if (!receivers.length) return { serviceAccess: 0.55, blight: 0 };
+  const N = Math.ceil(GRID_SIZE / COARSE);
+  const amen = new Float32Array(N * N), nuis = new Float32Array(N * N);
+  for (const e of emitters) {
+    const cx = (e.x / COARSE) | 0, cy = (e.y / COARSE) | 0;
+    const Ra = e.amen > 0 ? 3 : 0, Rn = e.nuis > 0 ? 4 : 0, R = Math.max(Ra, Rn);
+    for (let oy = -R; oy <= R; oy++) for (let ox = -R; ox <= R; ox++) {
+      const gx = cx + ox, gy = cy + oy; if (gx < 0 || gy < 0 || gx >= N || gy >= N) continue;
+      const d = Math.hypot(ox, oy), id = gy * N + gx;
+      if (e.amen > 0 && d <= Ra) amen[id] += e.amen * (1 - d / (Ra + 1));   // fades with distance
+      if (e.nuis > 0 && d <= Rn) nuis[id] += e.nuis * (1 - d / (Rn + 1));
+    }
+  }
+  let sa = 0, bl = 0, hw = 0;
+  for (const r of receivers) {
+    const id = (((r.y / COARSE) | 0) * N) + ((r.x / COARSE) | 0);
+    sa += r.homes * Math.min(1, amen[id] / 11);   // ~11 of nearby amenity reads as "well served"
+    bl += r.homes * Math.min(1, nuis[id] / 16);
+    hw += r.homes;
+  }
+  return { serviceAccess: hw ? sa / hw : 0.55, blight: hw ? bl / hw : 0 };
+}
+
 export function derive(state) {
   let homes = 0, jobs = 0, food = 0, powerGen = 0, powerUse = 0, waterGen = 0, waterUse = 0, waterGenRain = 0;
   let pollutionSrc = 0, happinessLocal = 0, directIncome = 0, bUpkeep = 0;
   let eduCap = 0, healthCap = 0, safetyCap = 0;
   let counts = {};
+  const emitters = [], receivers = [];   // for the neighbourhood-coverage pass below
 
   for (let y = 0; y < GRID_SIZE; y++) {
     for (let x = 0; x < GRID_SIZE; x++) {
@@ -816,6 +852,10 @@ export function derive(state) {
       // fractional structure it is (cell.w); everything the player builds is w=1.
       const w = cell.w || 1;
       counts[cell.k] = (counts[cell.k] || 0) + 1;
+      // Neighbourhood roles: homes RECEIVE coverage; service/industry buildings
+      // EMIT amenity (from their happiness) or blight (from their pollution).
+      if ((b.homes || 0) > 0) receivers.push({ x, y, homes: (b.homes || 0) * w });
+      else { const am = Math.max(0, b.happiness || 0) * w, nu = Math.max(0, b.pollution || 0) * w; if (am > 0 || nu > 0) emitters.push({ x, y, amen: am, nuis: nu }); }
       homes += (b.homes || 0) * w;
       food += (b.food || 0) * w;
       jobs += (b.jobs || 0) * w;
@@ -830,6 +870,8 @@ export function derive(state) {
       bUpkeep += (b.upkeep || 0) * w;
     }
   }
+
+  const cov = neighbourhoodCoverage(emitters, receivers);   // where people live vs where the services & nuisance are
 
   const mods = policyMods(state);
   const pop = state.population;
@@ -871,6 +913,7 @@ export function derive(state) {
     pollutionSrc, happinessLocal, directIncome, bUpkeep,
     eduCap, healthCap, safetyCap,
     workforce, employed, unemployment, housingPressure,
+    serviceAccess: cov.serviceAccess, blight: cov.blight,
     mods,
   };
 }
@@ -893,6 +936,10 @@ function approvalTarget(state, d) {
   t += (state.safety - 50) * 0.16;
   // Amenities (parks, MRT, etc.) — scale by city size
   t += clamp(d.happinessLocal / Math.max(1, d.homes / 4000), 0, 14);
+  // WHERE people live matters: good local access to schools, clinics, parks and
+  // transit lifts approval; living in the shadow of heavy industry drags it down.
+  t += (d.serviceAccess - 0.5) * 12;      // well-served neighbourhoods (+6) vs service deserts (−6)
+  t -= (d.blight || 0) * 12;              // homes packed against factories/power stations
   // Home-grown food is a modest resilience/pride boost (no penalty for importing)
   t += clamp(d.foodSelf || 0, 0, 1) * 4;
   // Policy approval

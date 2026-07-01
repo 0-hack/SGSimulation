@@ -104,6 +104,25 @@ try {
   ok(fire.lit && fire.cleared, 'a fire that is not doused burns the building down (removed from the map & economy)');
   ok(fire.cost > 0 && fire.approvalDropped && fire.logged, `the blaze costs an emergency response ($${fire.cost}M), dents approval, and makes the news`);
 
+  // ---- WHERE you build matters: local service access & industrial blight ------
+  const cov = await p.evaluate(() => {
+    const st = window.__sg.state, D = () => window.__sg.derive();
+    const start = D();                                    // the standing 1965 town
+    for (let y = 0; y < st.grid.length; y++) for (let x = 0; x < st.grid[y].length; x++) st.grid[y][x] = null;
+    st.grid[100][100] = { k: 'hdb_flat' }; st.grid[100][101] = { k: 'hdb_flat' }; st.grid[101][100] = { k: 'hdb_flat' };
+    const alone = D();                                    // an isolated estate, nothing nearby
+    st.grid[100][102] = { k: 'school' }; st.grid[102][100] = { k: 'park' }; st.grid[101][101] = { k: 'clinic' };
+    const served = D();                                   // now with services next door
+    const a0 = window.__sg.derive();
+    st.grid[99][99] = { k: 'factory' }; st.grid[99][100] = { k: 'processing' };
+    const blighted = D();
+    // approval target reacts to blight (compare the pull it exerts)
+    return { startAccess: +start.serviceAccess.toFixed(2), alone: +alone.serviceAccess.toFixed(2), served: +served.serviceAccess.toFixed(2), blight0: +a0.blight.toFixed(2), blight1: +blighted.blight.toFixed(2) };
+  });
+  ok(cov.alone < 0.15 && cov.served > cov.alone + 0.3, `an isolated estate has poor service access (${cov.alone}) that a school/clinic/park nearby lifts (${cov.served})`);
+  ok(cov.blight1 > cov.blight0 + 0.3, `building homes against heavy industry raises blight (${cov.blight0} → ${cov.blight1})`);
+  ok(cov.startAccess > 0.5, `the dense 1965 town is reasonably well-served (access ${cov.startAccess})`);
+
   ok(errs.length === 0, 'no console/page errors' + (errs.length ? ': ' + errs[0] : ''));
 } catch (e) { fail++; console.error('  ✗ threw:', e.message, e.stack); }
 finally { await browser.close(); server.close(); }

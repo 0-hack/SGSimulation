@@ -33,7 +33,7 @@ export function heritageWeight(key) {
 // raise any amount of cash and review every building. Set back to `false` for the
 // normal, balanced game.
 // ───────────────────────────────────────────────────────────────────────────
-export const SANDBOX = true;
+export const SANDBOX = false;
 
 // ---------------------------------------------------------------------------
 // BUILDINGS
@@ -648,7 +648,7 @@ if (CUSTOM_LANDMARKS.length) CATEGORIES.push({ id: 'landmark', name: 'Landmarks'
 export const POLICIES = {
   income_tax: {
     name: 'Income Tax Rate', type: 'level', year: 1965, icon: '💰',
-    desc: 'Higher taxes fill the treasury but anger citizens and slow growth.',
+    desc: 'Higher taxes fill the treasury but anger citizens and slow growth. How much a rate actually RAISES depends on the economy — a high rate on a jobless, shrinking base yields little and drives citizens to emigrate; the returns are best when work is plentiful.',
     options: [
       { id: 'low', label: 'Low (5%)', fx: { taxMult: 0.6, approval: 6, growth: 0.04 } },
       { id: 'mid', label: 'Moderate (12%)', fx: { taxMult: 1.0, approval: 0, growth: 0 } },
@@ -761,6 +761,61 @@ export const POLICIES = {
     name: 'Water Conservation', type: 'toggle', year: 1971, icon: '🚰',
     desc: 'Campaigns and pricing cut water demand across the island.',
     fx: { waterDemandMult: -0.15, approval: -2 },
+  },
+
+  // ---- Laws & policies practised around the world, offered for the player to
+  //      adopt at ANY time. `year` is only the era the idea spread globally (shown
+  //      as flavour, never a lock); what each delivers depends on the nation's
+  //      condition, just like the taxes above. -------------------------------
+  minimum_wage: {
+    name: 'Minimum Wage', type: 'toggle', year: 1938, icon: '💵',
+    desc: 'A legal wage floor lifts the lowest-paid and eases poverty — popular with workers, but it raises business costs and can slow hiring.',
+    fx: { approval: 5, growth: -0.02, incomeMult: -0.02 },
+  },
+  labour_rights: {
+    name: 'Labour Rights & Unions', type: 'toggle', year: 1948, icon: '🤝',
+    desc: 'Recognise unions, collective bargaining and safe workplaces. Content, motivated workers are more productive — though militancy can bite growth.',
+    fx: { approval: 4, productivity: 0.05, growth: -0.02 },
+  },
+  free_trade: {
+    name: 'Trade Policy', type: 'level', year: 1948, icon: '🚢',
+    desc: 'How open the economy is to the world. Free trade grows a trading hub fastest; protectionism shelters local jobs but costs efficiency and friends.',
+    options: [
+      { id: 'protectionist', label: 'Protectionist', fx: { incomeMult: -0.03, jobsBoost: 0.05, approval: 2, threatMod: 0.02 } },
+      { id: 'balanced', label: 'Balanced', fx: {} },
+      { id: 'free', label: 'Free Trade', fx: { incomeMult: 0.09, growth: 0.03, threatMod: -0.03 } },
+    ],
+    default: 'balanced',
+  },
+  welfare_state: {
+    name: 'Social Welfare', type: 'level', year: 1942, icon: '🧺',
+    desc: 'How much of a safety net the state provides — unemployment relief, public assistance, subsidies. Comfort and approval, paid for with upkeep and, at the top end, higher taxes.',
+    options: [
+      { id: 'minimal', label: 'Self-Reliance', fx: {} },
+      { id: 'safety_net', label: 'Safety Net', fx: { approval: 5, upkeep: 6, growth: -0.01 } },
+      { id: 'generous', label: 'Generous', fx: { approval: 10, upkeep: 15, growth: -0.03, taxMult: 0.2 } },
+    ],
+    default: 'minimal',
+  },
+  compulsory_education: {
+    name: 'Compulsory Education', type: 'toggle', year: 1870, icon: '🎒',
+    desc: 'Make schooling mandatory for every child. The surest long-run investment in human capital — a small cost now for a far more skilled workforce later.',
+    fx: { eduMult: 0.15, upkeep: 3, approval: 2, growth: 0.02 },
+  },
+  environmental_law: {
+    name: 'Environmental Protection', type: 'toggle', year: 1970, icon: '🌱',
+    desc: 'Emission limits, protected reserves and clean-up rules. Clears the air and wins goodwill, at a cost in upkeep and industrial growth.',
+    fx: { pollutionMult: -0.18, upkeep: 4, approval: 2, growth: -0.02 },
+  },
+  law_and_order: {
+    name: 'Tough on Crime', type: 'toggle', year: 1900, icon: '⚖️',
+    desc: 'Strict policing, stiff sentencing and firm public order. Safer streets and a steadier nation — but heavy-handedness costs some goodwill.',
+    fx: { safetyMod: 12, stability: 6, approval: -2 },
+  },
+  carbon_tax: {
+    name: 'Carbon / Pollution Tax', type: 'toggle', year: 1990, icon: '🏭',
+    desc: 'Price the pollution that industry emits. Nudges the economy cleaner and raises a little revenue, but businesses grumble at the added cost.',
+    fx: { pollutionMult: -0.12, incomeMult: 0.03, approval: -3 },
   },
 };
 

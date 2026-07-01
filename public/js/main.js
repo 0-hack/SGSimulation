@@ -246,7 +246,7 @@ function showGameShell(playing = true) {
   $('toolbar').classList.remove('hidden');
   if (!G.view) {
     try {
-      G.view = new Scene3D($('city'), { onTileTap: onTileTap, onGroundTap: onGroundTap, onDemolishHover: onDemolishHover, onDemolishStroke: onDemolishStroke, onAdjustRotate: onAdjustRotate, onDisaster: onDisaster });
+      G.view = new Scene3D($('city'), { onTileTap: onTileTap, onGroundTap: onGroundTap, onDemolishHover: onDemolishHover, onDemolishStroke: onDemolishStroke, onAdjustRotate: onAdjustRotate, onDisaster: onDisaster, onFireHover: onFireHover });
       window.__sgview = G.view; // exposed for debugging / disaster FX hooks
     } catch (err) {
       reportSceneError(err);
@@ -680,11 +680,29 @@ function onDisaster(info) {
   const cell = G.state.grid?.[gy]?.[gx];
   if (!cell) return;
   const heritage = !!cell.heritage;
-  const res = fireDamage(G.state, gx, gy);                 // nulls the grid cell + applies the hit
+  const res = fireDamage(G.state, gx, gy, info.cause && info.cause.why); // nulls the grid cell + applies the hit + logs WHY
   if (heritage) { if (G.view.removeHeritageVisual) G.view.removeHeritageVisual(gx, gy); }
   else if (G.view.removeBuilding) G.view.removeBuilding(gx, gy);
   afterEdit();
-  if (res) toast(`🔥 Fire! ${res.name} destroyed — $${res.cost}M emergency response.`);
+  if (res) toast(`🔥 Fire! ${res.name} destroyed${info.cause ? ` — ${info.cause.label}` : ''}. $${res.cost}M response. See News for details.`);
+}
+
+// The cursor is over a blaze: show a floating card explaining what's burning and
+// WHY (dry weather, no greenery, thin fire cover, tinder homes, spread, arson…).
+// Owns the hover card only outside Demolish mode (where the demolish card owns it).
+let _fireHoverShown = false;
+function onFireHover(info) {
+  if (G.build && G.build.bulldoze) { if (_fireHoverShown) { hideHoverInfo(); _fireHoverShown = false; } return; }
+  if (info) { showHoverInfo(fireInfoHtml(info)); _fireHoverShown = true; }
+  else if (_fireHoverShown) { hideHoverInfo(); _fireHoverShown = false; }
+}
+function fireInfoHtml(info) {
+  const label = info.label ? `<div class="hi-stats" style="color:#e0603f">${escapeHtml(info.label)}</div>` : '';
+  const why = info.why ? `<div class="hi-body">${escapeHtml(info.why)}</div>` : '';
+  const tip = info.wet
+    ? `<div class="hi-body" style="color:var(--teal)">Rain is dousing it — hold on and it may be saved.</div>`
+    : `<div class="hi-body">Rain, Fire Stations, Police (safety) and greenery nearby help stop it before it spreads.</div>`;
+  return `<b>🔥 ${escapeHtml(info.kindLabel || 'Something')} on fire</b>${label}${why}${tip}`;
 }
 
 // ---- placement-tool state (build / bulldoze / reclaim / road) --------------

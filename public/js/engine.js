@@ -376,10 +376,25 @@ export function priced(base, state) { return Math.round(base * priceIndex(state)
 export function currencyCostFactor(state) {
   return clamp(1 / Math.sqrt(currencyStrength(state) || 1), 0.8, 1.25);
 }
-// Current purchase cost of a building ($M) after inflation + currency strength.
+// Technology maturity: a building's base cost is its price the moment the world
+// invents it (already era-appropriate). Early adopters pay that full price; as the
+// years pass the design commoditises and materials get cheaper, so the SAME
+// building costs progressively LESS in real terms — down to a ~30% discount once
+// long-mature. (Inflation still lifts the NOMINAL price separately.) Returns a
+// multiplier 1.0 (brand-new) → 0.7 (long-mature). 1.0 at every building's own
+// invention year, so the balanced era-priced start is undisturbed.
+export function techMaturityFactor(state, b) {
+  if (!b || !b.year) return 1;
+  const y = (state && state.date && state.date.y) || b.year;
+  const age = Math.max(0, y - b.year);              // years since the world invented it
+  return clamp(1 - age * 0.012, 0.7, 1);
+}
+// Current purchase cost of a building ($M) after inflation + technology maturity +
+// currency strength (a stronger currency / cheaper imports ease the price).
 export function buildingCost(state, key) {
   const b = BUILDINGS[key];
-  return b ? Math.round(b.cost * priceIndex(state) * currencyCostFactor(state)) : 0;
+  if (!b) return 0;
+  return Math.round(b.cost * priceIndex(state) * techMaturityFactor(state, b) * currencyCostFactor(state));
 }
 
 // Construction time in game-days, from a building's complexity (its base cost,
@@ -792,6 +807,7 @@ function policyMods(state) {
     cpfRetire: 0,   // share of elderly support self-funded through CPF (vs borne by the treasury)
     threatMod: 0,   // international stance's effect on external threat (diplomacy lowers it)
     defenceMod: 0,  // multiplier on military strength (National Service, defence budget, posture)
+    safetyMod: 0,   // law-and-order policies' effect on the safety stock
   };
   const add = (fx) => {
     if (!fx) return;
@@ -799,8 +815,10 @@ function policyMods(state) {
       if (k in m) m[k] += v;
     }
   };
+  // The player may enact ANY policy at any time — nothing is time-locked. What a
+  // policy DELIVERS, though, depends on the nation's condition (see the economy &
+  // population update), so a law passed before its moment simply underperforms.
   for (const [key, p] of Object.entries(POLICIES)) {
-    if (state.date.y < p.year) continue;
     const val = state.policies[key];
     if (p.type === 'toggle') {
       if (val) add(p.fx);
@@ -1121,7 +1139,9 @@ function updateProjects(state, d) {
       if (pr.reward) applyEffects(state, pr.reward, d);
       state.lastProjectDone = pr.title;
       (state.justCompleted || (state.justCompleted = [])).push(pr.title); // for the UI to celebrate
-      logEvent(state, `National project complete — ${pr.title}.`);
+      logEvent(state, `🏗️ National project complete — ${pr.title}`,
+        `The nation delivered on ${pr.title}. ${summarizeFx(pr.reward) || 'A milestone for the young state.'}`,
+        'project');
     } else still.push(pr);
   }
   state.projects = still;
@@ -1183,9 +1203,9 @@ function affairWeight(state, d, a, mi) {
 // branches into each player's own path.
 function maybeAffair(state) {
   if (state.pendingEvent) return;
-  const d = derive(state);
-  const mi = monthIndex(state.date);
-  // The founding briefing fires first, once.
+  // The founding briefing fires first, once. (No derive needed for the gate below —
+  // it reads cheap scalar stocks — so we only pay for a full derive once an affair
+  // actually clears the probability check and needs its state-weighting.)
   if (!state.flags.founding) {
     const f = AFFAIRS.find((a) => a.atStart);
     if (f) { fireEvent(state, f); return; }
@@ -1195,12 +1215,75 @@ function maybeAffair(state) {
   // nation in crisis isn't interrupted every single month.
   const pressure = clamp(1 + (state.threat || 0) * 0.8 + (state.unrest || 0) * 1.2, 1, 2.2);
   if (Math.random() > (1 / 13) * pressure) return;
+  const d = derive(state);
+  const mi = monthIndex(state.date);
   let total = 0; const pool = [];
   for (const a of AFFAIRS) { const w = affairWeight(state, d, a, mi); if (w > 0) { pool.push([a, w]); total += w; } }
   if (total <= 0) return;
   let r = Math.random() * total, pick = pool[0][0];
   for (const [a, w] of pool) { r -= w; if (r <= 0) { pick = a; break; } }
   fireEvent(state, pick);
+}
+
+// ---------------------------------------------------------------------------
+// Daily life — the living texture of the nation reported to the News panel.
+// These carry NO gameplay effect: they are colour, drawn from the CURRENT
+// conditions on the ground (jobs, homes, health, schools, air, traffic, food,
+// water, power, prices), so the player reads how ordinary life is going and WHY.
+// Each item is { w: weight by condition, head, detail }. One may surface a
+// month; a well-run nation hears cheer, a strained one hears grumbles.
+// ---------------------------------------------------------------------------
+function dailyLifePool(state, d) {
+  const cur = (state.economy && state.economy.currency) || 1;
+  const pool = [
+    // — good news, when conditions are good —
+    { w: d.unemployment < 0.05 ? 2.5 : 0.2, head: '💼 Hiring signs go up across the estates',
+      detail: `Jobs are plentiful — unemployment is just ${Math.round(d.unemployment * 100)}%. Factories and offices are competing for hands, and pay packets are fattening.` },
+    { w: state.education > 60 ? 2 : 0.2, head: '🎓 A new cohort graduates',
+      detail: 'Schools and institutes turn out another wave of skilled young workers. Employers are already circling the top of the class.' },
+    { w: (d.foodSelf || 0) > 0.4 ? 1.8 : 0.1, head: '🥬 Markets brim with home-grown produce',
+      detail: `Local farms now feed a good share of the island (${Math.round((d.foodSelf || 0) * 100)}% self-sufficient). Fresh greens, eggs and fish keep the wet markets cheap and lively.` },
+    { w: state.pollution < 18 && (d.happinessLocal || 0) > 0 ? 1.6 : 0.1, head: '🌳 Clean air and green corners lift the mood',
+      detail: 'Parks fill on the weekend, the skies are clear, and the "garden city" is starting to feel like more than a slogan.' },
+    { w: d.homes > state.population * 1.05 ? 1.6 : 0.1, head: '🔑 New flats, new keys',
+      detail: 'Families collect the keys to bright new homes and leave the crowded old quarters behind. Housing is finally keeping ahead of the queue.' },
+    { w: state.safety > 70 ? 1.4 : 0.1, head: '👮 Streets feel safe after dark',
+      detail: 'Petty crime is low and the beat officers are a familiar sight. Shops stay open late and parents let the children roam.' },
+    // — grumbles, when conditions bite —
+    { w: (d.congestion || 0) > 0.35 ? 2.2 : 0.1, head: '🚗 Rush hour crawls to a standstill',
+      detail: `The roads are choking — congestion is at ${Math.round((d.congestion || 0) * 100)}%. Commuters lose hours in jams; buses, an MRT line or a Car Quota would clear the arteries.` },
+    { w: d.unemployment > 0.12 ? 2.4 : 0.1, head: '💢 Coffee-shop talk turns to jobs',
+      detail: `Work is scarce — unemployment is ${Math.round(d.unemployment * 100)}%. Young men loiter, tempers fray, and families tighten their belts. More factories, offices and trade would help.` },
+    { w: (d.housingPressure || 0) > 1.05 ? 2.2 : 0.1, head: '🏚️ Three families to a flat',
+      detail: 'Homes are overcrowded and the waiting list keeps growing. Build more housing before the squeeze turns to real anger.' },
+    { w: state.pollution > 35 ? 2 : 0.1, head: '🏭 A pall of smoke over the districts',
+      detail: `The air is heavy (pollution ${Math.round(state.pollution)}%). Washing greys on the line and clinics see more coughs. Green space, cleaner power and the MRT would clear it.` },
+    { w: d.waterRatio < 1 ? 2.2 : 0.05, head: '🚰 Taps run dry in the afternoon',
+      detail: 'Water demand outstrips supply and rationing bites. Reservoirs, water mains or desalination are needed before the wells run low.' },
+    { w: d.powerRatio < 1 ? 2.2 : 0.05, head: '💡 Blackouts flicker through the estates',
+      detail: 'Generation can\'t meet demand and the lights dim at peak hours. More power stations would end the brownouts.' },
+    { w: (state.economy && state.economy.inflation > 0.06) ? 1.8 : 0.1, head: '🧾 The cost of living pinches',
+      detail: `Prices are climbing (inflation ${Math.round((state.economy?.inflation || 0) * 100)}%). Hawker plates and market baskets cost more; a stronger treasury and currency would steady them.` },
+    { w: cur < 0.85 ? 1.4 : 0.1, head: '💱 A weak dollar makes imports dear',
+      detail: 'The currency is soft, so imported fuel, food and machinery cost more. Reserves, exports and sound money would firm it up.' },
+    // — evergreen flavour (always a little chance) —
+    { w: 0.5, head: '🏮 Festivals colour the calendar',
+      detail: 'Lion dances, Hari Raya open houses, Deepavali lights and Christmas markets roll through the year — the everyday multicultural life of the island.' },
+    { w: 0.5, head: '🍜 The hawker centre hums at supper',
+      detail: 'Char kway teow, satay and kopi draw the evening crowd. Whatever the headlines, the queue for supper never gets shorter.' },
+  ];
+  return pool;
+}
+function maybeDailyLife(state) {
+  if (state.pendingEvent) return;                 // don't clutter over a decision briefing
+  if (Math.random() > 0.34) return;               // ~ a few colour items a year
+  const d = derive(state);
+  const pool = dailyLifePool(state, d);
+  let total = 0; for (const it of pool) total += Math.max(0, it.w);
+  if (total <= 0) return;
+  let r = Math.random() * total, pick = pool[0];
+  for (const it of pool) { r -= Math.max(0, it.w); if (r <= 0) { pick = it; break; } }
+  logEvent(state, pick.head, pick.detail, 'daily');
 }
 
 // World-technology timeline: when a building tech or fleet generation reaches
@@ -1216,7 +1299,12 @@ function checkNewTech(state) {
     if (!b.year || b.year > y || state.techSeen[key]) continue;
     const isNew = b.year === y && (state.daysElapsed || 0) > 1;   // invented this very year, mid-game
     state.techSeen[key] = 1;
-    if (isNew) fresh.push(`${b.icon || ''} ${b.name}`.trim());
+    if (isNew) {
+      fresh.push(`${b.icon || ''} ${b.name}`.trim());
+      logEvent(state, `${b.icon || '🔬'} New technology available: ${b.name}`,
+        `The world has invented it, and the nation can now build it. ${b.desc || ''} As the technology matures it will grow cheaper to import — and a stronger currency eases the price further.`,
+        'tech');
+    }
   }
   for (const kind of ['car', 'train']) {
     for (const g of (FLEET_TIMELINE[kind] || [])) {
@@ -1233,14 +1321,37 @@ function checkNewTech(state) {
 // Short label for the news log / toast, by scope.
 function affairKind(ev) { return ev.scope === 'foreign' ? 'Foreign Affairs' : 'Internal Affairs'; }
 
+// Turn a choice's raw effect deltas into a plain-language consequence line for
+// the news, so the player can read what a decision actually did.
+function summarizeFx(fx) {
+  if (!fx) return '';
+  const p = [];
+  if (fx.treasury) p.push(`treasury ${fx.treasury > 0 ? '+' : '−'}$${Math.abs(fx.treasury)}M`);
+  if (fx.approval) p.push(`approval ${fx.approval > 0 ? '+' : ''}${fx.approval}`);
+  if (fx.threatSpike) p.push(fx.threatSpike > 0 ? 'external tension rises' : 'external tension eases');
+  if (fx.unrest) p.push(fx.unrest > 0 ? 'unrest simmers' : 'unrest cools');
+  if (fx.growth) p.push(fx.growth > 0 ? 'growth quickens' : 'growth slows');
+  if (fx.growthShock) p.push('a growth shock');
+  if (fx.incomeMult) p.push(fx.incomeMult > 0 ? 'investment warms' : 'investment cools');
+  if (fx.jobsBoost) p.push('more jobs');
+  if (fx.fuelShock) p.push('the fuel bill jumps');
+  if (fx.healthShock) p.push(fx.healthShock > 0 ? 'public health recovers' : 'public health suffers');
+  if (fx.unlockMany) p.push('new options unlocked');
+  if (fx.project) p.push('a national project begins');
+  if (fx.spawn) p.push('the state breaks ground itself');
+  if (fx.flag) p.push('the nation\'s path shifts');
+  return p.length ? p.join(' · ') + '.' : '';
+}
+
 function fireEvent(state, ev) {
   const d = derive(state);
   applyEffects(state, ev.effects, d);
   state.flags[ev.id] = true;                                   // once-guard
   (state.affairsAt || (state.affairsAt = {}))[ev.id] = monthIndex(state.date);   // cooldown clock
   const icon = ev.icon || '📰';
-  logEvent(state, `${icon} ${ev.title}`);
-  const brief = { id: ev.id, scope: ev.scope || 'internal', kind: affairKind(ev), icon, title: ev.title, body: ev.body };
+  const scope = ev.scope || 'internal';
+  logEvent(state, `${icon} ${ev.title}`, ev.body, scope);
+  const brief = { id: ev.id, scope, kind: affairKind(ev), icon, title: ev.title, body: ev.body };
   if (ev.choice) state.pendingEvent = { ...brief, choice: ev.choice };
   else state.lastEvent = brief;
 }
@@ -1250,7 +1361,10 @@ export function resolveEvent(state, optionIndex) {
   if (!ev) return;
   const opt = ev.choice.options[optionIndex];
   applyEffects(state, opt?.fx, derive(state));
-  logEvent(state, `↳ ${ev.title}: ${opt?.label || 'decided'}`);
+  const consequence = summarizeFx(opt?.fx);
+  logEvent(state, `↳ ${ev.title}`,
+    `Your decision: ${opt?.label || 'decided'}.${consequence ? ' ' + consequence : ''}`,
+    ev.scope || 'internal');
   state.pendingEvent = null;
 }
 
@@ -1260,7 +1374,7 @@ export function resolveEvent(state, optionIndex) {
 // hit — a real disaster on the ground, not just a puff of smoke. Returns a short
 // summary for the UI, or null if there was nothing there. Trees/plants call this
 // with no grid cell and just log lightly.
-export function fireDamage(state, x, y) {
+export function fireDamage(state, x, y, cause) {
   const cell = state.grid?.[y]?.[x];
   const b = cell ? BUILDINGS[cell.k] : null;
   const name = (cell && cell.name) || (b && b.name) || 'a building';
@@ -1272,13 +1386,21 @@ export function fireDamage(state, x, y) {
   state.approval = clamp(state.approval - 2.2 * sev, 0, 100);
   state.health = clamp(state.health - 1.2 * sev, 0, 100);
   state.pollution = clamp(state.pollution + 3, 0, 100);
-  logEvent(state, `🔥 Fire destroys ${name} — emergency response cost $${Math.round(cost)}M.`);
-  return { name, cost: Math.round(cost) };
+  const why = cause || 'a blaze took hold before crews could reach it';
+  logEvent(state, `🔥 Fire destroys ${name}`,
+    `${cap(why)} The structure is a total loss; emergency response and clearance cost about $${Math.round(cost)}M, and the neighbourhood is shaken. Fire Stations, Police Posts (safety), and greenery around buildings cut the risk; rain and quick response put blazes out before they spread.`,
+    'fire');
+  return { name, cost: Math.round(cost), cause: why };
 }
+// Capitalise the first letter of a sentence fragment.
+function cap(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
 
-function logEvent(state, text) {
-  state.log.unshift({ d: { ...state.date }, text });
-  if (state.log.length > 40) state.log.length = 40;
+// A news item. `text` is the headline; optional `detail` is the fuller story —
+// what happened, WHY, and what it means — shown under the headline in the News
+// panel. `scope` tints it (foreign/internal/fire/incident/daily/tech/project).
+function logEvent(state, text, detail, scope) {
+  state.log.unshift({ d: { ...state.date }, text, detail: detail || '', scope: scope || '' });
+  if (state.log.length > 60) state.log.length = 60;
 }
 
 // ---------------------------------------------------------------------------
@@ -1297,7 +1419,7 @@ function monthlyUpdate(state, d) {
   // when capacity is there, and lift when the nation is well-run.
   const overcrowd = Math.max(0, d.housingPressure - 1);
   const healthTarget = clamp(25 + (d.healthCap / denom) * m.healthMult - state.pollution * 0.18 - overcrowd * 12, 0, 100);
-  const safetyTarget = clamp(25 + (d.safetyCap / denom) - (d.unemployment * 14 + d.blight * 8), 0, 100);
+  const safetyTarget = clamp(25 + (d.safetyCap / denom) + (m.safetyMod || 0) - (d.unemployment * 14 + d.blight * 8), 0, 100);
   state.education = approach(state.education, eduTarget, 0.15);
   state.health = approach(state.health, healthTarget, 0.15);
   state.safety = approach(state.safety, safetyTarget, 0.15);
@@ -1311,15 +1433,28 @@ function monthlyUpdate(state, d) {
   // simmering — so internal crises can brew from the ground conditions the player
   // lets slide, not just from prior events.
   const unrestPush = Math.max(0, d.unemployment - 0.08) * 0.5 + Math.max(0, d.housingPressure - 1) * 0.10;
-  state.unrest = clamp((state.unrest || 0) * 0.96 + unrestPush, 0, 1);
+  // A stable regime (National Service, anti-corruption, a firm press, law & order…)
+  // cools unrest faster — the "stability" the player weighs against liberty.
+  const stabilityCool = clamp((m.stability || 0) * 0.004, 0, 0.12);
+  state.unrest = clamp((state.unrest || 0) * (0.96 - stabilityCool) + unrestPush, 0, 1);
 
   // --- Finances ($ millions / month) ---
   // Congestion wastes working hours, so it drags productivity (and thus tax revenue).
   const productivity = (1 + m.productivity + (state.education - 20) * 0.004) * (1 - (d.congestion || 0) * 0.16);
   const popReal = state.population;
-  // Income tax scales with employed workforce, productivity & policy multiplier.
+  // Income tax scales with employed workforce, productivity & policy multiplier —
+  // but rates bite differently by CONDITION. Squeezing a high rate out of a nation
+  // with few jobs yields little (a thin, jobless base can't be taxed hard) and, past
+  // a point, back-fires: the harder you tax an already-strained economy, the less
+  // each extra point returns (a Laffer-style ceiling). So a "High tax" law passed in
+  // a downturn underperforms a modest one in a boom.
   const taxBase = (d.employed / 1000) * 0.9 * productivity;
-  const incomeTax = taxBase * m.taxMult;
+  // Only a HIGH rate risks a Laffer-style backfire: on a jobless, strained economy
+  // each extra point returns steadily less. Low and moderate rates are unpenalised.
+  const highTax = state.policies.income_tax === 'high';
+  const taxEfficiency = highTax ? clamp(1 - 0.6 * (0.5 + d.unemployment * 2.6), 0.3, 1) : 1;
+  const incomeTax = taxBase * m.taxMult * taxEfficiency;
+  state.lastTaxEfficiency = taxEfficiency;                     // surfaced in the finance ledger / stats
   const gst = m.gstRevenue > 0 ? (popReal / 1000) * 0.25 : 0;
   // Investor confidence: capital shuns an insecure nation and rewards a safe, stable
   // one — so trade & business income scale with security. Peace and a credible
@@ -1385,9 +1520,12 @@ function monthlyUpdate(state, d) {
 
   // MIGRATION is working-age: foreign workers & talent, set by the immigration policy
   // (m.migration: Strict repels, Open Doors pulls) plus jobs, approval and housing room.
+  // A punishing tax rate on a jobless economy is also a push factor — people vote with
+  // their feet, so over-taxing a downturn shrinks the workforce (the player's warning).
   const housingRoom = d.homes - popReal;
   const jobSurplus = d.jobs - d.employed;
-  const attract = (state.approval - 50) * 0.02 + (jobSurplus > 0 ? 0.04 : -0.08) + m.migration * 0.06;
+  const taxFlight = (state.policies.income_tax === 'high') ? (0.4 + d.unemployment * 3) * 0.05 : 0;
+  const attract = (state.approval - 50) * 0.02 + (jobSurplus > 0 ? 0.04 : -0.08) + m.migration * 0.06 - taxFlight;
   let migration = co.work * 0.004 * attract;
   if (housingRoom <= 0) migration = Math.min(migration, 0) - co.work * 0.003;   // no homes → no new arrivals, some leave
   else migration = Math.min(migration, housingRoom * 0.25);
@@ -1419,7 +1557,9 @@ function monthlyUpdate(state, d) {
     state.treasury -= hit;
     state.approval = clamp(state.approval - (3 + d.insecurity * 5), 0, 100);
     state.threatBuf = (state.threatBuf || 0) + 0.06;
-    logEvent(state, `⚔️ A hostile provocation exploits weak defences — $${hit}M lost and the nation rattled. Build up the SAF.`);
+    logEvent(state, '⚔️ A hostile provocation tests the nation',
+      `With defences below what the threat demands, a neighbour called the bluff — a maritime incursion and rattled markets cost about $${hit}M and shook confidence. Raise defence strength (camps, bases, the arms industry, National Service) until it at least matches the external threat.`,
+      'foreign');
   }
 
   // --- Domestic incidents — crime, disease, industrial accidents ------------
@@ -1432,7 +1572,13 @@ function monthlyUpdate(state, d) {
     state.approval = clamp(state.approval - (1.4 + 3 * s), 0, 100);
     state.treasury -= 3 + 10 * s;
     state.incidentCount = (state.incidentCount || 0) + 1;
-    logEvent(state, '🚨 A crime wave hits the estates — jobs and more policing would ease it.');
+    const why = [];
+    if (d.unemployment > 0.1) why.push('idle hands — joblessness runs high');
+    if ((d.security || 1) < 1 || state.safety < 45) why.push('too few police on the beat');
+    if ((d.blight || 0) > 0.2) why.push('neglected estates in the shadow of industry');
+    logEvent(state, '🚨 A crime wave hits the estates',
+      `Break-ins and gang trouble spread through the neighbourhoods, costing about $${Math.round(3 + 10 * s)}M and denting confidence. Root causes: ${why.join('; ') || 'a hard month on the ground'}. More Police Posts, jobs and better-served estates would cool it.`,
+      'incident');
   }
   if (Math.random() < d.diseaseRisk * 0.30) {
     const s = d.diseaseRisk;
@@ -1440,7 +1586,13 @@ function monthlyUpdate(state, d) {
     state.approval = clamp(state.approval - (1.4 + 3 * s), 0, 100);
     state.treasury -= 8 + 20 * s;
     state.incidentCount = (state.incidentCount || 0) + 1;
-    logEvent(state, '🦠 A disease outbreak spreads through crowded districts — clinics and sanitation are stretched.');
+    const why = [];
+    if (state.health < 45) why.push('thin clinic and hospital coverage');
+    if ((d.housingPressure || 0) > 1) why.push('overcrowded homes spreading infection');
+    if ((state.pollution || 0) > 30) why.push('foul air and water');
+    logEvent(state, '🦠 A disease outbreak spreads',
+      `Fever races through the crowded districts; wards fill and clean-up runs to about $${Math.round(8 + 20 * s)}M. Root causes: ${why.join('; ') || 'seasonal bad luck'}. Clinics, hospitals, sewerage and less crowding would blunt the next one.`,
+      'incident');
   }
   if (Math.random() < d.accidentRisk * 0.2) {
     const s = d.accidentRisk;
@@ -1449,7 +1601,9 @@ function monthlyUpdate(state, d) {
     state.pollution = clamp(state.pollution + 3, 0, 100);
     state.health = clamp(state.health - (1 + 3 * s), 0, 100);
     state.incidentCount = (state.incidentCount || 0) + 1;
-    logEvent(state, '⚠️ An industrial accident at the works — casualties, clean-up and hard questions.');
+    logEvent(state, '⚠️ An industrial accident at the works',
+      `A fire and chemical spill at a heavy plant leaves casualties and a clean-up bill near $${Math.round(6 + 25 * s)}M, and fouls the air. It is the price of packing homes hard against unsafe industry with too little safety cover — zone heavy works away from housing and keep safety high.`,
+      'incident');
   }
 
   // Approval glides toward its target.
@@ -1493,6 +1647,7 @@ export function tickDay(state) {
     monthlyUpdate(state, derive(state));
     checkNewTech(state);      // announce world inventions that reached their historical year
     maybeAffair(state);       // emergent foreign/internal affairs the PM must answer
+    maybeDailyLife(state);    // colour news: how ordinary life is going, and why
   }
 
   refreshSummary(state);

@@ -95,35 +95,55 @@ export function renderBuild(state, ctx) {
     wrap.append(picker);
   }
 
-  // Buildings in category — only those whose technology is available yet are
-  // shown; more surface automatically as the decades pass. Anything shown can
-  // be built (borrow from the dashboard if the treasury is short).
+  // Buildings in category. Construction is the ONE time-gated system: options the
+  // world hasn't invented yet are shown GREYED and sorted to the bottom — you can
+  // see what's coming and when, but can only build it once its year arrives. Prices
+  // move with inflation, technology maturity (dear when new, cheaper as it matures)
+  // and the currency (a strong dollar eases imported materials).
   const grid = el('div', 'build-grid');
+  const avail = [], locked = [];
   for (const [key, b] of Object.entries(BUILDINGS)) {
     if (b.cat !== ctx.cat) continue;
-    if (!isUnlocked(state, key)) continue;       // not invented yet — hidden, not locked
-    const cost = buildingCost(state, key);       // base cost × today's price level
-    const affordable = state.treasury >= cost;
-    const card = el('button', 'bcard' + (ctx.selected === key ? ' selected' : ''));
-
-    const tags = buildingTags(b);
-    const inflated = cost > b.cost ? ` <span class="b-infl" title="Base ${money(b.cost)} × inflation">▲</span>` : '';
-    card.innerHTML = `
-      <div class="b-top">
-        <span class="b-ico">${b.icon}</span>
-        <div style="flex:1">
-          <div class="b-name">${b.name}</div>
-          <div class="b-cost">${money(cost)}${inflated} · upkeep ${money(b.upkeep)}/mo · ~${buildDays(b)}d</div>
-        </div>
-      </div>
-      <div class="b-desc">${b.desc}</div>
-      <div class="b-tags">${tags}</div>`;
-    if (!affordable) card.style.opacity = '0.6';
-    card.onclick = () => ctx.selectBuilding(key);
-    grid.append(card);
+    (isUnlocked(state, key) ? avail : locked).push([key, b]);
+  }
+  locked.sort((a, b) => (a[1].year || 0) - (b[1].year || 0));   // soonest-to-arrive first
+  for (const [key, b] of avail) grid.append(buildCard(state, ctx, key, b, false));
+  if (locked.length) {
+    grid.append(el('div', 'build-locked-sep', '🔒 Not yet invented — available as the years pass'));
+    for (const [key, b] of locked) grid.append(buildCard(state, ctx, key, b, true));
   }
   wrap.append(grid);
   return wrap;
+}
+
+// One build tile. `locked` (tech not invented yet) renders greyed, non-clickable,
+// showing the year it becomes available; otherwise it shows the live price with a
+// ▲ (dearer: new-tech premium / inflation / weak $) or ▼ (cheaper: matured tech /
+// strong $) marker versus the 1965 base.
+function buildCard(state, ctx, key, b, locked) {
+  const cost = buildingCost(state, key);
+  const affordable = state.treasury >= cost;
+  const card = el('button', 'bcard' + (ctx.selected === key ? ' selected' : '') + (locked ? ' locked' : ''));
+  const tags = buildingTags(b);
+  let pmark = '';
+  if (cost > Math.round(b.cost * 1.02)) pmark = ` <span class="b-infl up" title="Dearer than the ${money(b.cost)} base — a new-technology premium, inflation and/or a weak currency. It cheapens as the technology matures and the dollar strengthens.">▲</span>`;
+  else if (cost < Math.round(b.cost * 0.98)) pmark = ` <span class="b-infl down" title="Cheaper than the ${money(b.cost)} base — the technology has matured and/or a strong currency eases imported materials.">▼</span>`;
+  const costLine = locked
+    ? `<span class="b-lockyr">🔒 Invented ${b.year}</span> · upkeep ${money(b.upkeep)}/mo`
+    : `${money(cost)}${pmark} · upkeep ${money(b.upkeep)}/mo · ~${buildDays(b)}d`;
+  card.innerHTML = `
+    <div class="b-top">
+      <span class="b-ico">${b.icon}</span>
+      <div style="flex:1">
+        <div class="b-name">${b.name}</div>
+        <div class="b-cost">${costLine}</div>
+      </div>
+    </div>
+    <div class="b-desc">${b.desc}</div>
+    <div class="b-tags">${tags}</div>`;
+  if (locked) { card.disabled = true; card.title = `Available once the world invents it (${b.year}).`; }
+  else { if (!affordable) card.style.opacity = '0.6'; card.onclick = () => ctx.selectBuilding(key); }
+  return card;
 }
 
 // ---- road-drawing toolkit -------------------------------------------------
@@ -259,27 +279,27 @@ function buildingTags(b) {
 // ===========================================================================
 export function renderPolicy(state, ctx) {
   const wrap = el('div');
-  wrap.append(el('p', 'policy-desc', 'Laws and policies shape your society for decades. Choices have trade-offs — revenue vs. happiness, growth vs. harmony.'));
+  wrap.append(el('p', 'policy-desc', 'Laws and policies shape your society for decades. You may enact ANY of them at any time — but what a policy delivers depends on the state of your economy, your citizens\' welfare and stability. A law ahead of its moment simply underperforms.'));
 
   for (const [key, p] of Object.entries(POLICIES)) {
-    const unlocked = state.date.y >= p.year;
-    const box = el('div', 'policy' + (unlocked ? '' : ' locked'));
+    const early = state.date.y < p.year;                    // before the era it spread worldwide — allowed, just flagged
+    const box = el('div', 'policy');
     const head = el('div', 'policy-head');
     head.innerHTML = `<span class="p-ico">${p.icon}</span><span class="p-name">${p.name}</span>`;
 
     if (p.type === 'toggle') {
       const sw = el('div', 'switch' + (state.policies[key] ? ' on' : ''));
-      if (unlocked && !ctx.readOnly) sw.onclick = () => ctx.togglePolicy(key);
+      if (!ctx.readOnly) sw.onclick = () => ctx.togglePolicy(key);
       head.append(sw);
     }
     box.append(head);
-    box.append(el('div', 'policy-desc', p.desc + (unlocked ? '' : ` <b>(available ${p.year})</b>`)));
+    box.append(el('div', 'policy-desc', p.desc + (early ? ` <span class="p-early">Practised worldwide from ~${p.year} — you can adopt it early, but expect it to underdeliver until the country is ready.</span>` : '')));
 
     if (p.type === 'level') {
       const opts = el('div', 'opts');
       for (const o of p.options) {
         const b = el('button', 'opt' + (state.policies[key] === o.id ? ' active' : ''), o.label);
-        if (unlocked && !ctx.readOnly) b.onclick = () => ctx.setPolicy(key, o.id);
+        if (!ctx.readOnly) b.onclick = () => ctx.setPolicy(key, o.id);
         opts.append(b);
       }
       box.append(opts);
@@ -549,12 +569,22 @@ function ratioMetric(label, gen, use, unit, tip) {
 // ===========================================================================
 // NEWS / EVENTS LOG
 // ===========================================================================
+const NEWS_SCOPE = {
+  foreign: '🌐 Foreign affairs', internal: '🏛️ Internal affairs', fire: '🔥 Disaster',
+  incident: '🚨 On the ground', daily: '🗞️ Daily life', tech: '🔬 Technology', project: '🏗️ National project',
+};
 export function renderNews(state) {
   const wrap = el('div');
   if (!state.log.length) { wrap.append(el('div', 'empty', 'No news yet. History is being written…')); return wrap; }
   for (const entry of state.log) {
-    const item = el('div', 'news-item');
-    item.innerHTML = `<div class="news-date">${formatDate(entry.d)}</div><div class="news-text">${entry.text}</div>`;
+    const item = el('div', 'news-item' + (entry.scope ? ' sc-' + entry.scope : ''));
+    const meta = el('div', 'news-meta');
+    const date = el('span', 'news-date'); date.textContent = formatDate(entry.d);
+    meta.append(date);
+    if (entry.scope && NEWS_SCOPE[entry.scope]) { const tag = el('span', 'news-tag'); tag.textContent = NEWS_SCOPE[entry.scope]; meta.append(tag); }
+    const head = el('div', 'news-text'); head.textContent = entry.text;
+    item.append(meta, head);
+    if (entry.detail) { const body = el('div', 'news-detail'); body.textContent = entry.detail; item.append(body); }
     wrap.append(item);
   }
   return wrap;

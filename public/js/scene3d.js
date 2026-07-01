@@ -201,7 +201,7 @@ const AIRPORT = {
 };
 
 export class Scene3D {
-  constructor(canvas, { onTileTap, onGroundTap, onDemolishHover, onDemolishStroke, onAdjustRotate, onDisaster } = {}) {
+  constructor(canvas, { onTileTap, onGroundTap, onDemolishHover, onDemolishStroke, onAdjustRotate, onDisaster, onFireHover } = {}) {
     this.canvas = canvas;
     this.onTileTap = onTileTap;
     this.onGroundTap = onGroundTap;       // freeform road drawing taps
@@ -209,6 +209,7 @@ export class Scene3D {
     this.onDemolishStroke = onDemolishStroke; // dragged a freehand stroke in Demolish mode -> mark roads under it
     this.onAdjustRotate = onAdjustRotate;   // drag-rotated the pending building -> sync angle to UI
     this.onDisaster = onDisaster;           // a fire burned a building down -> apply the economic consequence
+    this.onFireHover = onFireHover;         // cursor moved over a blaze -> explain WHY it's burning
     this.climate = { water: 1, heat: 0.3 }; // slow reservoir yield + heat load, fed to the engine each tick
     this.roadMode = false;
     this.edgePts = []; this.edgeLen = []; this.edgeMeta = []; this.edgeN1 = []; this.edgeN2 = []; this.edgeMid = []; this.navAdj = []; this.navNodes = [];
@@ -1805,7 +1806,7 @@ export class Scene3D {
     };
     c.addEventListener('pointerup', end);
     c.addEventListener('pointercancel', end);
-    c.addEventListener('pointerleave', () => { if (this.ghost) this.ghost.visible = false; this._hideHoverTile(); if (this._paintBrush) this._paintBrush.visible = false; if (this.bulldoze && this.onDemolishHover) this.onDemolishHover(null, null); if (this._demoDrawing) { this._demoDrawing = false; this._demoStroke = null; this._clearDemoStrokePreview(); } this.showDemoRoadHover([]); this._clearSnapMarker(); this._hideDrawCursor(); if (this.pieceMode) this.clearRoadPreview(); });
+    c.addEventListener('pointerleave', () => { if (this.ghost) this.ghost.visible = false; this._hideHoverTile(); if (this._paintBrush) this._paintBrush.visible = false; if (this._fireHovered) { this._fireHovered = null; if (this.onFireHover) this.onFireHover(null); } if (this.bulldoze && this.onDemolishHover) this.onDemolishHover(null, null); if (this._demoDrawing) { this._demoDrawing = false; this._demoStroke = null; this._clearDemoStrokePreview(); } this.showDemoRoadHover([]); this._clearSnapMarker(); this._hideDrawCursor(); if (this.pieceMode) this.clearRoadPreview(); });
     c.addEventListener('wheel', (e) => {
       e.preventDefault();
       this.cam.radius = THREE.MathUtils.clamp(this.cam.radius * (e.deltaY < 0 ? 0.92 : 1.08), this.MIN_R, this.MAX_R);
@@ -2256,6 +2257,7 @@ export class Scene3D {
   }
 
   _hover(p) {
+    this._updateFireHover(p);                             // "why is it burning?" — independent of the active tool
     if (this.plantMode) {                                 // Plants tool: ghost specimen follows the cursor
       const g = this._raycastGround(p);
       if (g && this.plantGhost) { this.plantGhost.position.set(g.x, this._heightAt(g.x, g.z), g.z); this.plantGhost.visible = true; }
@@ -3645,7 +3647,7 @@ export class Scene3D {
       // `safety` — makes an outbreak far less likely (a well-covered city rarely burns).
       const guard = 1 - THREE.MathUtils.clamp((this.state?.safety || 30) / 170, 0, 0.7);
       if (this._dryness > 0.6 && this._fires.length < 5 && this.state && Math.random() < (this._dryness - 0.55) * 1.15 * guard) {
-        const c = this._fireCandidate(); if (c) this._igniteFire(c.x, c.z, c.kind, c.key);
+        const c = this._fireCandidate(); if (c) this._igniteFire(c.x, c.z, c.kind, c.key, this._fireCause(c.x, c.z, c.kind, !!c.kampong, false));
       }
     }
 
@@ -3669,7 +3671,7 @@ export class Scene3D {
       f.spread -= dt;
       if (f.spread <= 0 && k > 0.4 && this._dryness > 0.62 && this._fires.length < 6) {
         f.spread = 2 + Math.random() * 3;
-        const n = this._fireNeighbour(f); if (n) this._igniteFire(n.x, n.z, n.kind, n.key);
+        const n = this._fireNeighbour(f); if (n) this._igniteFire(n.x, n.z, n.kind, n.key, this._fireCause(n.x, n.z, n.kind, false, true));
       }
       if (f.life <= 0) this._extinguish(i);
     }
@@ -3706,7 +3708,7 @@ export class Scene3D {
       const key = `${pl.gx},${pl.gy}`; if (burning.has(key)) continue;
       const c = cellToWorld(pl.gx, pl.gy);
       if (Math.hypot(c.x - tx, c.z - tz) > R) continue;
-      pool.push({ x: c.x, z: c.z, kind: 'building', key, risk: pl.key === 'kampong' ? 0.85 : 0.5 });
+      pool.push({ x: c.x, z: c.z, kind: 'building', key, risk: pl.key === 'kampong' ? 0.85 : 0.5, kampong: pl.key === 'kampong' || pl.key === 'shophouse' });
     }
     if (this.state && this.state.plants) this.state.plants.forEach((pl, pi) => { if (Math.hypot(pl.x - tx, pl.z - tz) <= R) pool.push({ x: pl.x, z: pl.z, kind: 'plant', key: pi, risk: 0.5 }); });
     if (!pool.length) return null;
@@ -3719,6 +3721,51 @@ export class Scene3D {
     if (this.natureCells) for (const [key, g] of this.natureCells) { if (g.visible && !g.userData._fire && Math.hypot(g.position.x - f.x, g.position.z - f.z) < R) return { x: g.position.x, z: g.position.z, kind: 'tree', key }; }
     for (const [key, e] of this.buildings) { if (e.group && !burning.has(key) && Math.hypot(e.group.position.x - f.x, e.group.position.z - f.z) < R) return { x: e.group.position.x, z: e.group.position.z, kind: 'building', key }; }
     return null;
+  }
+  // Work out WHY this fire started, from the conditions at the point of ignition —
+  // so the player, hovering the flames, learns whether it's the dry spell, a lack
+  // of greenery, thin fire cover, tinder-dry old homes, a jump from a neighbour, or
+  // a human act. Returns { label, why } for the hover card and the news detail.
+  _fireCause(x, z, kind, kampong, spread) {
+    const capf = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
+    if (spread) return { label: 'Spread from nearby', why: 'the fire leapt from a neighbouring blaze — flames jump fast between packed timber homes and dry trees, so one fire quickly becomes many.' };
+    const dry = this._dryness || 0;
+    const safety = (this.state && this.state.safety) || 30;
+    const unrest = (this.state && this.state.unrest) || 0;
+    const green = kind === 'building' ? this._greeneryNear(x, z) : 1;
+    let label, lead;
+    const roll = Math.random();
+    if (safety < 42 && roll < 0.30) {                       // a human cause slips through when fire/police cover is thin
+      if (unrest > 0.5 && roll < 0.12) { label = 'Arson'; lead = 'someone set it deliberately amid the unrest'; }
+      else { label = 'Accidental fire'; lead = ['a cooking fire got out of hand', 'a carelessly discarded cigarette caught', 'faulty wiring sparked a blaze'][Math.floor(Math.random() * 3)]; }
+    } else if (kind === 'tree' || kind === 'plant') { label = 'Dry vegetation'; lead = 'parched vegetation caught alight in the heat'; }
+    else if (kampong) { label = 'Tinder-dry homes'; lead = 'tinder-dry attap-and-timber homes, packed wall to wall, went up in moments'; }
+    else { label = 'Bone-dry conditions'; lead = 'the building ignited in the dry heat'; }
+    const contrib = [];
+    if (dry > 0.72) contrib.push('a long dry spell has left everything parched');
+    if (kind === 'building' && green < 0.34) contrib.push('there is no greenery nearby to cool the air or slow the spread');
+    if (safety < 46) contrib.push('fire cover is thin — too few fire stations and police to catch it early');
+    let why = capf(lead) + '.';
+    if (contrib.length) why += ' ' + capf(contrib.join('; ')) + '.';
+    return { label, why };
+  }
+  // Compact fire summary for the hover card (main.js renders it).
+  _fireInfo(f) {
+    if (!f) return null;
+    const kindLabel = f.kind === 'tree' ? 'Tree' : f.kind === 'plant' ? 'Vegetation' : 'Building';
+    const doused = (f.rainSeconds || 0) >= 1.2;
+    return { kind: f.kind, kindLabel, label: (f.cause && f.cause.label) || 'Fire', why: (f.cause && f.cause.why) || '', doused, wet: this.weather && this.weather.rain > 0.3 };
+  }
+  // Fire "why is it burning" — runs on every hover, in ANY mode. Cheap early-out
+  // when nothing is alight; otherwise finds the nearest blaze under the cursor and
+  // hands the game its cause so a floating card can explain it.
+  _updateFireHover(p) {
+    if (!this._fires || !this._fires.length) { if (this._fireHovered) { this._fireHovered = null; if (this.onFireHover) this.onFireHover(null); } return; }
+    const g = this._raycastGround(p);
+    let best = null, bestD = 8 * 8;
+    if (g) for (const f of this._fires) { const dx = f.x - g.x, dz = f.z - g.z, d = dx * dx + dz * dz; if (d < bestD) { bestD = d; best = f; } }
+    if (best) { this._fireHovered = best; if (this.onFireHover) this.onFireHover(this._fireInfo(best)); }
+    else if (this._fireHovered) { this._fireHovered = null; if (this.onFireHover) this.onFireHover(null); }
   }
   // A CPU-driven particle emitter (fire or smoke): each particle carries its own
   // age/lifetime/velocity/size so it lives, moves and dies individually — a real
@@ -3772,7 +3819,7 @@ export class Scene3D {
   }
   // Light a fire at (x,z): a volumetric flame + a rising smoke plume + embers + firelight.
   igniteFireAt(x, z, kind = 'tree', key = null) { return this._igniteFire(x, z, kind, key); }
-  _igniteFire(x, z, kind, key) {
+  _igniteFire(x, z, kind, key, cause) {
     if (!this._fireGroup) { this._fireGroup = new THREE.Group(); this.scene.add(this._fireGroup); }
     // a building fire is booked against its grid cell so it can be destroyed for real
     let gx = -1, gy = -1;
@@ -3792,7 +3839,8 @@ export class Scene3D {
       new THREE.PointsMaterial({ map: this._softTex(), color: 0xffc255, size: 1.6 * scale, sizeAttenuation: true, transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false }));
     grp.add(embers);
     const dur = 8 + Math.random() * 10;
-    this._fires.push({ x, z, baseY, kind, key, gx, gy, rainSeconds: 0, flameSys, smokeSys, flame: flameSys.pts, smoke: smokeSys.pts, light, embers, grp, life: dur, dur, seed: Math.random() * 9, scale, spread: 2.5 });
+    this._fires.push({ x, z, baseY, kind, key, gx, gy, rainSeconds: 0, flameSys, smokeSys, flame: flameSys.pts, smoke: smokeSys.pts, light, embers, grp, life: dur, dur, seed: Math.random() * 9, scale, spread: 2.5,
+      cause: cause || { label: 'Fire', why: 'a blaze took hold in the dry heat.' } });
     if (kind === 'tree' && this.natureCells) { const g = this.natureCells.get(key); if (g) g.userData._fire = true; }
     if (kind === 'building') (this._burningCells || (this._burningCells = new Set())).add(key);
     this._spawnDust(x, z, 0x5a5a5a, 8);
@@ -3808,7 +3856,7 @@ export class Scene3D {
       // tell the game to destroy it (lose its output, pay the emergency bill, take the
       // approval/health/air-quality hit). Rain that came in time SAVES it (no callback).
       const destroyed = (f.rainSeconds || 0) < 1.2;
-      if (destroyed && this.onDisaster && f.gx >= 0) this.onDisaster({ kind: 'fire', gx: f.gx, gy: f.gy });
+      if (destroyed && this.onDisaster && f.gx >= 0) this.onDisaster({ kind: 'fire', gx: f.gx, gy: f.gy, cause: f.cause });
     }
     if (f.grp && this._fireGroup) this._fireGroup.remove(f.grp);   // removes flame/light/smoke/embers together
     for (const sys of [f.flameSys, f.smokeSys]) if (sys) { sys.geo.dispose(); sys.mat.dispose(); }

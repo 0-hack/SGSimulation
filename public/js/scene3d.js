@@ -66,6 +66,44 @@ const LIGHT_YEAR = 1965;      // junction traffic lights are present from the st
 const M_PER_UNIT = 7;          // metres of Singapore per world unit
 const TIME_COMPRESS = 2;       // the living world runs ~2× real time
 const KMH = (k) => k * (1000 / 3600) / M_PER_UNIT * TIME_COMPRESS;   // ≈ k × 0.0794 u/s
+
+// --- particle shaders (volumetric fire & smoke) -----------------------------
+// One vertex shader for both: each particle carries its own age/lifetime/size, so
+// it shrinks (fire) or swells (smoke) over its life and attenuates with distance.
+const PARTICLE_VS = `
+  attribute float aAge; attribute float aLife; attribute float aSize;
+  uniform float uGrow;
+  varying float vT;
+  void main() {
+    vT = clamp(aAge / aLife, 0.0, 1.0);
+    vec4 mv = modelViewMatrix * vec4(position, 1.0);
+    float sz = aSize * (1.0 + uGrow * vT);
+    gl_PointSize = clamp(sz * (300.0 / -mv.z), 1.0, 130.0);
+    gl_Position = projectionMatrix * mv;
+  }`;
+// Fire: a soft round particle that starts white-hot, cools through orange to a dark
+// red as it ages and rises, then fades out (additively blended so overlaps glow).
+// The alpha is a smooth circular mask that reaches zero exactly at the sprite edge,
+// so there are NO square point-sprite corners — just round, granular flame licks.
+const FIRE_FS = `
+  precision mediump float; varying float vT; uniform float uOpacity;
+  void main() {
+    vec2 uv = gl_PointCoord - 0.5; float m = smoothstep(0.25, 0.0, dot(uv, uv));
+    float a = m * m;                              // tight hot core, clean round edge
+    vec3 hot = vec3(1.0, 0.95, 0.68), mid = vec3(1.0, 0.46, 0.10), cool = vec3(0.45, 0.05, 0.02);
+    vec3 col = mix(mix(hot, mid, smoothstep(0.0, 0.35, vT)), cool, smoothstep(0.35, 1.0, vT));
+    gl_FragColor = vec4(col, a * (1.0 - vT) * uOpacity * 0.75);
+  }`;
+// Smoke: a soft grey puff that grows and lightens as it rises, easing in then out.
+// Same circular mask so the plume reads as round wisps, not a grid of squares.
+const SMOKE_FS = `
+  precision mediump float; varying float vT; uniform float uOpacity;
+  void main() {
+    vec2 uv = gl_PointCoord - 0.5; float a = smoothstep(0.25, 0.0, dot(uv, uv)) * 0.85;
+    float fade = smoothstep(0.0, 0.12, vT) * (1.0 - smoothstep(0.5, 1.0, vT));
+    vec3 col = mix(vec3(0.14), vec3(0.5), vT);
+    gl_FragColor = vec4(col, a * fade * uOpacity);
+  }`;
 const MRT_DECK_CLEAR = 6.3 * MODEL_SCALE;            // deck clearance = the station's concourse-floor height, so the two meet
 const MRT_MAX_SLOPE = Math.tan(20 * Math.PI / 180);  // viaduct never climbs/falls steeper than 20°
 const MRT_TRACK_GAUGE = 0.32;                        // half-spacing of the two tracks: a train sits this far off the deck centre, so up- and down-trains pass
@@ -3397,15 +3435,6 @@ export class Scene3D {
     g.fillStyle = gr; g.beginPath(); g.arc(32, 32, 32, 0, Math.PI * 2); g.fill();
     return (this._softTexCache = new THREE.CanvasTexture(c));
   }
-  // A vertical rain streak (a soft bright line fading at both ends).
-  _streakTex() {
-    if (this._streakTexCache) return this._streakTexCache;
-    const c = document.createElement('canvas'); c.width = 32; c.height = 64; const g = c.getContext('2d');
-    const gr = g.createLinearGradient(0, 0, 0, 64);
-    gr.addColorStop(0, 'rgba(214,232,250,0)'); gr.addColorStop(0.5, 'rgba(214,232,250,0.95)'); gr.addColorStop(1, 'rgba(214,232,250,0)');
-    g.fillStyle = gr; g.fillRect(13, 0, 6, 64);
-    return (this._streakTexCache = new THREE.CanvasTexture(c));
-  }
 
   // ---- weather --------------------------------------------------------------
   _initWeather() {
@@ -3423,15 +3452,17 @@ export class Scene3D {
     }
     // Rain belongs to CLOUDS, not the camera: each drop is tied to a cloud and falls
     // beneath it (recycling under the cloud as it drifts), so rain follows the heavy
-    // clouds across the sky instead of always pouring on wherever you look.
-    const count = 1800, geo = new THREE.BufferGeometry(), p = new Float32Array(count * 3);
-    this._rainCloud = new Int16Array(count);
-    for (let i = 0; i < count; i++) { p[i * 3] = 0; p[i * 3 + 1] = -9999; p[i * 3 + 2] = 0; this._rainCloud[i] = i % this.clouds.length; }
-    geo.setAttribute('position', new THREE.BufferAttribute(p, 3));
-    this.rain = new THREE.Points(geo, new THREE.PointsMaterial({ map: this._streakTex(), color: 0xcfe1f3, size: 6.5, sizeAttenuation: true, transparent: true, opacity: 0, depthWrite: false }));
-    this.rain.visible = false; this.scene.add(this.rain);
+    // clouds across the sky instead of always pouring on wherever you look. Each drop
+    // is a real 3D STREAK (a line segment) that leans with the wind.
+    const drops = 1400;
+    this._rainDrops = drops; this._rainHead = new Float32Array(drops * 3); this._rainCloud = new Int16Array(drops);
+    const rp = new Float32Array(drops * 2 * 3);
+    for (let i = 0; i < drops; i++) { this._rainCloud[i] = i % this.clouds.length; this._rainHead[i * 3 + 1] = -9999; for (let k = 0; k < 6; k++) rp[i * 6 + k] = -9999; }
+    const rgeo = new THREE.BufferGeometry(); rgeo.setAttribute('position', new THREE.BufferAttribute(rp, 3));
+    this.rain = new THREE.LineSegments(rgeo, new THREE.LineBasicMaterial({ color: 0xaecbe8, transparent: true, opacity: 0, depthWrite: false }));
+    this.rain.frustumCulled = false; this.rain.visible = false; this.scene.add(this.rain);
     this._cloudBaseCol = new THREE.Color(0xffffff);
-    this._bolts = []; this._boltTimer = 4 + Math.random() * 6; this._flash = 0; this._windDrift = 0;
+    this._bolts = []; this._boltTimer = 4 + Math.random() * 6; this._flash = 0; this._strobeN = 0; this._strobeT = 0; this._windDrift = 0;
     this._weatherTimer = 6 + Math.random() * 12;
     this._pickWeather();
   }
@@ -3481,22 +3512,26 @@ export class Scene3D {
     // view actually drop visible rain), so the rain travels with the heavy clouds
     // rather than always pouring straight down on the camera.
     const eff = Math.max(w.rain, this._floodRain ? 1 : 0);
-    const arr = this.rain.geometry.attributes.position.array;
+    const rp = this.rain.geometry.attributes.position.array, head = this._rainHead;
     let anyRain = false;
     if (eff > 0.02) {
-      const RAIN_R = 380, fall = 130 * (0.7 + eff), sx = wx * w.wind * 26, sz = wz * w.wind * 26;
+      const RAIN_R = 380, fall = 130 * (0.8 + eff), vx = wx * w.wind * 30, vz = wz * w.wind * 30;
+      // streak vector = up along −velocity, so the line LEANS the way the rain is driven
+      const vlen = Math.hypot(vx, fall, vz) || 1, slen = 4 + eff * 3.5;
+      const sxu = -vx / vlen * slen, syu = fall / vlen * slen, szu = -vz / vlen * slen;
       const tx = this.target.x, tz = this.target.z;
-      for (let i = 0; i < arr.length; i += 3) {
-        const cl = this.clouds[this._rainCloud[i / 3]]; if (!cl) { arr[i + 1] = -9999; continue; }
-        const near = Math.hypot(cl.position.x - tx, cl.position.z - tz) < RAIN_R;
-        if (!near) { arr[i + 1] = -9999; continue; }                      // this cloud is off-view: no drops shown
-        if (arr[i + 1] <= 0 || arr[i + 1] > cl.position.y + 6) {          // (re)spawn just under the cloud
-          arr[i] = cl.position.x + (Math.random() - 0.5) * 58; arr[i + 1] = cl.position.y - 4 - Math.random() * 8; arr[i + 2] = cl.position.z + (Math.random() - 0.5) * 58;
-        } else { arr[i] += sx * dt; arr[i + 1] -= fall * dt; arr[i + 2] += sz * dt; }
+      for (let d = 0; d < this._rainDrops; d++) {
+        const cl = this.clouds[this._rainCloud[d]], h = d * 3, o = d * 6;
+        if (!cl || Math.hypot(cl.position.x - tx, cl.position.z - tz) >= RAIN_R) { rp[o + 1] = rp[o + 4] = -9999; head[h + 1] = -9999; continue; }
+        if (head[h + 1] <= 0 || head[h + 1] > cl.position.y + 6) {         // landed / uninitialised → respawn under the cloud
+          head[h] = cl.position.x + (Math.random() - 0.5) * 62; head[h + 1] = cl.position.y - Math.random() * 12; head[h + 2] = cl.position.z + (Math.random() - 0.5) * 62;
+        } else { head[h] += vx * dt; head[h + 1] -= fall * dt; head[h + 2] += vz * dt; }
+        rp[o] = head[h]; rp[o + 1] = head[h + 1]; rp[o + 2] = head[h + 2];                       // tip
+        rp[o + 3] = head[h] + sxu; rp[o + 4] = head[h + 1] + syu; rp[o + 5] = head[h + 2] + szu; // tail (leaning up-wind)
         anyRain = true;
       }
       this.rain.geometry.attributes.position.needsUpdate = true;
-      this.rain.material.opacity = Math.min(0.75, eff * 0.85);
+      this.rain.material.opacity = Math.min(0.85, eff * 0.95);
     }
     this.rain.visible = anyRain;
 
@@ -3505,6 +3540,12 @@ export class Scene3D {
     if (eff > 0.55 && w.wind > 0.45) {
       this._boltTimer -= dt;
       if (this._boltTimer <= 0) { this._boltTimer = 2.5 + Math.random() * 8; this._flash = 1; this._spawnBolt(); }
+    }
+    // multi-flash strobe — a real strike flickers several times as it discharges,
+    // so re-spike the sky flash a few times just after the bolt appears.
+    if (this._strobeN > 0) {
+      this._strobeT -= dt;
+      if (this._strobeT <= 0) { this._strobeN--; this._strobeT = 0.04 + Math.random() * 0.06; this._flash = Math.max(this._flash, 0.75 + Math.random() * 0.25); }
     }
     if (this._flash > 0) {
       this._flash = Math.max(0, this._flash - dt * 4.5);
@@ -3518,25 +3559,45 @@ export class Scene3D {
       if (b.life <= 0) { this.scene.remove(b.mesh); b.mesh.traverse((c) => { if (c.geometry) c.geometry.dispose(); }); this._bolts.splice(i, 1); }
     }
   }
-  // A forked lightning bolt from a near storm cloud down to the ground: a bright
-  // white core wrapped in a soft blue glow, with a couple of branches. Fades fast.
+  // A fractal lightning bolt from a near storm cloud down to the ground. The main
+  // channel jitters its way down; from random points along it a few branches fork
+  // off, each of which can spawn its own thinner, dimmer sub-branches (recursion).
+  // Every channel is a bright core wrapped in a soft blue glow. Fades fast, and
+  // triggers a short multi-flash strobe so the sky flickers like a real strike.
   _spawnBolt() {
     const near = this.clouds.filter((c) => Math.hypot(c.position.x - this.target.x, c.position.z - this.target.z) < 420);
     const cl = (near.length ? near : this.clouds)[Math.floor(Math.random() * (near.length || this.clouds.length))];
     if (!cl) return;
-    const jag = (sx, sy, sz, ey, spread) => {
-      const out = []; let x = sx, z = sz; const steps = Math.max(4, Math.round((sy - ey) / 11));
-      for (let i = 0; i <= steps; i++) { out.push(new THREE.Vector3(x, sy + (ey - sy) * (i / steps), z)); x += (Math.random() - 0.5) * spread; z += (Math.random() - 0.5) * spread; }
-      return out;
-    };
     const grp = new THREE.Group(); grp.renderOrder = 9;
     const addLine = (pts, col, op) => { const m = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: col, transparent: true, opacity: op, depthWrite: false, blending: THREE.AdditiveBlending })); m.userData.baseOp = op; grp.add(m); };
-    const main = jag(cl.position.x + (Math.random() - 0.5) * 40, cl.position.y, cl.position.z + (Math.random() - 0.5) * 40, 0, 15);
-    addLine(main, 0x9fc4ff, 0.5);        // soft blue glow (drawn first, behind)
-    addLine(main, 0xfdfdff, 1);          // bright white core
-    const nb = 1 + Math.floor(Math.random() * 2);
-    for (let b = 0; b < nb; b++) { const s = main[2 + Math.floor(Math.random() * (main.length - 4))]; addLine(jag(s.x, s.y, s.z, s.y * (0.2 + Math.random() * 0.3), 13), 0xdce9ff, 0.85); }
-    this.scene.add(grp); this._bolts.push({ mesh: grp, life: 0.26, dur: 0.26 });
+    // A jagged channel from (sx,sy,sz) down to height ey, wandering sideways by
+    // `spread` each step plus a steady `drift` so branches lean away from the trunk.
+    const jag = (sx, sy, sz, ey, spread, drift) => {
+      const out = []; let x = sx, z = sz;
+      const steps = Math.max(3, Math.round((sy - ey) / 10));
+      const dx = (Math.random() - 0.5) * drift, dz = (Math.random() - 0.5) * drift;
+      for (let i = 0; i <= steps; i++) {
+        out.push(new THREE.Vector3(x, sy + (ey - sy) * (i / steps), z));
+        x += (Math.random() - 0.5) * spread + dx; z += (Math.random() - 0.5) * spread + dz;
+      }
+      return out;
+    };
+    // Recursively grow the bolt: draw this channel, then fork a few children from
+    // random points along it — each shorter, thinner (less spread) and dimmer.
+    const grow = (sx, sy, sz, ey, spread, gen, op) => {
+      const pts = jag(sx, sy, sz, ey, spread, gen === 0 ? 0 : spread * 2.4);
+      addLine(pts, 0x9fc4ff, op * 0.5);                          // soft blue glow (behind)
+      addLine(pts, gen === 0 ? 0xfdfdff : 0xdce9ff, op);         // bright core
+      if (gen >= 2) return;
+      const forks = gen === 0 ? 2 + Math.floor(Math.random() * 2) : Math.floor(Math.random() * 2);
+      for (let b = 0; b < forks; b++) {
+        const s = pts[1 + Math.floor(Math.random() * (pts.length - 2))];
+        grow(s.x, s.y, s.z, s.y * (0.25 + Math.random() * 0.45), spread * 0.68, gen + 1, op * 0.7);
+      }
+    };
+    grow(cl.position.x + (Math.random() - 0.5) * 40, cl.position.y, cl.position.z + (Math.random() - 0.5) * 40, 0, 15, 0, 1);
+    this.scene.add(grp); this._bolts.push({ mesh: grp, life: 0.28, dur: 0.28 });
+    this._strobeN = 2 + Math.floor(Math.random() * 3); this._strobeT = 0.04 + Math.random() * 0.05;   // flicker a few more times
   }
 
   // ---- fire & smoke ---------------------------------------------------------
@@ -3564,26 +3625,14 @@ export class Scene3D {
       const f = this._fires[i];
       f.life -= dt * (w.rain > 0.3 ? 4 + w.rain * 7 : 1);          // rain douses it fast
       const k = Math.max(0, f.life / f.dur), now = performance.now();
-      // flame tongues writhe: each stretches/squashes and leans on its own phase
-      for (const t of (f.tongues || [])) {
-        const s = 0.75 + 0.32 * Math.sin(now / 68 + t.phase) + 0.14 * Math.sin(now / 21 + t.phase * 2);
-        t.mesh.scale.set(0.9 + 0.15 * Math.sin(now / 95 + t.phase), (0.45 + 0.55 * k) * s, 0.9 + 0.15 * Math.cos(now / 88 + t.phase));
-        t.mesh.position.x = t.ox + Math.sin(now / 130 + t.phase) * 0.5;
-        t.mesh.material.opacity = 0.85 * Math.min(1, k * 1.5 + 0.2);
-      }
+      // volumetric flame + smoke plumes (each particle lives & moves on its own)
+      this._stepParticles(f.flameSys, dt, wx, wz, w.wind, Math.min(1, k * 1.6 + 0.15));
+      this._stepParticles(f.smokeSys, dt, wx, wz, w.wind, 0.7 * Math.min(1, k * 1.7 + 0.2));
       if (f.light) f.light.intensity = (1.15 + 0.65 * Math.sin(now / 55 + f.seed) + 0.35 * Math.random()) * k;
-      const localWx = wx * (3 + w.wind * 11), localWz = wz * (3 + w.wind * 11);   // wind, in the fire's (unrotated) local frame
-      const sp = f.smoke.geometry.attributes.position.array;
-      for (let j = 0; j < sp.length; j += 3) {
-        sp[j] += (localWx + (Math.random() - 0.5) * 1.8) * dt; sp[j + 1] += (7 + Math.random() * 4) * dt; sp[j + 2] += (localWz + (Math.random() - 0.5) * 1.8) * dt;
-        if (sp[j + 1] > 42) { sp[j] = (Math.random() - 0.5) * 2; sp[j + 1] = Math.random() * 3; sp[j + 2] = (Math.random() - 0.5) * 2; }
-      }
-      f.smoke.geometry.attributes.position.needsUpdate = true;
-      f.smoke.material.opacity = 0.5 * Math.min(1, k * 1.6 + 0.25);
-      const ep = f.embers.geometry.attributes.position.array;
+      const ep = f.embers.geometry.attributes.position.array, s = f.scale;
       for (let j = 0; j < ep.length; j += 3) {
-        ep[j] += (localWx * 0.5 + (Math.random() - 0.5) * 3) * dt; ep[j + 1] += (11 + Math.random() * 10) * dt; ep[j + 2] += (localWz * 0.5 + (Math.random() - 0.5) * 3) * dt;
-        if (ep[j + 1] > 17) { ep[j] = (Math.random() - 0.5) * 1.4; ep[j + 1] = Math.random() * 2; ep[j + 2] = (Math.random() - 0.5) * 1.4; }
+        ep[j] += (wx * (2 + w.wind * 6) + (Math.random() - 0.5) * 3) * dt; ep[j + 1] += (11 + Math.random() * 12) * dt * s; ep[j + 2] += (wz * (2 + w.wind * 6) + (Math.random() - 0.5) * 3) * dt;
+        if (ep[j + 1] > 20 * s) { ep[j] = (Math.random() - 0.5) * 1.4 * s; ep[j + 1] = Math.random() * 2; ep[j + 2] = (Math.random() - 0.5) * 1.4 * s; }
       }
       f.embers.geometry.attributes.position.needsUpdate = true;
       f.embers.material.opacity = 0.9 * k;
@@ -3630,36 +3679,76 @@ export class Scene3D {
     for (const [key, e] of this.buildings) { if (e.group && !e.group.userData._fire && Math.hypot(e.group.position.x - f.x, e.group.position.z - f.z) < R) return { x: e.group.position.x, z: e.group.position.z, kind: 'building', key }; }
     return null;
   }
-  // Light a fire at (x,z): flickering flames + a warm point light + a rising smoke column.
+  // A CPU-driven particle emitter (fire or smoke): each particle carries its own
+  // age/lifetime/velocity/size so it lives, moves and dies individually — a real
+  // volumetric plume instead of a few flat cones.
+  _makeParticles(count, kind, scale) {
+    const sys = { count, kind, scale, pos: new Float32Array(count * 3), vel: new Float32Array(count * 3), age: new Float32Array(count), life: new Float32Array(count), size: new Float32Array(count) };
+    for (let i = 0; i < count; i++) this._seedParticle(sys, i, true);
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(sys.pos, 3));
+    g.setAttribute('aAge', new THREE.BufferAttribute(sys.age, 1));
+    g.setAttribute('aLife', new THREE.BufferAttribute(sys.life, 1));
+    g.setAttribute('aSize', new THREE.BufferAttribute(sys.size, 1));
+    const mat = new THREE.ShaderMaterial({
+      uniforms: { uOpacity: { value: 1 }, uGrow: { value: kind === 'fire' ? -0.55 : 1.7 } },
+      vertexShader: PARTICLE_VS, fragmentShader: kind === 'fire' ? FIRE_FS : SMOKE_FS,
+      transparent: true, depthWrite: false, blending: kind === 'fire' ? THREE.AdditiveBlending : THREE.NormalBlending,
+    });
+    sys.pts = new THREE.Points(g, mat); sys.pts.frustumCulled = false; sys.geo = g; sys.mat = mat;
+    return sys;
+  }
+  _seedParticle(sys, i, first) {
+    const s = sys.scale, j = i * 3, rnd = Math.random;
+    if (sys.kind === 'fire') {
+      sys.life[i] = 0.34 + rnd() * 0.42; sys.age[i] = first ? rnd() * sys.life[i] : 0;
+      sys.pos[j] = (rnd() - 0.5) * 2.4 * s; sys.pos[j + 1] = rnd() * 1.4 * s; sys.pos[j + 2] = (rnd() - 0.5) * 2.4 * s;
+      sys.vel[j] = (rnd() - 0.5) * 3 * s; sys.vel[j + 1] = (10 + rnd() * 11) * s; sys.vel[j + 2] = (rnd() - 0.5) * 3 * s;
+      sys.size[i] = (3.4 + rnd() * 2.4) * s;
+    } else {
+      sys.life[i] = 2.2 + rnd() * 2.0; sys.age[i] = first ? rnd() * sys.life[i] * 0.5 : 0;
+      sys.pos[j] = (rnd() - 0.5) * 2.6 * s; sys.pos[j + 1] = (2 + rnd() * 5) * s; sys.pos[j + 2] = (rnd() - 0.5) * 2.6 * s;
+      sys.vel[j] = (rnd() - 0.5) * 2 * s; sys.vel[j + 1] = (5 + rnd() * 3.5) * s; sys.vel[j + 2] = (rnd() - 0.5) * 2 * s;
+      sys.size[i] = (2.8 + rnd() * 2.4) * s;
+    }
+  }
+  // Advance an emitter: age each particle, respawn the dead, integrate motion with a
+  // little curl-turbulence and (for smoke) the wind. `op` = the whole plume's opacity.
+  _stepParticles(sys, dt, wx, wz, wind, op) {
+    const { pos, vel, age, life, count, scale: s } = sys, t = performance.now() / 1000;
+    for (let i = 0; i < count; i++) {
+      age[i] += dt;
+      if (age[i] >= life[i]) { this._seedParticle(sys, i, false); continue; }
+      const j = i * 3;
+      if (sys.kind === 'smoke') { vel[j] += (wx * (3 + wind * 12) - vel[j]) * Math.min(1, dt * 0.8); vel[j + 2] += (wz * (3 + wind * 12) - vel[j + 2]) * Math.min(1, dt * 0.8); }
+      const swirl = (sys.kind === 'fire' ? 2.2 : 1.4) * s;
+      pos[j] += (vel[j] + Math.sin(t * 3 + i) * swirl) * dt;
+      pos[j + 1] += vel[j + 1] * dt;
+      pos[j + 2] += (vel[j + 2] + Math.cos(t * 2.6 + i * 1.3) * swirl) * dt;
+    }
+    sys.geo.attributes.position.needsUpdate = true; sys.geo.attributes.aAge.needsUpdate = true;
+    sys.mat.uniforms.uOpacity.value = op;
+  }
+  // Light a fire at (x,z): a volumetric flame + a rising smoke plume + embers + firelight.
   igniteFireAt(x, z, kind = 'tree', key = null) { return this._igniteFire(x, z, kind, key); }
   _igniteFire(x, z, kind, key) {
     if (!this._fireGroup) { this._fireGroup = new THREE.Group(); this.scene.add(this._fireGroup); }
     const baseY = this._meshTriY(x, z);
     const scale = kind === 'building' ? 1.7 : kind === 'tree' ? 1.2 : 0.7;
-    const grp = new THREE.Group(); grp.position.set(x, baseY, z); grp.scale.setScalar(scale); this._fireGroup.add(grp);
-    // Layered flame tongues — a deep-red core, an orange body, a yellow tip and two
-    // leaning side tongues — each flickering on its own phase (additive glow).
-    const flame = new THREE.Group(); flame.renderOrder = 8; const tongues = [];
-    for (const [col, r, h, ox] of [[0xd42d12, 1.15, 3.2, 0], [0xff5f10, 0.85, 4.6, 0], [0xffc22a, 0.5, 3.6, 0], [0xff861a, 0.6, 3.0, 1.05], [0xff861a, 0.6, 3.0, -1.05]]) {
-      const cone = new THREE.Mesh(new THREE.ConeGeometry(r, h, 8), new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.85, depthWrite: false, blending: THREE.AdditiveBlending }));
-      cone.position.set(ox, h / 2, 0); flame.add(cone); tongues.push({ mesh: cone, h, ox, phase: Math.random() * 6.28 });
-    }
-    grp.add(flame);
-    const light = new THREE.PointLight(0xff7a2a, 1.6, 64 * scale, 2); light.position.y = 3; grp.add(light);
-    // soft rising smoke (round puffs), in local coords so it cleans up with the group
-    const N = 24, spos = new Float32Array(N * 3);
-    for (let i = 0; i < N; i++) { spos[i * 3] = (Math.random() - 0.5) * 2; spos[i * 3 + 1] = Math.random() * 34; spos[i * 3 + 2] = (Math.random() - 0.5) * 2; }
-    const smoke = new THREE.Points(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(spos, 3)),
-      new THREE.PointsMaterial({ map: this._softTex(), color: 0x3b3b3b, size: 9, sizeAttenuation: true, transparent: true, opacity: 0.5, depthWrite: false }));
-    grp.add(smoke);
+    const grp = new THREE.Group(); grp.position.set(x, baseY, z); this._fireGroup.add(grp);
+    const flameSys = this._makeParticles(kind === 'building' ? 120 : 90, 'fire', scale);
+    const smokeSys = this._makeParticles(kind === 'building' ? 70 : 50, 'smoke', scale);
+    flameSys.pts.renderOrder = 9; smokeSys.pts.renderOrder = 8;
+    grp.add(smokeSys.pts); grp.add(flameSys.pts);
+    const light = new THREE.PointLight(0xff7a2a, 1.6, 64 * scale, 2); light.position.y = 3 * scale; grp.add(light);
     // bright embers flicking up from the flames
-    const E = 14, epos = new Float32Array(E * 3);
-    for (let i = 0; i < E; i++) { epos[i * 3] = (Math.random() - 0.5) * 2; epos[i * 3 + 1] = Math.random() * 8; epos[i * 3 + 2] = (Math.random() - 0.5) * 2; }
+    const E = 16, epos = new Float32Array(E * 3);
+    for (let i = 0; i < E; i++) { epos[i * 3] = (Math.random() - 0.5) * 2 * scale; epos[i * 3 + 1] = Math.random() * 8 * scale; epos[i * 3 + 2] = (Math.random() - 0.5) * 2 * scale; }
     const embers = new THREE.Points(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(epos, 3)),
-      new THREE.PointsMaterial({ map: this._softTex(), color: 0xffb445, size: 1.6, sizeAttenuation: true, transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false }));
+      new THREE.PointsMaterial({ map: this._softTex(), color: 0xffc255, size: 1.6 * scale, sizeAttenuation: true, transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false }));
     grp.add(embers);
     const dur = 8 + Math.random() * 10;
-    this._fires.push({ x, z, baseY, kind, key, flame, tongues, light, smoke, embers, grp, life: dur, dur, seed: Math.random() * 9, scale, spread: 2.5 });
+    this._fires.push({ x, z, baseY, kind, key, flameSys, smokeSys, flame: flameSys.pts, smoke: smokeSys.pts, light, embers, grp, life: dur, dur, seed: Math.random() * 9, scale, spread: 2.5 });
     if (kind === 'tree' && this.natureCells) { const g = this.natureCells.get(key); if (g) g.userData._fire = true; }
     if (kind === 'building') { const e = this.buildings.get(key); if (e && e.group) e.group.userData._fire = true; }
     this._spawnDust(x, z, 0x5a5a5a, 8);
@@ -3671,8 +3760,8 @@ export class Scene3D {
     else if (f.kind === 'plant' && this.removePlantNear) this.removePlantNear(f.x, f.z, 2.0);
     else if (f.kind === 'building') { const e = this.buildings.get(f.key); if (e && e.group) e.group.userData._fire = false; }
     if (f.grp && this._fireGroup) this._fireGroup.remove(f.grp);   // removes flame/light/smoke/embers together
-    if (f.smoke) f.smoke.geometry.dispose(); if (f.embers) f.embers.geometry.dispose();
-    (f.tongues || []).forEach((t) => t.mesh.geometry.dispose());
+    for (const sys of [f.flameSys, f.smokeSys]) if (sys) { sys.geo.dispose(); sys.mat.dispose(); }
+    if (f.embers) f.embers.geometry.dispose();
     this._spawnDust(f.x, f.z, 0x8a8a8a, 16);
     this._fires.splice(i, 1);
   }

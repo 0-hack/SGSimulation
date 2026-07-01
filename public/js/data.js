@@ -10,6 +10,23 @@ export const WORLD_SIZE = 1600; // world units across the island bounding box �
 // Each "citizen" in state represents ~10 real people; display multiplies by 10.
 export const POP_SCALE = 10;
 
+// Economic weight of a STANDING 1965 heritage building. The historic residential
+// city is rendered as hundreds of small models — kampong huts, two-storey shophouse
+// terraces, early SIT/HDB blocks — dotted across the town. Each is a fraction of a
+// modern, player-scale estate (an "HDB Flat" in the build menu is a whole 5,000-home
+// project), so a heritage home counts at a reduced weight; otherwise the seeded town
+// would "house" millions. Utilities, industry and civic works, by contrast, are
+// genuine regional facilities (the actual Pasir Panjang power station, Keppel port,
+// General Hospital…), so they count in FULL. Tuned so the 1965 start sits at a mild
+// housing shortage with ~11% unemployment and a thin power/water surplus — the real,
+// pressing conditions of independence — and so demolishing prebuilt housing, power
+// or water plainly moves the national stats.
+export const HERITAGE_RES_W = 0.095;
+export function heritageWeight(key) {
+  const b = BUILDINGS[key];
+  return b && b.cat === 'residential' ? HERITAGE_RES_W : 1;
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // SANDBOX / TEST MODE. When true: bond issuance is UNLIMITED (no debt ceiling,
 // no interest) and EVERY building is unlocked and buildable from 1965 — so you can

@@ -367,8 +367,17 @@ body.edit-mode #city {
 
 /* Dashboard */
 .dash-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; }
-.metric { background: var(--surface-2); border: 1px solid var(--line-2); border-radius: 16px; padding: 13px; }
-.metric .m-label { color: var(--muted); font-size: 11px; font-weight: 700; display: flex; align-items: center; gap: 5px; }
+.dash-section { margin-bottom: 2px; }
+.metric { position: relative; background: var(--surface-2); border: 1px solid var(--line-2); border-radius: 16px; padding: 13px; }
+.metric.has-tip { cursor: help; }
+.metric .m-label { color: var(--muted); font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: space-between; gap: 5px; }
+/* little "i" that reveals a plain-language explanation of the term on hover/tap */
+.m-info { display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; flex: 0 0 auto; border-radius: 50%; background: var(--line-2); color: var(--surface); font-size: 9px; font-weight: 800; font-style: normal; line-height: 1; text-transform: lowercase; }
+.metric.has-tip:hover .m-info { background: var(--teal); }
+/* Reveals in-flow (grows the card, pushing those below) so it always paints —
+   even inside the scrolling sheet — and works on both hover and tap. */
+.m-tip { display: none; margin-top: 9px; padding: 10px 12px; background: var(--ink); color: #fff; font-size: 11.5px; font-weight: 500; line-height: 1.5; border-radius: 11px; text-transform: none; letter-spacing: 0; }
+.metric.has-tip:hover .m-tip, .metric.show-tip .m-tip { display: block; }
 .metric .m-val { font-size: 20px; font-weight: 800; margin-top: 4px; font-variant-numeric: tabular-nums; letter-spacing: -0.5px; }
 .metric .m-sub { font-size: 11px; color: var(--muted); margin-top: 1px; font-weight: 600; }
 .bar { height: 8px; background: var(--line); border-radius: 6px; overflow: hidden; margin-top: 9px; }

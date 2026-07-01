@@ -4,7 +4,7 @@
 // disasters (floods, haze, storms) are animated. Mirrors the small API that
 // main.js expects from the old 2D view.
 import * as THREE from './vendor/three.module.js';
-import { BUILDINGS, GRID_SIZE, WORLD_SIZE, ROAD_TYPES, SURFACE_TYPES, fleetEra } from './data.js';
+import { BUILDINGS, GRID_SIZE, WORLD_SIZE, ROAD_TYPES, SURFACE_TYPES, fleetEra, heritageWeight } from './data.js';
 import { smoothRoute } from './engine.js';
 import { SG_OUTLINE, SG_ISLANDS, SG_FOREIGN, SG_SANDS, SG_RESERVOIRS, pointInPolygon, landMask, inReservoir, reservoirArea, inRiver, reservoirBranches, riverBranches } from './shape.js';
 import { CUSTOM_HOUSES, CUSTOM_RAILWAYS, CUSTOM_SANDS, CUSTOM_LANDMARKS, SEED_1965 } from './custom1966.js';
@@ -1303,15 +1303,20 @@ export class Scene3D {
   }
   // Seed the standing 1965 city into the live economy: each rendered heritage
   // building becomes a real, already-finished grid cell (so derive() counts its
-  // homes/jobs/power/water/services). The heritageGroup keeps rendering the models,
-  // so syncAll() SKIPS these cells to avoid drawing them twice. Idempotent and
-  // one-shot per save (state.heritageSeeded) so a demolished landmark stays gone.
+  // homes/jobs/power/water/services). This now includes the DECORATIVE town
+  // shophouse terraces — the dense fine-grained streets — so demolishing any part
+  // of the old town actually changes the national stats. Every cell carries an
+  // economic weight `w` (heritageWeight): residential heritage counts as the small
+  // fractional home it is, utilities/industry/civic count in full. The heritageGroup
+  // keeps rendering the models, so syncAll() SKIPS these cells to avoid drawing them
+  // twice. Idempotent and one-shot per save (state.heritageSeeded) so a demolished
+  // landmark stays gone. A decor terrace is booked at its centre cell only (one
+  // shophouse per terrace), not once per footprint cell.
   applyHeritageToGrid(state) {
     if (!state || !state.grid || state.heritageSeeded) return;
     for (const p of (this.heritagePlacements || [])) {
-      if (p.decor) continue;                 // decorative town shophouses — rendered, not in the economy
       const row = state.grid[p.gy];
-      if (row && !row[p.gx]) row[p.gx] = { k: p.key, heritage: true, name: p.name || null };
+      if (row && !row[p.gx]) row[p.gx] = { k: p.key, heritage: true, name: p.name || null, w: heritageWeight(p.key) };
     }
     state.heritageSeeded = true;
   }
@@ -1325,7 +1330,9 @@ export class Scene3D {
     if (i < 0) return false;
     const p = this.heritagePlacements[i];
     if (p.mesh && this.heritageGroup) this.heritageGroup.remove(p.mesh);
-    const free = p.cells && p.cells.length ? p.cells : [[p.gx, p.gy]];
+    // Free every footprint cell PLUS the centre cell the economy is booked at
+    // (a decor terrace is seeded at its centre, which may sit between footprint samples).
+    const free = p.cells && p.cells.length ? [...p.cells, [p.gx, p.gy]] : [[p.gx, p.gy]];
     for (const [cx, cy] of free) {
       if (this.heritageMask && this.heritageMask[cy]) this.heritageMask[cy][cx] = false;
       if (this._shopMask && this._shopMask[cy]) this._shopMask[cy][cx] = 0;

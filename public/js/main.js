@@ -1510,6 +1510,8 @@ window.__sg = {
   setBulldoze: (on) => { clearAdjustSilently(); G.demoSel.clear(); G.demoHover = null; G.demoCuts = []; G.build.selected = null; G.build.bulldoze = !!on; if (G.view) G.view.setBulldoze(!!on); updateToolBanner(); },
   selectPlant, selectSurface, setSurfaceScale, toggleFoundation,
   tick: (n = 1) => { for (let i = 0; i < n; i++) tickDay(G.state); if (G.view) { G.view.syncConstruction(G.state); G.view.syncDemolition(G.state); } },
+  derive: () => derive(G.state),
+  afterEdit: () => afterEdit(),
   get adjust() { return G.adjust; },
   get demoSel() { return G.demoSel; },
   get demoCuts() { return G.demoCuts; },

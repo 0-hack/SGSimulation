@@ -49,13 +49,14 @@ export function newGame({ name = 'New Singapore', owner = 'Anonymous' } = {}) {
     speed: 0,                 // 0 paused; set by UI
     treasury: 180,            // $ millions
     // Scaled citizens (×POP_SCALE for display). Sized to the standing 1965 city
-    // (SEED_1965, seeded into the grid by the 3D view): its kampongs, shophouses
-    // and early HDB estates house this many people, its port/factories/services
-    // employ the workforce, and its power stations + water mains supply them.
-    // Deliberately set so the labour force slightly outnumbers the jobs the young
-    // economy can offer — ~10% unemployment, the real, pressing problem of 1965
-    // that drove the industrialisation drive. The player grows the city out of it.
-    population: 74000,
+    // (SEED_1965 + the dense heritage town, all seeded into the grid by the 3D view
+    // at their historical economic weight): its kampongs, shophouses and early HDB
+    // estates house this many people, its port/factories/godowns/services employ
+    // the workforce, and its power stations + water mains supply them. Deliberately
+    // set so homes sit just BELOW the population — a mild housing shortage, the real
+    // pressing problem of 1965 — and the labour force outnumbers the jobs the young
+    // economy offers (~11% unemployment). The player grows the nation out of both.
+    population: 51500,
     approval: 58,
     education: 20,
     health: 25,
@@ -793,7 +794,7 @@ function policyMods(state) {
 // ---------------------------------------------------------------------------
 export function derive(state) {
   let homes = 0, jobs = 0, food = 0, powerGen = 0, powerUse = 0, waterGen = 0, waterUse = 0;
-  let pollutionSrc = 0, happinessLocal = 0, directIncome = 0;
+  let pollutionSrc = 0, happinessLocal = 0, directIncome = 0, bUpkeep = 0;
   let eduCap = 0, healthCap = 0, safetyCap = 0;
   let counts = {};
 
@@ -805,18 +806,22 @@ export function derive(state) {
       if (!b) continue;
       if (cell.build && cell.build.left > 0) continue; // still under construction — no output yet
       if (cell.demolish) continue;                     // being torn down — no longer functioning
+      // Economic weight: a standing 1965 heritage building counts as the small,
+      // fractional structure it is (cell.w); everything the player builds is w=1.
+      const w = cell.w || 1;
       counts[cell.k] = (counts[cell.k] || 0) + 1;
-      homes += b.homes || 0;
-      food += b.food || 0;
-      jobs += b.jobs || 0;
-      if (b.power > 0) powerGen += b.power; else powerUse += -b.power;
-      if (b.water > 0) waterGen += b.water; else waterUse += -b.water;
-      pollutionSrc += b.pollution || 0;
-      happinessLocal += b.happiness || 0;
-      directIncome += b.income || 0;
-      eduCap += b.education || 0;
-      healthCap += b.health || 0;
-      safetyCap += b.safety || 0;
+      homes += (b.homes || 0) * w;
+      food += (b.food || 0) * w;
+      jobs += (b.jobs || 0) * w;
+      if (b.power > 0) powerGen += b.power * w; else powerUse += -b.power * w;
+      if (b.water > 0) waterGen += b.water * w; else waterUse += -b.water * w;
+      pollutionSrc += (b.pollution || 0) * w;
+      happinessLocal += (b.happiness || 0) * w;
+      directIncome += (b.income || 0) * w;
+      eduCap += (b.education || 0) * w;
+      healthCap += (b.health || 0) * w;
+      safetyCap += (b.safety || 0) * w;
+      bUpkeep += (b.upkeep || 0) * w;
     }
   }
 
@@ -850,7 +855,7 @@ export function derive(state) {
     food, foodNeed, foodSelf,
     powerGen, powerUse, powerRatio,
     waterGen, waterUse, waterRatio,
-    pollutionSrc, happinessLocal, directIncome,
+    pollutionSrc, happinessLocal, directIncome, bUpkeep,
     eduCap, healthCap, safetyCap,
     workforce, employed, unemployment, housingPressure,
     mods,
@@ -1093,8 +1098,9 @@ function monthlyUpdate(state, d) {
   const business = d.directIncome * (1 + m.incomeMult + perks.incomeMult);
   const grossIncome = incomeTax + gst + business;
 
-  let upkeep = 0;
-  for (const [k, n] of Object.entries(d.counts)) upkeep += (BUILDINGS[k].upkeep || 0) * n;
+  // Building upkeep — weighted, so a fractional heritage structure costs a fraction
+  // of a full player-built one to maintain (matches how it's counted in derive()).
+  let upkeep = d.bUpkeep || 0;
   upkeep += m.upkeep;                       // policy running costs
   upkeep += popReal * 0.00012;              // general public-service cost
 

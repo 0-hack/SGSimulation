@@ -296,44 +296,74 @@ export function renderDash(state, ctx = {}) {
   const d = derive(state);
   const wrap = el('div');
   const popReal = state.population * POP_SCALE;
-
-  const grid = el('div', 'dash-grid');
-
-  grid.append(metric('💵 Treasury', money(state.treasury),
-    state.lastFinance ? `${state.lastFinance.net >= 0 ? '▲' : '▼'} ${money(Math.abs(state.lastFinance.net))}/mo` : ''));
-  grid.append(metric('👥 Population', num(popReal),
-    `${num(d.homes * POP_SCALE)} homes`));
-
-  grid.append(meterMetric('🙂 Approval', state.approval));
-  grid.append(meterMetric('🛡️ Safety', state.safety));
-  grid.append(meterMetric('📚 Education', state.education));
-  grid.append(meterMetric('⚕️ Health', state.health));
-
-  // Power & water as supply/demand
-  grid.append(ratioMetric('⚡ Power', d.powerGen, d.powerUse, 'MW'));
-  grid.append(ratioMetric('💧 Water', d.waterGen, d.waterUse, 'units'));
-
-  grid.append(metric('💼 Jobs', num(d.jobs),
-    `${pct((1 - d.unemployment) * 100)} employed`));
-  grid.append(meterMetric('☁️ Pollution', state.pollution, true));
-  // Home-grown food self-sufficiency (farms) — most food is imported, so this is
-  // a bonus measure of resilience rather than a hard requirement.
-  grid.append(metric('🌾 Food', `${pct((d.foodSelf || 0) * 100)}`,
-    (d.foodSelf || 0) >= 0.3 ? 'home-grown — resilient' : 'mostly imported · build farms'));
-
-  // Inflation & currency — a live read on economic management.
+  const occ = Math.round(d.housingPressure * 100);           // people per 100 homes
+  const emp = (1 - d.unemployment) * 100;
   const infl = inflationRate(state) * 100;
+  const sgd = currencyStrength(state);
+  const trade = state.lastFinance ? state.lastFinance.business : d.directIncome;
+
+  // ---- HOUSING & PEOPLE ----------------------------------------------------
+  wrap.append(section('Housing & People', [
+    metric('👥 Population', num(popReal), `workforce ${num(d.workforce * POP_SCALE)}`,
+      'The people living in your nation (each citizen here ≈ 10 real people). More people means more workers and taxes — but every one needs a home, power, water and public services. Grows through births and migration when homes and jobs are available.'),
+    metric('🏠 Homes', num(d.homes * POP_SCALE), `${occ}% occupied`,
+      'Total housing capacity across every home you have. When homes fall below the population, families are overcrowded; when there is spare room, migrants move in. Build kampongs, flats and HDB estates to add homes.',
+      { bar: bar(Math.min(100, occ), occColor(d.housingPressure)) }),
+    metric('🏚️ Housing supply', occ <= 100 ? 'Homes for all' : 'Shortage',
+      occ <= 100 ? `${100 - occ}% spare room` : `${occ - 100}% overcrowded`,
+      'People per home (occupancy). Above 100% is a housing shortage — overcrowding that angers residents and slows growth, the pressing problem of 1965. Demolishing homes raises it; building homes eases it.',
+      { valStyle: `color:${occ <= 100 ? 'var(--good)' : 'var(--bad)'};font-size:16px` }),
+    metric('💼 Jobs', num(d.jobs), `${pct(emp)} employed`,
+      'Jobs your port, factories, godowns, shops and offices provide. Employed workers earn wages and pay income tax. Too few jobs for the workforce means unemployment — build industry, trade and services to create work.'),
+  ]));
+
+  // ---- SUPPLY CHAIN (resources the city needs) -----------------------------
+  wrap.append(section('Supply Chain & Utilities', [
+    ratioMetric('⚡ Power', d.powerGen, d.powerUse, 'MW',
+      'Electricity generated versus consumed. Below 100% is a shortage — the city browns out and power-hungry services and industry falter. Power stations, and later solar/gas/nuclear, keep a healthy surplus.'),
+    ratioMetric('💧 Water', d.waterGen, d.waterUse, 'units',
+      'Fresh water supplied versus used. Singapore has little natural water, so reservoirs, standpipes and mains — and later desalination and NEWater — are vital. A shortage disrupts homes and industry.'),
+    metric('🌾 Food self-sufficiency', `${pct((d.foodSelf || 0) * 100)}`,
+      (d.foodSelf || 0) >= 0.3 ? 'home-grown — resilient' : 'mostly imported',
+      'Share of food grown on the island. Most is imported (so a low figure is historically normal), but market gardens, poultry, fish and modern farms raise resilience against supply shocks — the spirit of the "30 by 30" goal.'),
+    metric('🏭 Trade & industry', `${money(trade)}/mo`, 'business revenue',
+      'Monthly revenue from the entrepôt trade — the port, godowns, factories, shops and offices Singapore lived on. This is the engine of the treasury; grow it to fund housing and services.'),
+  ]));
+
+  // ---- ECONOMY -------------------------------------------------------------
   const inflArrow = infl > 4 ? '▲' : infl < 1.5 ? '▼' : '◆';
-  grid.append(metric('📈 Inflation', `${infl.toFixed(1)}%`,
-    `prices ×${priceIndex(state).toFixed(2)} ${inflArrow}`));
-  grid.append(metric('💱 SGD strength', `×${currencyStrength(state).toFixed(2)}`,
-    currencyStrength(state) >= 1 ? 'strong currency' : 'weak currency'));
+  wrap.append(section('Economy', [
+    metric('📉 Unemployment', `${(d.unemployment * 100).toFixed(1)}%`,
+      d.unemployment > 0.15 ? 'high — build jobs' : d.unemployment < 0.05 ? 'near full employment' : 'manageable',
+      'Share of the workforce with no job. High unemployment drains approval and tax revenue and breeds unrest; near-zero means labour shortages. In 1965 it stood around 10–14% — the spur for industrialisation.',
+      { valStyle: `color:${d.unemployment > 0.15 ? 'var(--bad)' : d.unemployment > 0.08 ? 'var(--warn)' : 'var(--good)'}` }),
+    metric('📈 Inflation', `${infl.toFixed(1)}%`, `prices ×${priceIndex(state).toFixed(2)} ${inflArrow}`,
+      'How fast prices rise each year. High inflation makes buildings and daily life costlier; disciplined budgets and a strong currency keep it low. Runaway inflation erodes what your treasury can buy.'),
+    metric('💱 SGD strength', `×${sgd.toFixed(2)}`, sgd >= 1 ? 'strong currency' : 'weak currency',
+      'The Singapore dollar\'s strength versus its 1965 value. A strong currency makes imports and construction cheaper and signals confidence; a weak one makes everything dearer.'),
+    metric('💵 Treasury', money(state.treasury),
+      state.lastFinance ? `${state.lastFinance.net >= 0 ? '▲' : '▼'} ${money(Math.abs(state.lastFinance.net))}/mo` : 'reserves',
+      'Your national reserves in millions of dollars. Building and running the city costs money; a healthy treasury lets you invest ahead. It moves each month by the budget below.'),
+  ]));
 
-  wrap.append(grid);
+  // ---- SOCIETY & ENVIRONMENT ----------------------------------------------
+  wrap.append(section('Society & Environment', [
+    meterMetric('🙂 Approval', state.approval, false,
+      'How happy citizens are with your leadership. Jobs, homes, utilities, services and clean air lift it; shortages, unemployment and pollution sink it. Let it fall too far and you risk unrest.'),
+    meterMetric('🛡️ Safety', state.safety, false,
+      'Law, order and fire protection. Police posts, fire stations and community centres raise it; safe streets keep citizens and investors confident.'),
+    meterMetric('📚 Education', state.education, false,
+      'The skill of your workforce. Schools and technical institutes raise it, lifting productivity and tax revenue — the bet behind Singapore\'s rise.'),
+    meterMetric('⚕️ Health', state.health, false,
+      'Public health. Hospitals, clinics, clean water and sewerage raise it, cutting death rates and softening epidemics.'),
+    meterMetric('☁️ Pollution', state.pollution, true,
+      'Dirty air from industry and power stations. High pollution harms health and happiness; parks, nature, the MRT and clean energy bring it down.'),
+  ]));
 
+  // ---- FINANCIAL PLANNING --------------------------------------------------
+  wrap.append(el('div', 'section-title', 'Financial Planning'));
   // Finance ledger
   if (state.lastFinance) {
-    wrap.append(el('div', 'section-title', 'Monthly Budget'));
     const f = state.lastFinance;
     const led = el('div', 'metric span2');
     const ledger = el('div', 'ledger');
@@ -391,28 +421,46 @@ export function renderDash(state, ctx = {}) {
   return wrap;
 }
 
-function metric(label, val, sub) {
-  const m = el('div', 'metric');
-  m.innerHTML = `<div class="m-label">${label}</div><div class="m-val">${val}</div>${sub ? `<div class="m-sub">${sub}</div>` : ''}`;
+// A titled group of metric cards.
+function section(title, cards) {
+  const s = el('div', 'dash-section');
+  s.append(el('div', 'section-title', title));
+  const grid = el('div', 'dash-grid');
+  for (const c of cards) grid.append(c);
+  s.append(grid);
+  return s;
+}
+// A meter bar (0–100%) with a fill colour.
+function bar(width, color) {
+  return `<div class="bar"><i style="width:${Math.max(0, Math.min(100, width))}%;background:${color}"></i></div>`;
+}
+// Occupancy colour: green when there are homes for all, red when overcrowded.
+function occColor(pressure) {
+  return pressure <= 1.0 ? 'var(--good)' : pressure <= 1.15 ? 'var(--warn)' : 'var(--bad)';
+}
+// A metric card. `tip` (optional) adds a hover/tap explanation so players learn
+// what the term means and what it does; `opts.bar` appends a meter, `opts.valStyle`
+// styles the value, `opts.span2` widens the card to both columns.
+function metric(label, val, sub, tip, opts = {}) {
+  const m = el('div', 'metric' + (opts.span2 ? ' span2' : '') + (tip ? ' has-tip' : ''));
+  m.innerHTML = `<div class="m-label">${label}${tip ? '<span class="m-info" title="What is this?">i</span>' : ''}</div>
+    <div class="m-val"${opts.valStyle ? ` style="${opts.valStyle}"` : ''}>${val}</div>
+    ${sub ? `<div class="m-sub">${sub}</div>` : ''}
+    ${opts.bar || ''}
+    ${tip ? `<div class="m-tip">${tip}</div>` : ''}`;
+  if (tip) m.addEventListener('click', () => m.classList.toggle('show-tip'));   // tap to reveal on touch devices
   return m;
 }
-function meterMetric(label, v, invert = false) {
-  const m = el('div', 'metric');
+function meterMetric(label, v, invert = false, tip) {
   const color = invert ? (v <= 33 ? 'var(--good)' : v <= 66 ? 'var(--warn)' : 'var(--bad)') : barColor(v);
-  m.innerHTML = `<div class="m-label">${label}</div><div class="m-val">${pct(v)}</div>
-    <div class="bar"><i style="width:${Math.min(100, v)}%;background:${color}"></i></div>`;
-  return m;
+  return metric(label, pct(v), null, tip, { bar: bar(v, color) });
 }
-function ratioMetric(label, gen, use, unit) {
-  const m = el('div', 'metric');
+function ratioMetric(label, gen, use, unit, tip) {
   const ratio = use > 0 ? gen / use : 2;
-  const okPct = Math.min(100, ratio * 100);
   const color = ratio >= 1 ? 'var(--good)' : ratio >= 0.8 ? 'var(--warn)' : 'var(--bad)';
-  m.innerHTML = `<div class="m-label">${label}</div>
-    <div class="m-val" style="font-size:15px">${Math.round(gen)} / ${Math.round(use)} ${unit}</div>
-    <div class="m-sub">${ratio >= 1 ? 'Surplus' : 'SHORTAGE'}</div>
-    <div class="bar"><i style="width:${okPct}%;background:${color}"></i></div>`;
-  return m;
+  return metric(label, `${Math.round(gen)} / ${Math.round(use)} ${unit}`,
+    ratio >= 1 ? `Surplus · ${Math.round(ratio * 100)}%` : `SHORTAGE · ${Math.round(ratio * 100)}%`,
+    tip, { valStyle: 'font-size:15px', bar: bar(Math.min(100, ratio * 100), color) });
 }
 
 // ===========================================================================

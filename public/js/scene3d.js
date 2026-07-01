@@ -201,13 +201,15 @@ const AIRPORT = {
 };
 
 export class Scene3D {
-  constructor(canvas, { onTileTap, onGroundTap, onDemolishHover, onDemolishStroke, onAdjustRotate } = {}) {
+  constructor(canvas, { onTileTap, onGroundTap, onDemolishHover, onDemolishStroke, onAdjustRotate, onDisaster } = {}) {
     this.canvas = canvas;
     this.onTileTap = onTileTap;
     this.onGroundTap = onGroundTap;       // freeform road drawing taps
     this.onDemolishHover = onDemolishHover; // cursor moved in Demolish mode -> classify+highlight target
     this.onDemolishStroke = onDemolishStroke; // dragged a freehand stroke in Demolish mode -> mark roads under it
     this.onAdjustRotate = onAdjustRotate;   // drag-rotated the pending building -> sync angle to UI
+    this.onDisaster = onDisaster;           // a fire burned a building down -> apply the economic consequence
+    this.climate = { water: 1, heat: 0.3 }; // slow reservoir yield + heat load, fed to the engine each tick
     this.roadMode = false;
     this.edgePts = []; this.edgeLen = []; this.edgeMeta = []; this.edgeN1 = []; this.edgeN2 = []; this.edgeMid = []; this.navAdj = []; this.navNodes = [];
     this.state = null;
@@ -3493,6 +3495,13 @@ export class Scene3D {
     const ap = (c, k) => c + (k - c) * Math.min(1, dt * 0.4);
     w.cloud = ap(w.cloud, t.cloud); w.rain = ap(w.rain, t.rain); w.wind = ap(w.wind, t.wind);
 
+    // CLIMATE the engine reads: the reservoirs slowly fill in the wet and draw down
+    // in a drought, and a heat load builds in hot dry spells. Both move slowly (real
+    // reservoir/temperature inertia), so a passing shower doesn't erase a dry month.
+    const wetTarget = 0.7 + Math.min(1, w.rain * 1.6) * 0.5;   // 0.7 (dry) → 1.2 (soaked)
+    this.climate.water += (wetTarget - this.climate.water) * Math.min(1, dt * 0.03);
+    this.climate.heat += ((this._dryness ?? 0.4) - this.climate.heat) * Math.min(1, dt * 0.05);
+
     this.fog.far = this.fogFar; // baseline (haze may lower it later)
 
     // WIND drifts slowly and randomly (a lazy, bounded wobble on the bearing), so the
@@ -3621,8 +3630,11 @@ export class Scene3D {
 
     this._igniteTimer -= dt;
     if (this._igniteTimer <= 0) {
-      this._igniteTimer = 1.5 + Math.random() * 3;
-      if (this._dryness > 0.6 && this._fires.length < 5 && this.state && Math.random() < (this._dryness - 0.55) * 1.3) {
+      this._igniteTimer = 1.8 + Math.random() * 3.5;
+      // Fire protection — police posts, fire stations, community centres all raise
+      // `safety` — makes an outbreak far less likely (a well-covered city rarely burns).
+      const guard = 1 - THREE.MathUtils.clamp((this.state?.safety || 30) / 170, 0, 0.7);
+      if (this._dryness > 0.6 && this._fires.length < 5 && this.state && Math.random() < (this._dryness - 0.55) * 1.15 * guard) {
         const c = this._fireCandidate(); if (c) this._igniteFire(c.x, c.z, c.kind, c.key);
       }
     }
@@ -3631,6 +3643,7 @@ export class Scene3D {
     for (let i = this._fires.length - 1; i >= 0; i--) {
       const f = this._fires[i];
       f.life -= dt * (w.rain > 0.3 ? 4 + w.rain * 7 : 1);          // rain douses it fast
+      if (w.rain > 0.3) f.rainSeconds = (f.rainSeconds || 0) + dt; // ...and if enough rain falls, the building is SAVED (see _extinguish)
       const k = Math.max(0, f.life / f.dur), now = performance.now();
       // volumetric flame + smoke plumes (each particle lives & moves on its own)
       this._stepParticles(f.flameSys, dt, wx, wz, w.wind, Math.min(1, k * 1.6 + 0.15));
@@ -3663,16 +3676,27 @@ export class Scene3D {
   // the next most at-risk.
   _fireCandidate() {
     const R = Math.max(150, this.cam.radius * 1.25), tx = this.target.x, tz = this.target.z, pool = [];
+    const burning = this._burningCells || (this._burningCells = new Set());
     if (this.natureCells) for (const [key, g] of this.natureCells) {
       if (!g.visible || g.userData._fire) continue;
       if (Math.hypot(g.position.x - tx, g.position.z - tz) > R) continue;
       pool.push({ x: g.position.x, z: g.position.z, kind: 'tree', key, risk: 0.55 });
     }
     for (const [key, e] of this.buildings) {
-      if (!e.group || e.group.userData._fire) continue;
+      if (!e.group || burning.has(key)) continue;
       const px = e.group.position.x, pz = e.group.position.z;
       if (Math.hypot(px - tx, pz - tz) > R) continue;
       pool.push({ x: px, z: pz, kind: 'building', key, risk: 0.25 + (1 - this._greeneryNear(px, pz)) * 0.6 });
+    }
+    // The standing 1965 town — crowded attap kampongs and timber shophouses — was the
+    // most fire-prone housing of all (cf. the 1961 Bukit Ho Swee fire that left 16,000
+    // homeless), so its homes are live fire candidates too.
+    if (this.heritagePlacements) for (const pl of this.heritagePlacements) {
+      const b = BUILDINGS[pl.key]; if (!b || b.cat !== 'residential') continue;
+      const key = `${pl.gx},${pl.gy}`; if (burning.has(key)) continue;
+      const c = cellToWorld(pl.gx, pl.gy);
+      if (Math.hypot(c.x - tx, c.z - tz) > R) continue;
+      pool.push({ x: c.x, z: c.z, kind: 'building', key, risk: pl.key === 'kampong' ? 0.85 : 0.5 });
     }
     if (this.state && this.state.plants) this.state.plants.forEach((pl, pi) => { if (Math.hypot(pl.x - tx, pl.z - tz) <= R) pool.push({ x: pl.x, z: pl.z, kind: 'plant', key: pi, risk: 0.5 }); });
     if (!pool.length) return null;
@@ -3681,9 +3705,9 @@ export class Scene3D {
     return pool[pool.length - 1];
   }
   _fireNeighbour(f) {
-    const R = 14;
+    const R = 14, burning = this._burningCells || new Set();
     if (this.natureCells) for (const [key, g] of this.natureCells) { if (g.visible && !g.userData._fire && Math.hypot(g.position.x - f.x, g.position.z - f.z) < R) return { x: g.position.x, z: g.position.z, kind: 'tree', key }; }
-    for (const [key, e] of this.buildings) { if (e.group && !e.group.userData._fire && Math.hypot(e.group.position.x - f.x, e.group.position.z - f.z) < R) return { x: e.group.position.x, z: e.group.position.z, kind: 'building', key }; }
+    for (const [key, e] of this.buildings) { if (e.group && !burning.has(key) && Math.hypot(e.group.position.x - f.x, e.group.position.z - f.z) < R) return { x: e.group.position.x, z: e.group.position.z, kind: 'building', key }; }
     return null;
   }
   // A CPU-driven particle emitter (fire or smoke): each particle carries its own
@@ -3740,6 +3764,9 @@ export class Scene3D {
   igniteFireAt(x, z, kind = 'tree', key = null) { return this._igniteFire(x, z, kind, key); }
   _igniteFire(x, z, kind, key) {
     if (!this._fireGroup) { this._fireGroup = new THREE.Group(); this.scene.add(this._fireGroup); }
+    // a building fire is booked against its grid cell so it can be destroyed for real
+    let gx = -1, gy = -1;
+    if (kind === 'building' && typeof key === 'string' && key.includes(',')) { const pr = key.split(',').map(Number); gx = pr[0]; gy = pr[1]; }
     const baseY = this._meshTriY(x, z);
     const scale = kind === 'building' ? 1.7 : kind === 'tree' ? 1.2 : 0.7;
     const grp = new THREE.Group(); grp.position.set(x, baseY, z); this._fireGroup.add(grp);
@@ -3755,9 +3782,9 @@ export class Scene3D {
       new THREE.PointsMaterial({ map: this._softTex(), color: 0xffc255, size: 1.6 * scale, sizeAttenuation: true, transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false }));
     grp.add(embers);
     const dur = 8 + Math.random() * 10;
-    this._fires.push({ x, z, baseY, kind, key, flameSys, smokeSys, flame: flameSys.pts, smoke: smokeSys.pts, light, embers, grp, life: dur, dur, seed: Math.random() * 9, scale, spread: 2.5 });
+    this._fires.push({ x, z, baseY, kind, key, gx, gy, rainSeconds: 0, flameSys, smokeSys, flame: flameSys.pts, smoke: smokeSys.pts, light, embers, grp, life: dur, dur, seed: Math.random() * 9, scale, spread: 2.5 });
     if (kind === 'tree' && this.natureCells) { const g = this.natureCells.get(key); if (g) g.userData._fire = true; }
-    if (kind === 'building') { const e = this.buildings.get(key); if (e && e.group) e.group.userData._fire = true; }
+    if (kind === 'building') (this._burningCells || (this._burningCells = new Set())).add(key);
     this._spawnDust(x, z, 0x5a5a5a, 8);
     return this._fires[this._fires.length - 1];
   }
@@ -3765,7 +3792,14 @@ export class Scene3D {
     const f = this._fires[i]; if (!f) return;
     if (f.kind === 'tree' && this.natureCells) { const g = this.natureCells.get(f.key); if (g) { g.visible = false; g.userData._fire = false; (this._removedTrees || (this._removedTrees = new Set())).add(f.key); } }   // burned this session; regrows on reload
     else if (f.kind === 'plant' && this.removePlantNear) this.removePlantNear(f.x, f.z, 2.0);
-    else if (f.kind === 'building') { const e = this.buildings.get(f.key); if (e && e.group) e.group.userData._fire = false; }
+    else if (f.kind === 'building') {
+      if (this._burningCells) this._burningCells.delete(f.key);
+      // If not enough rain fell during its life, the building burned to the ground —
+      // tell the game to destroy it (lose its output, pay the emergency bill, take the
+      // approval/health/air-quality hit). Rain that came in time SAVES it (no callback).
+      const destroyed = (f.rainSeconds || 0) < 1.2;
+      if (destroyed && this.onDisaster && f.gx >= 0) this.onDisaster({ kind: 'fire', gx: f.gx, gy: f.gy });
+    }
     if (f.grp && this._fireGroup) this._fireGroup.remove(f.grp);   // removes flame/light/smoke/embers together
     for (const sys of [f.flameSys, f.smokeSys]) if (sys) { sys.geo.dispose(); sys.mat.dispose(); }
     if (f.embers) f.embers.geometry.dispose();

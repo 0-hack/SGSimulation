@@ -75,6 +75,35 @@ try {
   ok(dash.allHaveTips, `each stat carries a plain-language explanation (${dash.tipCount} metrics with tooltips)`);
   ok(dash.shows, 'hovering/tapping a stat reveals its explanation');
 
+  // ---- Weather feeds the sim: drought squeezes water, heat lifts power --------
+  const climate = await p.evaluate(() => {
+    const st = window.__sg.state, D = () => window.__sg.derive();
+    st.climate = { water: 1, heat: 0 }; const b = D();
+    st.climate = { water: 0.7, heat: 0 }; const dry = D();
+    st.climate = { water: 1.15, heat: 0 }; const wet = D();
+    st.climate = { water: 1, heat: 1 }; const hot = D();
+    st.climate = { water: 1, heat: 0.3 };
+    return { base: Math.round(b.waterGen), dry: Math.round(dry.waterGen), wet: Math.round(wet.waterGen), pBase: Math.round(b.powerUse), pHot: Math.round(hot.powerUse) };
+  });
+  ok(climate.dry < climate.base && climate.wet > climate.base, `a drought cuts water supply, a wet spell tops it up (${climate.dry} < ${climate.base} < ${climate.wet})`);
+  ok(climate.pHot > climate.pBase, `a heatwave lifts electricity demand (${climate.pBase} → ${climate.pHot} MW)`);
+
+  // ---- A fire burns a building down: real loss + emergency cost + news --------
+  const fire = await p.evaluate(() => {
+    const st = window.__sg.state, v = window.__sgview;
+    let gx = -1, gy = -1;
+    for (let y = 2; y < st.grid.length - 2 && gx < 0; y++) for (let x = 2; x < st.grid[y].length - 2; x++) { if (!st.grid[y][x] && v.isLand(x, y)) { gx = x; gy = y; break; } }
+    st.grid[gy][gx] = { k: 'factory' };
+    const c = v.worldOfCell(gx, gy), t0 = st.treasury, a0 = st.approval;
+    v.weather = { ...v.weather, rain: 0, cloud: 0 }; v._dryness = 0.2;   // dry → the fire is NOT doused
+    v.igniteFireAt(c.x, c.z, 'building', `${gx},${gy}`);
+    const lit = v._fires.length > 0;
+    v._updateFire(20);                                                   // one step longer than its life → it burns out
+    return { lit, cleared: st.grid[gy][gx] === null, cost: +(t0 - st.treasury).toFixed(1), approvalDropped: st.approval < a0, logged: st.log.slice(0, 4).some((e) => /Fire destroys/.test(e.text)) };
+  });
+  ok(fire.lit && fire.cleared, 'a fire that is not doused burns the building down (removed from the map & economy)');
+  ok(fire.cost > 0 && fire.approvalDropped && fire.logged, `the blaze costs an emergency response ($${fire.cost}M), dents approval, and makes the news`);
+
   ok(errs.length === 0, 'no console/page errors' + (errs.length ? ': ' + errs[0] : ''));
 } catch (e) { fail++; console.error('  ✗ threw:', e.message, e.stack); }
 finally { await browser.close(); server.close(); }

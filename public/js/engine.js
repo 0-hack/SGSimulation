@@ -75,6 +75,7 @@ export function newGame({ name = 'New Singapore', owner = 'Anonymous' } = {}) {
     reclaimAreas: [],         // { poly:[[x,z]..], cells:[[x,y]..], total,left } free-shaped areas rising
     reclaimedAreas: [],       // { poly, cells } finished free-shaped reclaimed land (smooth coastline)
     economy: { inflation: 0.02, priceIndex: 1, currency: 1 }, // dynamic inflation / price level / SGD strength
+    climate: { water: 1, heat: 0.3 },   // live weather → reservoir yield (water) & heat/aircon load, driven by the 3D scene
     constructing: [],         // [x,y] cells whose building is still being built
     demolishing: [],          // [x,y] cells whose building is being torn down (timed teardown)
     plants: [],               // individually-placed tropical plants: { x, z, kind, rot, s } in world coords
@@ -154,6 +155,7 @@ export function ensureGrid(state) {
   if (!state) return state;
   unpackState(state); // expand a sparse-saved grid back to the dense 2D array
   if (typeof state.debt !== 'number') state.debt = 0;
+  if (!state.climate) state.climate = { water: 1, heat: 0.3 };
   if (!state.roads) state.roads = { nodes: [], edges: [], islands: [] };
   if (!Array.isArray(state.reclaimed)) state.reclaimed = [];
   if (!Array.isArray(state.reclaiming)) state.reclaiming = [];
@@ -792,8 +794,12 @@ function policyMods(state) {
 // ---------------------------------------------------------------------------
 // Derived statistics — recomputed each tick from the grid + policies.
 // ---------------------------------------------------------------------------
+// Water sources that depend on rainfall (so a drought shrinks their yield). Firm
+// sources — desalination, NEWater, piped mains/standpipes — are weather-proof.
+const RAIN_WATER = new Set(['reservoir', 'reservoir_big']);
+
 export function derive(state) {
-  let homes = 0, jobs = 0, food = 0, powerGen = 0, powerUse = 0, waterGen = 0, waterUse = 0;
+  let homes = 0, jobs = 0, food = 0, powerGen = 0, powerUse = 0, waterGen = 0, waterUse = 0, waterGenRain = 0;
   let pollutionSrc = 0, happinessLocal = 0, directIncome = 0, bUpkeep = 0;
   let eduCap = 0, healthCap = 0, safetyCap = 0;
   let counts = {};
@@ -814,7 +820,7 @@ export function derive(state) {
       food += (b.food || 0) * w;
       jobs += (b.jobs || 0) * w;
       if (b.power > 0) powerGen += b.power * w; else powerUse += -b.power * w;
-      if (b.water > 0) waterGen += b.water * w; else waterUse += -b.water * w;
+      if (b.water > 0) { if (RAIN_WATER.has(cell.k)) waterGenRain += b.water * w; else waterGen += b.water * w; } else waterUse += -b.water * w;
       pollutionSrc += (b.pollution || 0) * w;
       happinessLocal += (b.happiness || 0) * w;
       directIncome += (b.income || 0) * w;
@@ -827,10 +833,17 @@ export function derive(state) {
 
   const mods = policyMods(state);
   const pop = state.population;
+  const climate = state.climate || { water: 1, heat: 0 };
 
-  // Residents consume extra power & water on top of building loads.
+  // Residents consume extra power & water on top of building loads. In a HEATWAVE
+  // (climate.heat) fans and, later, air-conditioning push electricity demand up.
   powerUse += pop * 0.0009;
-  waterGen += 45;   // the Central Catchment reservoirs (MacRitchie/Peirce/Seletar)
+  powerUse *= 1 + (climate.heat || 0) * 0.12;
+  // Rain-fed supply — the Central Catchment reservoirs (MacRitchie/Peirce/Seletar)
+  // and any dammed reservoirs — rises and falls with the weather: a drought
+  // (climate.water < 1) shrinks the yield, a wet spell tops it up. Desalination,
+  // NEWater and piped mains are weather-proof (firm), so they aren't scaled.
+  waterGen += (waterGenRain + 45) * (climate.water == null ? 1 : climate.water);
   waterUse += pop * 0.0016 * (1 + mods.waterDemandMult);
 
   const mods_jobs = jobs * (1 + mods.jobsBoost);
@@ -1063,6 +1076,28 @@ export function resolveEvent(state, optionIndex) {
   state.pendingEvent = null;
 }
 
+// A building has burned down (the 3D fire ran its course without being doused).
+// The nation loses that building's economic output for good, pays for the
+// emergency response and clearance, and takes an approval / health / air-quality
+// hit — a real disaster on the ground, not just a puff of smoke. Returns a short
+// summary for the UI, or null if there was nothing there. Trees/plants call this
+// with no grid cell and just log lightly.
+export function fireDamage(state, x, y) {
+  const cell = state.grid?.[y]?.[x];
+  const b = cell ? BUILDINGS[cell.k] : null;
+  const name = (cell && cell.name) || (b && b.name) || 'a building';
+  if (cell) state.grid[y][x] = null;                          // the structure is lost
+  const val = b ? b.cost : 6;
+  const cost = clamp(val * 0.22 + 2, 2, 45);                  // firefighting + clearance
+  state.treasury -= cost;
+  const sev = clamp((b ? b.homes / 8000 + b.jobs / 6000 : 0) + 0.5, 0.5, 3);  // bigger loss → bigger shock
+  state.approval = clamp(state.approval - 2.2 * sev, 0, 100);
+  state.health = clamp(state.health - 1.2 * sev, 0, 100);
+  state.pollution = clamp(state.pollution + 3, 0, 100);
+  logEvent(state, `🔥 Fire destroys ${name} — emergency response cost $${Math.round(cost)}M.`);
+  return { name, cost: Math.round(cost) };
+}
+
 function logEvent(state, text) {
   state.log.unshift({ d: { ...state.date }, text });
   if (state.log.length > 40) state.log.length = 40;
@@ -1078,7 +1113,9 @@ function monthlyUpdate(state, d) {
   // --- Stocks move toward capacity-driven targets (per 10k pop saturates) ---
   const denom = Math.max(1, d.homes / 6000);
   const eduTarget = clamp(20 + (d.eduCap / denom) * m.eduMult, 0, 100);
-  const healthTarget = clamp(25 + (d.healthCap / denom) * m.healthMult, 0, 100);
+  // Dirty air is a public-health drag (haze, respiratory illness), not just an
+  // eyesore — so pollution now pulls health down as well as approval.
+  const healthTarget = clamp(25 + (d.healthCap / denom) * m.healthMult - state.pollution * 0.18, 0, 100);
   const safetyTarget = clamp(25 + (d.safetyCap / denom), 0, 100);
   state.education = approach(state.education, eduTarget, 0.15);
   state.health = approach(state.health, healthTarget, 0.15);

@@ -1,6 +1,6 @@
 // Main controller: boots the menu, runs the game loop, wires the UI & cloud.
 import {
-  newGame, tickDay, build, demolish, queueDemolish, canPlace, derive,
+  newGame, tickDay, build, demolish, queueDemolish, canPlace, derive, fireDamage,
   resolveEvent, snapshot, refreshSummary, ensureGrid, packState, issueBond, repayDebt,
   projectProgress, checkProjects,
   reclaimLand, reclaimCost, buildingCost, priced,
@@ -246,7 +246,7 @@ function showGameShell(playing = true) {
   $('toolbar').classList.remove('hidden');
   if (!G.view) {
     try {
-      G.view = new Scene3D($('city'), { onTileTap: onTileTap, onGroundTap: onGroundTap, onDemolishHover: onDemolishHover, onDemolishStroke: onDemolishStroke, onAdjustRotate: onAdjustRotate });
+      G.view = new Scene3D($('city'), { onTileTap: onTileTap, onGroundTap: onGroundTap, onDemolishHover: onDemolishHover, onDemolishStroke: onDemolishStroke, onAdjustRotate: onAdjustRotate, onDisaster: onDisaster });
       window.__sgview = G.view; // exposed for debugging / disaster FX hooks
     } catch (err) {
       reportSceneError(err);
@@ -400,6 +400,9 @@ function updateWeatherHud() {
 
 let lastShortageKey = '';
 function updateShortages() {
+  // Pull the live climate (reservoir yield + heat load) from the 3D weather into the
+  // sim so a drought squeezes water supply and a heatwave lifts power demand.
+  if (G.view && G.view.climate && G.state) { G.state.climate.water = G.view.climate.water; G.state.climate.heat = G.view.climate.heat; }
   const d = derive(G.state);
   const power = d.powerRatio < 1;
   const water = d.waterRatio < 1;
@@ -665,6 +668,23 @@ function afterEdit() {
   updateHud(G.state, G.readOnly);
   updateShortages();
   if (G.currentPanel === 'build' || G.currentPanel === 'dash') refreshPanel(); // affordability/finances may change
+}
+
+// A fire in the 3D scene finished burning a building down: apply the real
+// consequence. The engine records the loss (removes its output, charges the
+// emergency response, dents approval / health / air quality, logs the news); the
+// view drops the model. Skipped while visiting someone else's nation.
+function onDisaster(info) {
+  if (G.readOnly || !G.state || !info || info.kind !== 'fire') return;
+  const { gx, gy } = info;
+  const cell = G.state.grid?.[gy]?.[gx];
+  if (!cell) return;
+  const heritage = !!cell.heritage;
+  const res = fireDamage(G.state, gx, gy);                 // nulls the grid cell + applies the hit
+  if (heritage) { if (G.view.removeHeritageVisual) G.view.removeHeritageVisual(gx, gy); }
+  else if (G.view.removeBuilding) G.view.removeBuilding(gx, gy);
+  afterEdit();
+  if (res) toast(`🔥 Fire! ${res.name} destroyed — $${res.cost}M emergency response.`);
 }
 
 // ---- placement-tool state (build / bulldoze / reclaim / road) --------------

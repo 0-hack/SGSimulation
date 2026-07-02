@@ -275,9 +275,7 @@ export function demolish(state, x, y) {
   return true;
 }
 
-// Tearing a building down takes time too — roughly half as long as it took to
-// build (a wreck is faster than a build), min 2 days.
-export function demolishDays(b) { return clamp(Math.round(buildDays(b) * 0.5), 2, 24); }
+// (demolishDays is defined alongside buildDays below.)
 
 // Queue a batch of demolitions, charging a small teardown fee per item. Buildings
 // get cell.demolish={total,left} and stop counting in derive() immediately (they
@@ -290,7 +288,9 @@ export function queueDemolish(state, items) {
   for (const it of (items || [])) {
     if (it.kind === 'building') {
       const c = state.grid?.[it.y]?.[it.x]; if (!c || c.demolish) continue;
-      const days = c.build ? Math.max(2, Math.round((c.build.total || 4) * 0.4)) : demolishDays(BUILDINGS[c.k]);
+      // A half-built site clears faster than a finished building (it's just a
+      // frame and hoardings), but still not instantly.
+      const days = c.build ? clamp(Math.round(demolishDays(BUILDINGS[c.k]) * 0.5), 4, 60) : demolishDays(BUILDINGS[c.k]);
       c.demolish = { total: days, left: days };
       state.demolishing.push([it.x, it.y]);
       fee += 2;
@@ -397,14 +397,22 @@ export function buildingCost(state, key) {
   return Math.round(b.cost * priceIndex(state) * techMaturityFactor(state, b) * currencyCostFactor(state));
 }
 
-// Construction time in game-days, from a building's complexity (its base cost,
-// plus part count for 3D-designed landmarks). Bigger/more elaborate = longer.
+// Construction time in game-days. Real projects take real time: each building
+// carries a realistic duration in months (data.js BUILD_MONTHS → b.buildMonths);
+// a whole HDB estate is ~3.5 years, a power station or port several years, a hut
+// a couple of months. Custom 3D landmarks (no buildMonths) fall back to a
+// cost + complexity estimate. Nothing produces until it tops out.
 export function buildDays(b) {
-  if (!b) return 2;
-  let days = Math.sqrt(b.cost || 1) * 1.6;
-  if (b.landmarkParts) days += b.landmarkParts.length * 0.8; // designed complexity
-  return clamp(Math.round(days), 2, 48);
+  if (!b) return 30;
+  if (b.buildMonths) return Math.max(1, Math.round(b.buildMonths * DAYS_IN_MONTH));
+  let months = 6 + Math.sqrt(b.cost || 1) * 1.6;               // designed-landmark estimate
+  if (b.landmarkParts) months += b.landmarkParts.length * 1.0; // more parts → longer
+  return clamp(Math.round(months * DAYS_IN_MONTH), 30, 60 * DAYS_IN_MONTH);
 }
+// How long a building takes to TEAR DOWN — much faster than building it (a wreck
+// beats a build), but still weeks to a few months for a big structure, so the
+// hoarding + wrecking crane read as a real job in progress. Capped at ~6 months.
+export function demolishDays(b) { return clamp(Math.round(buildDays(b) * 0.12), 8, 6 * DAYS_IN_MONTH); }
 
 // The inflation rate the economy is pulling toward this month (annualised).
 // Golden rules: ~2% central-bank anchor, demand-pull when the labour market is

@@ -95,6 +95,14 @@ export function renderBuild(state, ctx) {
     wrap.append(picker);
   }
 
+  // A legend so players can read what each little contribution icon + number on a
+  // building card means (homes, jobs, power, water, revenue, pollution, …).
+  const legend = el('details', 'tag-legend');
+  legend.innerHTML = `<summary>ℹ️ What the building icons mean</summary>`
+    + `<div class="legend-grid">${TAG_LEGEND.map(([i, n, d]) => `<div class="leg-row"><span class="leg-ico">${i}</span><span class="leg-name">${n}</span><span class="leg-desc">${d}</span></div>`).join('')}`
+    + `<div class="leg-row"><span class="leg-ico">🏗️</span><span class="leg-name">Build time</span><span class="leg-desc">How long it takes to construct — it produces nothing until finished</span></div></div>`;
+  wrap.append(legend);
+
   // Buildings in category. Construction is the ONE time-gated system: options the
   // world hasn't invented yet are shown GREYED and sorted to the bottom — you can
   // see what's coming and when, but can only build it once its year arrives. Prices
@@ -128,15 +136,17 @@ function buildCard(state, ctx, key, b, locked) {
   let pmark = '';
   if (cost > Math.round(b.cost * 1.02)) pmark = ` <span class="b-infl up" title="Dearer than the ${money(b.cost)} base — a new-technology premium, inflation and/or a weak currency. It cheapens as the technology matures and the dollar strengthens.">▲</span>`;
   else if (cost < Math.round(b.cost * 0.98)) pmark = ` <span class="b-infl down" title="Cheaper than the ${money(b.cost)} base — the technology has matured and/or a strong currency eases imported materials.">▼</span>`;
+  const bt = fmtDuration(buildDays(b));
   const costLine = locked
     ? `<span class="b-lockyr">🔒 Invented ${b.year}</span> · upkeep ${money(b.upkeep)}/mo`
-    : `${money(cost)}${pmark} · upkeep ${money(b.upkeep)}/mo · ~${buildDays(b)}d`;
+    : `${money(cost)}${pmark} · upkeep ${money(b.upkeep)}/mo`;
   card.innerHTML = `
     <div class="b-top">
       <span class="b-ico">${b.icon}</span>
       <div style="flex:1">
         <div class="b-name">${b.name}</div>
         <div class="b-cost">${costLine}</div>
+        <div class="b-time" title="Construction takes this long — the site stands and produces nothing until it's finished. Use the speed controls to fast-forward.">🏗️ builds in ~${bt}</div>
       </div>
     </div>
     <div class="b-desc">${b.desc}</div>
@@ -257,20 +267,48 @@ function renderPlants(ctx) {
   return wrap;
 }
 
+// Round game-days into a human "~3.5 yr" / "~8 mo" / "~3 wk" / "~5 d".
+function fmtDuration(days) {
+  if (days >= 360) { const y = days / 360; return `${y % 1 === 0 ? y : y.toFixed(1)} yr`; }
+  if (days >= 60) return `${Math.round(days / 30)} mo`;
+  if (days >= 14) return `${Math.round(days / 7)} wk`;
+  return `${Math.round(days)} d`;
+}
+
+// What every building-contribution icon means — used for the tag tooltips AND the
+// legend in the Build panel, so players can read what each icon + number stands for.
+const TAG_LEGEND = [
+  ['🏠', 'Homes', 'People this building can house'],
+  ['💼', 'Jobs', 'Jobs it provides for the workforce'],
+  ['🌾', 'Food', 'People its produce can feed (self-sufficiency)'],
+  ['⚡', 'Power', '+ generates electricity · − draws from the grid'],
+  ['💧', 'Water', '+ supplies clean water · − consumes water'],
+  ['💰', 'Revenue', 'Tax / business income it earns per month'],
+  ['☁️', 'Pollution', 'Air pollution it emits (hurts health & mood)'],
+  ['🌿', 'Cleans air', 'Greenery that removes pollution'],
+  ['📚', 'Education', 'Raises the national education level'],
+  ['⚕️', 'Health', 'Raises public health (fewer outbreaks)'],
+  ['🛡️', 'Safety', 'Raises law & order (lowers crime)'],
+  ['🎖️', 'Defence', 'Military strength against external threat'],
+  ['🙂', 'Happiness', 'Local liveability / mood boost'],
+];
+function tag(cls, icon, num, title) { return `<span class="tag ${cls}" title="${title}">${icon} ${num}</span>`; }
 function buildingTags(b) {
   const t = [];
-  if (b.homes) t.push(`<span class="tag good">🏠 ${num(b.homes * POP_SCALE)}</span>`);
-  if (b.jobs) t.push(`<span class="tag good">💼 ${num(b.jobs)}</span>`);
-  if (b.power > 0) t.push(`<span class="tag good">⚡ +${b.power}</span>`);
-  if (b.power < 0) t.push(`<span class="tag">⚡ ${b.power}</span>`);
-  if (b.water > 0) t.push(`<span class="tag good">💧 +${b.water}</span>`);
-  if (b.water < 0) t.push(`<span class="tag">💧 ${b.water}</span>`);
-  if (b.income) t.push(`<span class="tag good">💰 +${money(b.income)}/mo</span>`);
-  if (b.pollution > 0) t.push(`<span class="tag bad">☁️ +${b.pollution}</span>`);
-  if (b.pollution < 0) t.push(`<span class="tag good">🌿 ${b.pollution}</span>`);
-  if (b.education) t.push(`<span class="tag good">📚 +${b.education}</span>`);
-  if (b.health) t.push(`<span class="tag good">⚕️ +${b.health}</span>`);
-  if (b.safety) t.push(`<span class="tag good">🛡️ +${b.safety}</span>`);
+  if (b.homes) t.push(tag('good', '🏠', num(b.homes * POP_SCALE), `Homes — houses ${num(b.homes * POP_SCALE)} people`));
+  if (b.jobs) t.push(tag('good', '💼', num(b.jobs), `Jobs — ${num(b.jobs)} jobs for the workforce`));
+  if (b.food) t.push(tag('good', '🌾', num(b.food * POP_SCALE), `Food — feeds ${num(b.food * POP_SCALE)} people`));
+  if (b.power > 0) t.push(tag('good', '⚡', `+${b.power}`, `Power — generates ${b.power} to the grid`));
+  if (b.power < 0) t.push(tag('', '⚡', b.power, `Power — draws ${-b.power} from the grid`));
+  if (b.water > 0) t.push(tag('good', '💧', `+${b.water}`, `Water — supplies ${b.water} clean water`));
+  if (b.water < 0) t.push(tag('', '💧', b.water, `Water — consumes ${-b.water}`));
+  if (b.income) t.push(tag('good', '💰', `+${money(b.income)}/mo`, `Revenue — earns ${money(b.income)} per month`));
+  if (b.pollution > 0) t.push(tag('bad', '☁️', `+${b.pollution}`, `Pollution — emits ${b.pollution} (hurts health & mood)`));
+  if (b.pollution < 0) t.push(tag('good', '🌿', b.pollution, `Cleans air — removes ${-b.pollution} pollution`));
+  if (b.education) t.push(tag('good', '📚', `+${b.education}`, `Education — raises the education level by ${b.education}`));
+  if (b.health) t.push(tag('good', '⚕️', `+${b.health}`, `Health — raises public health by ${b.health}`));
+  if (b.safety) t.push(tag('good', '🛡️', `+${b.safety}`, `Safety — raises law & order by ${b.safety}`));
+  if (b.defence) t.push(tag('good', '🎖️', `+${b.defence}`, `Defence — adds ${b.defence} military strength`));
   return t.join('');
 }
 

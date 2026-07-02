@@ -119,8 +119,10 @@ try {
     S.onTileTap(cx, cy, v.worldOfCell(cx, cy));             // select the building
     const sel = S.demoSel.size === 1;
     S.commitDemolish();
-    const marked = !!(v.state.grid[cy][cx] && v.state.grid[cy][cx].demolish);  // teardown timer set, still standing
-    S.tick(30);                                            // wait it out
+    const cellD = v.state.grid[cy][cx];
+    const marked = !!(cellD && cellD.demolish);                // teardown timer set, still standing
+    const total = (cellD && cellD.demolish) ? cellD.demolish.total : 30;
+    S.tick(total + 3);                                         // wait out the (realistic) teardown
     const gone = !v.state.grid[cy][cx] && !v.buildings.has(`${cx},${cy}`);     // cell cleared + mesh removed
     S.setBulldoze(false);
     return { inScene, sel, marked, gone };

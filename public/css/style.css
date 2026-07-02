@@ -343,6 +343,18 @@ body.edit-mode #city {
 }
 .bcard .b-name { font-weight: 800; font-size: 13.5px; letter-spacing: -0.2px; }
 .bcard .b-cost { color: var(--sand); font-weight: 800; font-size: 11.5px; }
+.bcard .b-time { color: var(--muted); font-weight: 700; font-size: 10.5px; margin-top: 2px; }
+/* Build-icon legend */
+.tag-legend { background: var(--surface-2); border: 1px solid var(--line-2); border-radius: 12px; padding: 4px 12px; margin-bottom: 12px; }
+.tag-legend summary { cursor: pointer; font-size: 12px; font-weight: 800; color: var(--ink); padding: 6px 0; list-style: none; }
+.tag-legend summary::-webkit-details-marker { display: none; }
+.tag-legend summary::before { content: '▸ '; color: var(--muted); }
+.tag-legend[open] summary::before { content: '▾ '; }
+.legend-grid { display: grid; gap: 7px; padding: 6px 0 10px; }
+.leg-row { display: grid; grid-template-columns: 24px 84px 1fr; align-items: baseline; gap: 8px; font-size: 11.5px; }
+.leg-ico { font-size: 15px; text-align: center; }
+.leg-name { font-weight: 800; color: var(--ink); }
+.leg-desc { color: var(--muted); line-height: 1.35; }
 .bcard .b-desc { color: var(--muted); font-size: 11px; line-height: 1.4; }
 .bcard .b-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 4px; }
 .tag { font-size: 9.5px; padding: 3px 7px; border-radius: 7px; background: var(--surface-2); color: var(--muted); font-weight: 700; border: 1px solid var(--line); }

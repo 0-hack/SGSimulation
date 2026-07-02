@@ -559,6 +559,37 @@ export const BUILDINGS = {
 };
 
 // ---------------------------------------------------------------------------
+// REALISTIC CONSTRUCTION DURATIONS — how long each building takes to build, in
+// game-MONTHS, grounded in real-world timelines: an attap hut goes up in weeks;
+// a whole HDB estate takes 3–5 years; a power station, container port, hospital
+// or MRT line runs to several years; a new town or nuclear plant, longest of all.
+// A building gives NO homes/jobs/utilities/upkeep until it tops out, so a big
+// project is a real, years-long commitment. (Anything not listed — e.g. custom
+// 3D landmarks — falls back to a cost/complexity estimate in buildDays.)
+// ---------------------------------------------------------------------------
+export const BUILD_MONTHS = {
+  // Housing
+  kampong: 2, shophouse: 12, terrace: 10, bungalow: 9, walkup: 24,
+  hdb_flat: 42, hdb_newtown: 66, condo: 30, condo_estate: 42, hdb_highrise: 42,
+  // Power
+  diesel: 4, power_station: 42, solar_farm: 12, waste_energy: 36, nuclear: 72, gas_power: 36,
+  // Water
+  standpipe: 3, reservoir: 24, reservoir_big: 42, sewage: 18, desal: 30, newater: 24, desalination: 36,
+  // Economy / industry
+  godown: 8, processing: 15, factory: 15, port: 54, office: 42, mall: 30, tourism: 36,
+  wafer_fab: 30, biomed_park: 30, data_centre: 24,
+  // Services / civic
+  community_centre: 6, clinic: 9, market: 6, police: 6, fire_station: 9, school: 15,
+  tech_school: 18, colonial: 24, hospital: 42, mrt: 30, rail_station: 12, street_lamp: 1, traffic_light: 1,
+  // Environment / leisure
+  park: 4, community_garden: 2, forest: 3, gardens: 30, beach: 4, ferry_terminal: 15,
+  marina: 18, cinema: 9, stadium: 24, hawker_centre: 6,
+  // Farms
+  market_garden: 2, poultry_farm: 2, fish_farm: 3, hydroponic_farm: 6, vertical_farm: 12,
+};
+for (const [k, m] of Object.entries(BUILD_MONTHS)) if (BUILDINGS[k]) BUILDINGS[k].buildMonths = m;
+
+// ---------------------------------------------------------------------------
 // INDIVIDUAL PLANTS — placed one specimen at a time (not whole forests), free and
 // instant. Tropical / humid-climate species only (no temperate 4-season flora).
 // Decorative: a small happiness lift near homes, no economy/grid footprint.

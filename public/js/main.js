@@ -649,8 +649,18 @@ function commitAdjust() {
   G.view.syncConstruction(G.state);   // it now tops out over time
   G.adjust = null;
   afterEdit();
-  toast(`${BUILDINGS[a.key].name} — construction started.${foundMsg}`);
+  const total = (cell && cell.build) ? cell.build.total : 30;
+  const eta = fmtDur(total);
+  const doneNote = total >= 300 ? `, ready ~${G.state.date.y + Math.round(total / 360)}` : '';
+  toast(`🏗️ ${BUILDINGS[a.key].name} — construction started (~${eta}${doneNote}). Fast-forward to speed it up.${foundMsg}`);
   updateToolBanner();                 // back to place-mode (ready for the next one)
+}
+// "~3.5 yr" / "~8 mo" / "~3 wk" / "~5 d" from a count of game-days.
+function fmtDur(days) {
+  if (days >= 360) { const y = days / 360; return `${y % 1 === 0 ? y : y.toFixed(1)} yr`; }
+  if (days >= 60) return `${Math.round(days / 30)} mo`;
+  if (days >= 14) return `${Math.round(days / 7)} wk`;
+  return `${Math.round(days)} d`;
 }
 // Discard the object being positioned (it was never charged).
 function cancelAdjust(msg) {
@@ -984,13 +994,15 @@ function commitDemolish() {
   }
   const n = G.demoSel.size + cuts.length;
   if (items.length) queueDemolish(G.state, items);
+  let maxDemo = 0;                       // longest building teardown in this batch
+  for (const it of items) { if (it.kind === 'building') { const c = G.state.grid?.[it.y]?.[it.x]; if (c && c.demolish) maxDemo = Math.max(maxDemo, c.demolish.total); } }
   G.demoSel.clear(); G.demoHover = null; G.demoCuts = []; G.demoRoadPreview = null;
   G.view.demoSetSelection([]);          // drop the selection tint; the teardown visuals take over
   if (G.view.showDemoRoadHover) G.view.showDemoRoadHover([]);
   if (roadsRebuilt && G.view.rebuildRoadNet) G.view.rebuildRoadNet();   // show the freshly-split road geometry
   G.view.syncDemolition(G.state);       // start the teardown immediately
   afterEdit();
-  toast(`Demolishing ${n} item${n > 1 ? 's' : ''} — they come down over a few days. 🚜`);
+  toast(`🚜 Demolishing ${n} item${n > 1 ? 's' : ''} — hoardings go up; cleared over ~${maxDemo ? fmtDur(maxDemo) : 'a few days'}.`);
   updateToolBanner();
 }
 // Dragged a freehand stroke in Demolish mode (like drawing a road, in reverse):

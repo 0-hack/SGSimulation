@@ -5,7 +5,7 @@
 //    (a high tax rate on a jobless economy yields far less and drives emigration)
 //  • news carries detailed bodies (cause + consequence), incl. fire causes & daily life
 import assert from 'node:assert';
-import { newGame, tickDay, resolveEvent, fireDamage, buildingCost, techMaturityFactor, isUnlocked } from '../../public/js/engine.js';
+import { newGame, tickDay, resolveEvent, fireDamage, buildingCost, techMaturityFactor, isUnlocked, buildDays, demolishDays } from '../../public/js/engine.js';
 import { BUILDINGS, SANDBOX } from '../../public/js/data.js';
 
 let passed = 0;
@@ -53,6 +53,20 @@ console.log('Any policy, any time — effectiveness depends on conditions:');
   drain.policies.income_tax = 'high';
   const pop0 = drain.population; runMonths(drain, 18);
   ok(drain.population < pop0, `over-taxing a jobless economy drives emigration (pop ${Math.round(pop0)} → ${Math.round(drain.population)})`);
+}
+
+console.log('Construction & demolition take realistic, embedded time:');
+{
+  const Y = 360; // game-days per year
+  const hdb = buildDays(BUILDINGS.hdb_flat);
+  ok(hdb >= 3 * Y && hdb <= 5 * Y, `an HDB estate takes 3–5 years to build (${(hdb / Y).toFixed(1)} yr)`);
+  ok(buildDays(BUILDINGS.kampong) < Y, `a kampong goes up fast, in well under a year (${(buildDays(BUILDINGS.kampong) / 30).toFixed(0)} mo)`);
+  ok(buildDays(BUILDINGS.nuclear) > buildDays(BUILDINGS.hdb_flat), 'a nuclear plant takes even longer than an HDB estate');
+  ok(buildDays(BUILDINGS.hdb_newtown) > buildDays(BUILDINGS.hdb_flat), 'a whole new town takes longer than a single estate');
+  // demolition is a real job — weeks to a few months — but faster than building
+  const dd = demolishDays(BUILDINGS.hdb_flat);
+  ok(dd >= 30 && dd < hdb, `demolishing an HDB is a multi-month job (${(dd / 30).toFixed(1)} mo), not instant, but faster than building it`);
+  ok(demolishDays(BUILDINGS.nuclear) <= 6 * 30, 'even the biggest teardown is capped to a sensible few months');
 }
 
 console.log('News carries detailed bodies (cause + consequence):');

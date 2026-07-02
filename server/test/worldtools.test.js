@@ -128,15 +128,20 @@ try {
     S.onTileTap(bx, by, v.worldOfCell(bx, by));
     S.commitDemolish();                                           // queues a TIMED teardown -> scaffold goes up
     const hasScaffold = !!(v._demoSites && v._demoSites.has(id));
+    const total = (v.state.grid[by][bx] && v.state.grid[by][bx].demolish) ? v.state.grid[by][bx].demolish.total : 30;
     const plat0 = hasScaffold ? v._demoSites.get(id).plat.position.y : 0;
-    S.tick(30);                                                   // wait the teardown out
-    const platLater = (v._demoSites && v._demoSites.has(id)) ? v._demoSites.get(id).plat.position.y : 0;
-    const descended = platLater < plat0;                          // platform rode down while it stood (or it's gone)
+    S.tick(Math.floor(total * 0.5));                              // halfway through: still standing, coming down
+    const midStanding = !!(v._demoSites && v._demoSites.has(id)) && v.buildings.has(id);
+    const platMid = (v._demoSites && v._demoSites.has(id)) ? v._demoSites.get(id).plat.position.y : 0;
+    const descended = platMid < plat0;                            // platform rode down while it stood
+    S.tick(total + 3);                                            // finish it off
     const cleared = !(v._demoSites && v._demoSites.has(id)) && !v.buildings.has(id);
     S.setBulldoze(false);
-    return { found: true, hasScaffold, descended: descended || cleared, cleared };
+    return { found: true, hasScaffold, total, midStanding, descended, cleared };
   });
   ok(ds.found && ds.hasScaffold, 'confirming a demolition raises a wrecking scaffold/hoarding around the building');
+  ok(ds.total >= 60, `the teardown is a realistic, multi-week job (${ds.total} days), not instant`);
+  ok(ds.midStanding && ds.descended, 'the barrier stands and the platform rides down while the building is still coming apart');
   ok(ds.cleared, 'the scaffold is pulled once the teardown finishes (and the building is gone)');
 
   // ---- SLOPE FOUNDATION: elevate by default; excavate actually cuts the hill -

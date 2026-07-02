@@ -1141,8 +1141,10 @@ export class Scene3D {
       // hard so the heritage city reads as the small, dense, fine-grained place the
       // 1966 survey map shows — shophouses smallest, big works (port/power/factory)
       // a touch larger — rather than looming oversized over the island.
+      const heritageLandmark = BUILDINGS[key] && BUILDINGS[key].cat === 'heritage';
       const sc = key === 'shophouse' ? MODEL_SCALE   // same size as a player-built shophouse (the build-menu size)
         : key === 'kampong' ? 0.42
+        : heritageLandmark ? 0.72                     // named central-area landmarks stand a touch prouder than the shophouse mass
         : (key === 'port' || key === 'power_station' || key === 'factory' || key === 'processing') ? 0.62
         : 0.5;
       m.scale.setScalar(sc);

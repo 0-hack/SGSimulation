@@ -39,7 +39,7 @@ export const SEED_1965 = [
   { key: 'shophouse',    cx: 0.450, cy: 0.357, n: 5, spread: 0.010, name: 'Raffles Place & Boat Quay' },
   { key: 'shophouse',    cx: 0.462, cy: 0.351, n: 3, spread: 0.009, name: 'Collyer Quay' },
   { key: 'shophouse',    cx: 0.423, cy: 0.349, n: 3, spread: 0.010, name: 'Tanjong Pagar' },
-  { key: 'market',       cx: 0.444, cy: 0.347, name: 'Telok Ayer Market' },
+  { key: 'lau_pa_sat',   cx: 0.444, cy: 0.347, name: 'Lau Pa Sat (Telok Ayer Market)' },
   // ---- Port & dockyards lining Keppel Harbour, plus the coastal power stations ----
   { key: 'port',         cx: 0.414, cy: 0.332, name: 'Keppel Harbour' },
   { key: 'diesel',       cx: 0.432, cy: 0.338, name: 'St James Power Station' },
@@ -52,6 +52,16 @@ export const SEED_1965 = [
   { key: 'fire_station', cx: 0.460, cy: 0.388, name: 'Central Fire Station' },
   { key: 'cinema',       cx: 0.450, cy: 0.392, name: 'Cathay Cinema' },
   { key: 'hospital',     cx: 0.418, cy: 0.378, name: 'Singapore General Hospital' },
+  // ---- Named heritage landmarks of the central area, standing at independence and
+  //      modelled close to their real 1950s–60s exteriors. Buildable & demolishable
+  //      from the build menu (Heritage), so the player can keep or reshape the old
+  //      district. Placed at their real sites; they snap to the nearest free cell if a
+  //      street or shophouse already sits on the exact spot ----
+  { key: 'fullerton',        cx: 0.457, cy: 0.357, name: 'Fullerton Building' },
+  { key: 'victoria_theatre', cx: 0.461, cy: 0.377, name: 'Victoria Theatre & Concert Hall' },
+  { key: 'raffles_hotel',    cx: 0.470, cy: 0.393, name: 'Raffles Hotel' },
+  { key: 'sri_mariamman',    cx: 0.437, cy: 0.351, name: 'Sri Mariamman Temple' },
+  { key: 'sultan_mosque',    cx: 0.482, cy: 0.405, name: 'Sultan Mosque' },
   // ---- The most crowded part of 1966: from City Hall the built-up town runs
   //      NORTH-EAST and EAST in an almost-unbroken mass of shophouses — Beach Road,
   //      Bugis, Kampong Glam, Rochor, Jalan Besar, Lavender, Kallang, Geylang and

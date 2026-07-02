@@ -2493,6 +2493,7 @@ export class Scene3D {
       if (meta.heritage) { if (this.removeHeritageVisual) this.removeHeritageVisual(x, y); }  // clear the old house + its cells
       else { this._setBuildingRed(x, y, false); this.onDemolished(x, y); }   // dust + remove + greenery returns
     }
+    this._syncRoadDemo(state);                    // amber works barrier along any road/rail/runway coming down
     if ((state._infraDemoDone || 0) !== (this._infraDemoSeen || 0)) {
       this._infraDemoSeen = state._infraDemoDone || 0;
       this.rebuildRoadNet(); this._buildPlayerRailways(state); this._buildPlayerAirstrips(state);
@@ -3102,10 +3103,14 @@ export class Scene3D {
     const rcell = (x != null && y != null) ? this.state?.grid?.[y]?.[x] : null;
     const baseY = (rcell && typeof rcell.fy === 'number') ? rcell.fy
       : (x != null && y != null && this.terrainHeight ? this.terrainHeight(x, y) : box.min.y);
-    const sx = Math.max(2.5, box.max.x - box.min.x), sz = Math.max(2.5, box.max.z - box.min.z);
-    const H = Math.max(4, box.max.y - baseY);
+    // Cap the hoarding footprint so a HUGE structure (the airport runway) gets a
+    // sensible work-zone barrier over its centre, not a fence spanning the whole map.
+    const CAP = 30;
+    const sx = Math.min(CAP, Math.max(2.5, box.max.x - box.min.x)), sz = Math.min(CAP, Math.max(2.5, box.max.z - box.min.z));
+    const H = Math.max(4, Math.min(40, box.max.y - baseY));
+    const cx = (box.min.x + box.max.x) / 2, cz = (box.min.z + box.max.z) / 2;
     const wrap = new THREE.Group();
-    wrap.position.set(g.position.x, baseY, g.position.z);
+    wrap.position.set(cx, baseY, cz);
     wrap.rotation.y = g.rotation.y;
     const hazard = toon(0xe2553a), rail = toon(0xf0a93a);
     const hw = sx / 2 + 0.6, hd = sz / 2 + 0.6;
@@ -4715,6 +4720,36 @@ export class Scene3D {
       this._addWorksFence(g, wp, hw + 0.8);   // hoarding + blinking lights ring the work zone
     }
   }
+  // The {x,z} polyline of ANY transport entry being demolished — a road edge
+  // (poly or node pair), or a railway / runway (poly / pts, {x,z} or [x,z] pairs).
+  _transportDemoPoly(e) {
+    const conv = (arr) => (arr[0] && arr[0].x != null) ? arr.map((q) => ({ x: q.x, z: q.z })) : arr.map(([x, z]) => ({ x, z }));
+    if (e.poly && e.poly.length >= 2) return conv(e.poly);
+    if (e.pts && e.pts.length >= 2) return conv(e.pts);
+    if (Array.isArray(e) && e.length >= 2) return conv(e);
+    const n = this.state && this.state.roads && this.state.roads.nodes;
+    if (n && e.a != null && e.b != null && n[e.a] && n[e.b]) return [{ x: n[e.a].x, z: n[e.a].z }, { x: n[e.b].x, z: n[e.b].z }];
+    return null;
+  }
+  // Raise a works barrier along every road / railway / runway currently being torn
+  // down, so a transport teardown READS as a job in progress — the same amber
+  // hoarding + blinking lights + digger as a road under construction. Rebuilt each
+  // tick (cheap; only while something is demolishing) and self-clears when done.
+  _syncRoadDemo(state) {
+    if (this._roadDemoGroup) { this.scene.remove(this._roadDemoGroup); this._roadDemoGroup = null; }
+    const list = [];
+    if (state.roads && state.roads.edges) for (const e of state.roads.edges) if (e && e.demolish) list.push(e);
+    for (const e of (state.railways || [])) if (e && e.demolish) list.push(e);
+    for (const e of (state.airstrips || [])) if (e && e.demolish) list.push(e);
+    if (!list.length) return;
+    const g = new THREE.Group(); this.scene.add(g); this._roadDemoGroup = g;
+    for (const e of list) {
+      const pl = this._transportDemoPoly(e); if (!pl || pl.length < 2) continue;
+      this._addWorksFence(g, pl, 1.5);                 // hoarding + amber lights down the stretch
+      const mid = pl[Math.floor(pl.length / 2)];       // a digger parked on the stretch
+      const m = this._roadworkMarker(); m.scale.setScalar(0.8); m.position.set(mid.x, this._roadY(mid.x, mid.z) + 0.1, mid.z); g.add(m);
+    }
+  }
   // A construction barrier along a route: striped posts on both sides with amber
   // lights that blink (pulsed in render). Signals "works in progress — keep out".
   _addWorksFence(group, wp, off) {
@@ -5492,7 +5527,7 @@ export class Scene3D {
     if (this._snapMarker && this._snapMarker.visible) { const s = 1 + 0.18 * Math.sin(performance.now() / 180); this._snapMarker.scale.set(s, s, 1); } // pulse the "start here" ring
     // blink the amber construction-barrier lights (roadworks + reclamation)
     const blink = 0.25 + 0.75 * (0.5 + 0.5 * Math.sin(performance.now() / 170));
-    for (const grp of [this._roadworksGroup, this.reclaimSiteGroup, this._reclaimAreaGroup]) {
+    for (const grp of [this._roadworksGroup, this._roadDemoGroup, this.reclaimSiteGroup, this._reclaimAreaGroup]) {
       if (grp) grp.traverse((o) => { if (o.userData && o.userData.blink) o.material.opacity = blink; });
     }
     if (this._tileHi && this._tileHi.visible) { const k = 0.34 + 0.18 * (0.5 + 0.5 * Math.sin(performance.now() / 320)); this._tileHiFill.opacity = k; } // gentle tile pulse

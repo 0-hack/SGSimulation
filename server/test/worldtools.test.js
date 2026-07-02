@@ -277,11 +277,14 @@ try {
     S.commitDemolish();
     const split = roads.edges.length > before;                 // the edge was cut into pieces
     const queued = roads.edges.some((e) => e && e.demolish);    // only the covered piece is torn down
+    v.syncDemolition(v.state);                                  // raise the works barrier along it
+    const barrier = !!(v._roadDemoGroup && v._roadDemoGroup.children.length > 0);
     S.setBulldoze(false);
-    return { found: true, marked, split, queued };
+    return { found: true, marked, split, queued, barrier };
   });
   ok(dmR.found && dmR.marked, 'dragging along a road freely marks the covered portion (red)');
   ok(dmR.split && dmR.queued, 'Done splits the road and tears down ONLY the dragged portion (not a fixed length)');
+  ok(dmR.barrier, 'a works barrier (hoarding + amber lights) is raised along the road being torn down');
 
   // (5) TRUE 3D PICKING: pointing at a building's body picks the BUILDING, not the
   // ground cell behind it (the bug that made tall buildings/airport un-hoverable).

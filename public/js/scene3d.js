@@ -5077,11 +5077,16 @@ export class Scene3D {
     while (this.roadGroup.children.length) { const c = this.roadGroup.children.pop(); c.geometry?.dispose?.(); this.roadGroup.remove(c); }
     const roads = this.state?.roads;
     const pave = [[], []], road = [[], []], mark = [[], []];
-    // Dirt road: a vertex-coloured ribbon so a kampong path reads as worn EARTH down
-    // the middle (where feet/wheels rubbed the grass off) FADING to grass-green at the
-    // edges — not a flat brown stripe. Built separately (needs per-vertex colour).
+    // Dirt road: a vertex-coloured ribbon so a kampong track reads as compacted worn
+    // EARTH down the middle FADING to a thin grassy lip at the edges — and, where the
+    // track meets a sealed road, its colour is feathered toward the asphalt grey so
+    // there is no hard brown/grey seam at the junction. Built separately (per-vertex colour).
     const dirtV = [], dirtC = [], dirtI = [];
-    const EARTH = [0.52, 0.38, 0.22], GRASS = [0.40, 0.62, 0.32];   // worn centre / grass edge
+    // Palette pulled toward the paved-road tone (0x33363d) so dirt & asphalt read as one
+    // network: GRAVEL is a laterite that leans grey; VERGE is a muted grass lip; PAVE is
+    // the asphalt colour the track fades into at a junction.
+    const PAVE = [0.20, 0.212, 0.239], GRAVEL = [0.39, 0.31, 0.23], VERGE = [0.40, 0.50, 0.28];
+    const lerp3 = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
     const ribbon = (buf, pts, hw, yOff) => {
       const [v, idx] = buf;
       for (let i = 0; i < pts.length - 1; i++) {
@@ -5117,11 +5122,17 @@ export class Scene3D {
       }
       for (let i = 0; i < pts.length - 1; i++) { const a = base + i * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
     };
-    // A 4-across dirt ribbon: grass-green at the kerb, worn earth-brown through the
-    // middle, so the path looks like grass scuffed away by years of feet & cartwheels.
-    const dirtRibbon = (pts, hw) => {
+    // A 4-across dirt ribbon: a thin grassy lip at the kerb, compacted gravel across the
+    // (mostly gravel) middle so cars still ride on the track. `blend0`/`blend1` say whether
+    // the start/end node meets a sealed road — if so the colour is feathered toward the
+    // asphalt grey over BLEND_LEN world units so the junction has no hard seam.
+    const dirtRibbon = (pts, hw, blend0, blend1) => {
       const base = dirtV.length / 3;
-      const offs = [-hw, -hw * 0.42, hw * 0.42, hw], cols = [GRASS, EARTH, EARTH, GRASS];
+      const offs = [-hw, -hw * 0.8, hw * 0.8, hw], cols = [VERGE, GRAVEL, GRAVEL, VERGE];
+      const BLEND_LEN = 4.5, smooth = (t) => { t = t < 0 ? 0 : t > 1 ? 1 : t; return t * t * (3 - 2 * t); };
+      // cumulative arc-length so the feather is measured in world units from each end
+      const s = [0]; for (let i = 1; i < pts.length; i++) s.push(s[i - 1] + Math.hypot(pts[i].x - pts[i - 1].x, pts[i].z - pts[i - 1].z));
+      const total = s[pts.length - 1] || 1;
       for (let i = 0; i < pts.length; i++) {
         const p = pts[i], a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)];
         let pdx = p.x - a.x, pdz = p.z - a.z, pl = Math.hypot(pdx, pdz);
@@ -5132,7 +5143,12 @@ export class Scene3D {
         let mx = n1x + n2x, mz = n1z + n2z, ml = Math.hypot(mx, mz);
         if (ml < 1e-6) { mx = n2x; mz = n2z; ml = 1; } mx /= ml; mz /= ml;
         let cosv = mx * n2x + mz * n2z; if (cosv < 0.5) cosv = 0.5;
-        for (let k = 0; k < 4; k++) { const o = offs[k] / cosv; dirtV.push(p.x + mx * o, p.y + 0.035, p.z + mz * o); dirtC.push(cols[k][0], cols[k][1], cols[k][2]); }
+        // feather toward asphalt near a paved-road junction (0 in the open → 0.85 at the seam)
+        let bf = 0;
+        if (blend0) bf = Math.max(bf, 1 - smooth(s[i] / BLEND_LEN));
+        if (blend1) bf = Math.max(bf, 1 - smooth((total - s[i]) / BLEND_LEN));
+        bf *= 0.85;
+        for (let k = 0; k < 4; k++) { const o = offs[k] / cosv; const c = bf ? lerp3(cols[k], PAVE, bf) : cols[k]; dirtV.push(p.x + mx * o, p.y + 0.035, p.z + mz * o); dirtC.push(c[0], c[1], c[2]); }
       }
       for (let i = 0; i < pts.length - 1; i++) { const a = base + i * 4, b = a + 4; for (let k = 0; k < 3; k++) dirtI.push(a + k, a + k + 1, b + k + 1, a + k, b + k + 1, b + k); }
     };
@@ -5173,7 +5189,11 @@ export class Scene3D {
     if (roads) {
       const HW2 = ROAD_TYPES.road.renderHW || 0.34; // two-way width — matches player-drawn roads
       const HW1 = HW2 * 0.62;                        // single lane: a single lane, clearly narrower
-      const HWD = HW2 * 0.9;                         // dirt / off-track road: a touch narrower, drawn brown
+      const HWD = HW2 * 0.68;                        // dirt / off-track road: a narrow kampong track, well under a 2-way carriageway
+      // which nodes touch a SEALED (non-dirt) road — a dirt track feathers its colour into
+      // the asphalt at those ends so there is no hard seam where the two surfaces meet.
+      const pavedNode = new Set();
+      for (const e of roads.edges) { if (!e.dirt) { pavedNode.add(e.a); pavedNode.add(e.b); } }
       for (const { nodes, oneway, dirt } of this._tracedChains(roads)) {
         const raw = nodes.map((ni) => { const nd = roads.nodes[ni]; return nd && { x: nd.x, z: nd.z }; }).filter(Boolean);
         // resample to sub-cell spacing so the ribbon hugs the hillsides (and so a
@@ -5181,7 +5201,7 @@ export class Scene3D {
         // trace keeps its own points, we do NOT re-curve or distort it here).
         if (raw.length < 2) continue;
         const pts = this._densifyRoad(raw, 2.0, 0.10);
-        if (dirt) { dirtRibbon(pts, HWD); }                       // kampong dirt path: worn brown centre, grass edges
+        if (dirt) { dirtRibbon(pts, HWD, pavedNode.has(nodes[0]), pavedNode.has(nodes[nodes.length - 1])); }  // narrow kampong track, feathered into asphalt at junctions
         else {
           ribbonSmooth(road, pts, oneway ? HW1 : HW2, 0.04);     // paved (standard or single lane)
           if (!oneway) markLine(pts, 0, true, 0.05);             // two-way: a dashed centre line down the middle

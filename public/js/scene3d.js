@@ -2428,30 +2428,46 @@ export class Scene3D {
   // Advance the visible teardown of buildings (red + shrinking with progress) and
   // pop them when the engine finishes the demolition; rebuild infra once when the
   // engine removes a demolished road / rail / runway.
+  // The 3D mesh a demolish timer is tearing down: a player building (in
+  // this.buildings) OR a prebuilt heritage house (in the heritage group). Both get
+  // a hoarding + wrecking crane so a slow teardown READS as a job in progress.
+  _demoTargetMesh(x, y) {
+    const e = this.buildings.get(`${x},${y}`);
+    if (e && e.group) return { group: e.group, tall: !!e.tall, heritage: false };
+    const m = this._heritageMeshAt ? this._heritageMeshAt(x, y) : null;
+    if (m) return { group: m, tall: false, heritage: true };
+    return null;
+  }
   syncDemolition(state) {
     if (!state) return;
-    if (!this._teardown) this._teardown = new Set();
+    if (!this._teardown || !(this._teardown instanceof Map)) this._teardown = new Map();  // id -> { heritage }
     const active = new Set();
     for (const [x, y] of (state.demolishing || [])) {
       const id = `${x},${y}`; active.add(id);
       const c = state.grid[y] && state.grid[y][x]; if (!c || !c.demolish) continue;
-      const e = this.buildings.get(id);
-      if (e && e.group) {
-        if (!this._demoSites || !this._demoSites.has(id)) this._startDemoSite(x, y);   // hoarding + wrecking crane BEFORE it shrinks
-        this._setBuildingRed(x, y, true);
+      const tgt = this._demoTargetMesh(x, y);
+      if (tgt && tgt.group) {
+        if (!this._demoSites || !this._demoSites.has(id)) this._startDemoSite(x, y, tgt.group);  // hoarding + crane BEFORE it shrinks
         const p = Math.max(0.04, c.demolish.left / Math.max(1, c.demolish.total)); // crumbles down as it's torn
-        e.group.scale.set(MODEL_SCALE, MODEL_SCALE * (e.tall ? this.devFactor : 1) * p, MODEL_SCALE);
-        this._setDemoSiteProgress(id, p);       // the wrecking platform rides DOWN as it comes apart
+        const site = this._demoSites.get(id);
+        if (tgt.heritage) {
+          const bs = (site && site.baseScaleY != null) ? site.baseScaleY : tgt.group.scale.y;
+          tgt.group.scale.y = bs * p;             // the old house crumbles into the ground
+        } else {
+          this._setBuildingRed(x, y, true);
+          tgt.group.scale.set(MODEL_SCALE, MODEL_SCALE * (tgt.tall ? this.devFactor : 1) * p, MODEL_SCALE);
+        }
+        this._setDemoSiteProgress(id, p);         // the wrecking platform rides DOWN as it comes apart
       }
-      this._teardown.add(id);
+      if (!this._teardown.has(id)) this._teardown.set(id, { heritage: !!(tgt && tgt.heritage) });
     }
-    for (const id of [...this._teardown]) {
+    for (const [id, meta] of [...this._teardown]) {
       if (active.has(id)) continue;
       this._teardown.delete(id);
       const [x, y] = id.split(',').map(Number);
-      this._setBuildingRed(x, y, false);
-      this._removeDemoSite(id);                 // pull the hoarding/crane once it's gone
-      this.onDemolished(x, y);                  // dust + remove + greenery returns
+      this._removeDemoSite(id);                   // pull the hoarding/crane once it's gone
+      if (meta.heritage) { if (this.removeHeritageVisual) this.removeHeritageVisual(x, y); }  // clear the old house + its cells
+      else { this._setBuildingRed(x, y, false); this.onDemolished(x, y); }   // dust + remove + greenery returns
     }
     if ((state._infraDemoDone || 0) !== (this._infraDemoSeen || 0)) {
       this._infraDemoSeen = state._infraDemoDone || 0;
@@ -3053,20 +3069,20 @@ export class Scene3D {
   // hoarding (corner posts) wraps the building, a wrecking crane stands beside it, and
   // a hazard platform descends as the structure crumbles — so a slow teardown READS as
   // a teardown, just like a slow build reads as a build.
-  _startDemoSite(x, y) {
+  _startDemoSite(x, y, group) {
     const id = `${x},${y}`;
     if (!this._demoSites) this._demoSites = new Map();
     if (this._demoSites.has(id)) return;
-    const e = this.buildings.get(id); if (!e || !e.group) return;
-    const box = new THREE.Box3().setFromObject(e.group);
+    const g = group || (this.buildings.get(id) || {}).group; if (!g) return;
+    const box = new THREE.Box3().setFromObject(g);
     if (!isFinite(box.min.y) || !isFinite(box.max.y)) return;
     const rcell = this.state?.grid?.[y]?.[x];
     const baseY = (rcell && typeof rcell.fy === 'number') ? rcell.fy : this.terrainHeight(x, y);
     const sx = Math.max(2.5, box.max.x - box.min.x), sz = Math.max(2.5, box.max.z - box.min.z);
     const H = Math.max(4, box.max.y - baseY);
     const wrap = new THREE.Group();
-    wrap.position.set(e.group.position.x, baseY, e.group.position.z);
-    wrap.rotation.y = e.group.rotation.y;
+    wrap.position.set(g.position.x, baseY, g.position.z);
+    wrap.rotation.y = g.rotation.y;
     const hazard = toon(0xe2553a), rail = toon(0xf0a93a);
     const hw = sx / 2 + 0.6, hd = sz / 2 + 0.6;
     for (const [px, pz] of [[-hw, -hd], [hw, -hd], [hw, hd], [-hw, hd]]) {   // corner safety posts
@@ -3087,7 +3103,7 @@ export class Scene3D {
     const ball = new THREE.Mesh(new THREE.SphereGeometry(0.7, 10, 8), toon(0x33373d));   // wrecking ball
     ball.position.set(hw + 1.3 - (sx + 3.0), H + 2.6, hd + 1.3); wrap.add(ball);
     this.scene.add(wrap);
-    this._demoSites.set(id, { group: wrap, plat, ball, H });
+    this._demoSites.set(id, { group: wrap, plat, ball, H, baseScaleY: g.scale.y });   // remember the mesh's scale so heritage can crumble from it
     const cw = cellToWorld(x, y); this._spawnDust(cw.x, cw.z, 0x9a8f80, 12);
   }
   _setDemoSiteProgress(id, p) {

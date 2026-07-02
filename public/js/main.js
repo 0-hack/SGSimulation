@@ -980,7 +980,14 @@ function commitDemolish() {
   const items = [];
   for (const t of G.demoSel.values()) {
     if (t.kind === 'building') items.push({ kind: 'building', x: t.x, y: t.y });
-    else if (t.kind === 'heritage') { if (G.view.removeHeritageVisual) G.view.removeHeritageVisual(t.x, t.y); }
+    else if (t.kind === 'heritage') {
+      // A prebuilt heritage house that sits in the grid tears down over TIME (hoarding
+      // + wrecking crane), just like a player building — no more instant vanish. A
+      // purely decorative terrace with no grid cell (nothing to time) clears at once.
+      const c = G.state.grid?.[t.y]?.[t.x];
+      if (c && c.heritage) items.push({ kind: 'building', x: t.x, y: t.y });
+      else if (G.view.removeHeritageVisual) G.view.removeHeritageVisual(t.x, t.y);
+    }
     else if (t.kind === 'tree') { if (G.view.removeTreeAt) G.view.removeTreeAt(t.x, t.y); G.dirty = true; }
     else if (t.kind === 'landmark') { if (G.view.removeLandmark) G.view.removeLandmark(t.id); G.dirty = true; }
     else { const ref = infraRef(t); if (ref) items.push({ kind: t.kind, ref }); }

@@ -219,13 +219,20 @@ try {
     S.onTileTap(hx, hy, c); const sel = S.demoSel.size === 1;
     const before = v.heritagePlacements.length;
     S.commitDemolish();
+    // a prebuilt heritage house in the grid now tears down over TIME (not instantly)
+    const gc = v.state.grid[hy] && v.state.grid[hy][hx];
+    const timed = !!(gc && gc.demolish);
+    const total = timed ? gc.demolish.total : 0;
+    const standingAfterDone = timed ? !!v._heritageMeshAt(hx, hy) : false;  // still up right after Done
+    if (total) S.tick(total + 3);                                          // wait the teardown out
     const removed = v.heritagePlacements.length === before - 1 && !v.heritageLabelAt(hx, hy);
     S.setBulldoze(false);
-    return { found: true, isHeritage, red: red > 0, sel, removed };
+    return { found: true, isHeritage, red: red > 0, sel, timed, standingAfterDone, removed };
   });
   ok(dmH.found && dmH.isHeritage, 'a prebuilt shophouse / heritage building is detected by Demolish');
   ok(dmH.red, 'hovering the prebuilt shophouse turns its 3D model red');
-  ok(dmH.sel && dmH.removed, 'Done demolishes the prebuilt shophouse (model + cell freed)');
+  ok(dmH.timed && dmH.standingAfterDone, 'the old house is torn down over TIME (still standing right after Done), not vanished instantly');
+  ok(dmH.sel && dmH.removed, 'Done demolishes the prebuilt shophouse (model + cell freed) once the teardown finishes');
 
   // (3) an ambient tree: detectable, tints red, Done removes it and the clearing persists
   const dmT = await p.evaluate(() => {

@@ -516,7 +516,7 @@ function onTileTap(x, y, world, landmark) {
     // Multi-select: a tap TOGGLES the item under the cursor in/out of the teardown
     // selection (tap a red one again to undo). Nothing is removed until ✓ Done.
     // `landmark` (e.g. the airport) is a fixed structure the 3D pick hit directly.
-    const t = landmark ? { kind: 'landmark', id: landmark.id, label: landmark.label } : findDemoTarget({ x, y }, world);
+    const t = landmark ? { kind: landmark.kind || 'landmark', id: landmark.id, part: landmark.part, label: landmark.label } : findDemoTarget({ x, y }, world);
     if (t) {
       const key = demoKey(t);
       if (G.demoSel.has(key)) G.demoSel.delete(key);        // tap a selected (red) item again -> undo
@@ -949,7 +949,8 @@ function findDemoTarget(cell, world) {
 // A stable key for a demolish target (so the selection can toggle it).
 function demoKey(t) {
   return t.kind === 'building' ? `b:${t.x},${t.y}` : t.kind === 'heritage' ? `h:${t.x},${t.y}`
-    : t.kind === 'tree' ? `t:${t.x},${t.y}` : t.kind === 'landmark' ? `L:${t.id}` : `${t.kind}:${t.i}`;
+    : t.kind === 'tree' ? `t:${t.x},${t.y}` : t.kind === 'landmark' ? `L:${t.id}`
+    : t.kind === 'airportPart' ? `A:${t.part}` : `${t.kind}:${t.i}`;
 }
 // The live state-object behind an infra target (for queueing its timed teardown).
 function infraRef(t) {
@@ -1013,6 +1014,7 @@ function commitDemolish() {
     // Trees & fixed landmarks (airport) also come down over time, behind a hoarding —
     // a tree in days, a landmark over months — instead of vanishing at once.
     else if (t.kind === 'tree') { maxDemo = Math.max(maxDemo, queueDemoVisual(G.state, { kind: 'tree', x: t.x, y: t.y })); G.dirty = true; }
+    else if (t.kind === 'airportPart') { maxDemo = Math.max(maxDemo, queueDemoVisual(G.state, { kind: 'airportPart', id: t.part })); G.dirty = true; }
     else if (t.kind === 'landmark') { maxDemo = Math.max(maxDemo, queueDemoVisual(G.state, { kind: 'landmark', id: t.id })); G.dirty = true; }
     else { const ref = infraRef(t); if (ref) items.push({ kind: t.kind, ref }); }
   }
@@ -1087,7 +1089,8 @@ function buildingStatLine(b) {
 function demoInfoHtml(t) {
   if (!t) return null;
   const prog = progressAtCell(t);   // if it's mid-build / mid-teardown, show the time left too
-  if (t.kind === 'landmark') return `<b>${escapeHtml(t.label || 'Landmark')}</b>${prog}<div class="hi-body">A fixed national landmark. Removing it clears the land.</div>`;
+  if (t.kind === 'landmark') return `<b>${escapeHtml(t.label || 'Landmark')}</b>${prog}<div class="hi-body">A fixed national landmark. Removing it clears the land. Tap a single building to remove just that part.</div>`;
+  if (t.kind === 'airportPart') return `<b>✈️ ${escapeHtml(t.label || 'Airport building')}</b>${prog}<div class="hi-body">One building of the airport complex. You can tear it down on its own — the rest of the airport stays.</div>`;
   if (t.kind === 'tree') return `<b>🌳 Tree</b>${prog}<div class="hi-body">Greenery that cleans the air and cools the city.</div>`;
   const c = G.state.grid?.[t.y]?.[t.x], b = c && BUILDINGS[c.k];
   if (!b) return `<b>${t.kind === 'heritage' ? '🏚️ Heritage building' : 'Building'}</b>${prog}<div class="hi-body">Part of the standing 1965 town.</div>`;
@@ -1105,7 +1108,7 @@ function progressAtCell(t) {
 
 function onDemolishHover(cell, world, landmark) {
   if (G.readOnly || !G.build.bulldoze) { hideHoverInfo(); return; }
-  const t = landmark ? { kind: 'landmark', id: landmark.id, label: landmark.label } : findDemoTarget(cell, world);
+  const t = landmark ? { kind: landmark.kind || 'landmark', id: landmark.id, part: landmark.part, label: landmark.label } : findDemoTarget(cell, world);
   G.demoHover = t ? { ...t, key: demoKey(t) } : null;
   const info = t ? demoInfoHtml(t) : null;   // show the player what it is before they decide
   if (info) showHoverInfo(info); else hideHoverInfo();

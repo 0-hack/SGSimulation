@@ -902,6 +902,14 @@ export class Scene3D {
     g.userData.demo = { kind: 'landmark', id: 'airport', label: 'Paya Lebar Airport' };   // demolishable as a whole landmark
     this.scene.add(g); this.airportGroup = g;
     this._airportCenter = { cx, cz, rot, len: len * SC };
+    // Registry of individually-demolishable airport BUILDINGS. Tagging a sub-object
+    // with its own demo record lets the player tear down just that structure (the
+    // terminal, a hangar row, the freight block…) instead of the whole complex; the
+    // runway/ground stays the whole-airport landmark (fallback). `_mover`-flagged
+    // meshes (taxiing / flying aircraft) are excluded from teardown bounding boxes.
+    this.airportParts = [];
+    const part = (obj, key, label) => { if (!obj) return obj; obj.userData.demo = { kind: 'airportPart', part: key, label }; this.airportParts.push({ obj, key, label }); return obj; };
+    const mover = (obj) => { if (obj) obj.userData._mover = true; return obj; };
 
     // local frame: +Z = runway long axis (N), +X = inland (west) toward terminals
     const halfW = AIRPORT.rwHalfW, over = AIRPORT.overrun, halfL = len / 2 + over;
@@ -947,18 +955,18 @@ export class Scene3D {
     // facing toward the apron/runway side; mirrored with the flank so models still face the runway
     const sc = AIRPORT.termScale, faceApron = -Math.PI / 2 * SIDE;
     const pier = makePier(); pier.scale.setScalar(sc);
-    pier.position.set(AIRPORT.pierOff * SIDE, 0, apCz); pier.rotation.y = faceApron; g.add(pier);
+    pier.position.set(AIRPORT.pierOff * SIDE, 0, apCz); pier.rotation.y = faceApron; g.add(part(pier, 'pier', 'Airport pier'));
     // airliners docked at the pier, noses toward the runway
     const gates = 3;
     for (let i = 0; i < gates; i++) {
       const pl = makeAirliner(); pl.scale.setScalar(AIRPORT.planeScale);
       pl.position.set((AIRPORT.pierOff - 9) * SIDE, 0, apCz - apHL * 0.5 + i * (apHL / (gates - 1)));
-      pl.rotation.y = faceApron; g.add(pl);
+      pl.rotation.y = faceApron; g.add(mover(pl));
     }
     // --- terminal rotated 90°: the control tower (tallest part) points at the apron,
     //     the slab + concourse run inland ---
     const term = makeTerminal(); term.scale.setScalar(sc);
-    term.position.set(AIRPORT.termOff * SIDE, 0, apCz); term.rotation.y = SIDE < 0 ? Math.PI : 0; g.add(term);
+    term.position.set(AIRPORT.termOff * SIDE, 0, apCz); term.rotation.y = SIDE < 0 ? Math.PI : 0; g.add(part(term, 'terminal', 'Airport terminal'));
     // --- car park inline on the terminal's left side (−Z) ---
     const carZ = apCz - 12;
     slab(16, 11, 0x53565c, AIRPORT.carparkOff, carZ, 0.12);                                   // tarmac lot
@@ -974,18 +982,18 @@ export class Scene3D {
     const beside = makeSawtoothShed(10, 5.5, 18, 3); beside.scale.setScalar(sc); // saw-tooth workshop beside (L-shape)
     beside.position.set(-12, 0, -3); hg.add(beside);
     const behind = makeAirBlock(22, 6, 9); behind.scale.setScalar(sc);   // freight/works block, ACROSS the road from the hangars
-    behind.position.set(66 * SIDE, 0, -93); behind.rotation.y = faceApron; g.add(behind);
+    behind.position.set(66 * SIDE, 0, -93); behind.rotation.y = faceApron; g.add(part(behind, 'freight', 'Freight block'));
     // apron + a couple of aircraft parked outside the hangars
     const ha = new THREE.Mesh(new THREE.BoxGeometry(30, 0.24, 12), toon(0xb9b4a6));
     ha.position.set(0, 0.12, 13); ha.receiveShadow = true; hg.add(ha);
     for (const px of [-8, 8]) {
       const pl = makeAirliner(); pl.scale.setScalar(AIRPORT.planeScale);
-      pl.position.set(px, 0, 14); pl.rotation.y = 0; hg.add(pl);
+      pl.position.set(px, 0, 14); pl.rotation.y = 0; hg.add(mover(pl));
     }
-    g.add(hg);
+    g.add(part(hg, 'hangars', 'Airport hangars'));
     // --- on the terminal's far (+Z) side, past an open space: a long low wide hall ---
     const hall = makeLowHall(34, 5, 14); hall.scale.setScalar(sc);
-    hall.position.set(24 * SIDE, 0, apCz + 12); hall.rotation.y = faceApron; g.add(hall);
+    hall.position.set(24 * SIDE, 0, apCz + 12); hall.rotation.y = faceApron; g.add(part(hall, 'hall', 'Terminal hall'));
 
     // --- service road running in front of the buildings, linked through to the hangars ---
     const roadX = 16, roadZ0 = apCz + 28, roadZ1 = carZ - 24;
@@ -997,13 +1005,14 @@ export class Scene3D {
     // an aircraft parked on its own apron beside the low hall
     slab(11, 12, 0xb9b4a6, 14, apCz + 12, 0.12);
     const plHall = makeAirliner(); plHall.scale.setScalar(AIRPORT.planeScale);
-    plHall.position.set(14 * SIDE, 0, apCz + 12); plHall.rotation.y = faceApron; g.add(plHall);
+    plHall.position.set(14 * SIDE, 0, apCz + 12); plHall.rotation.y = faceApron; g.add(mover(plHall));
     } // end procedural cluster
 
     if (handPlaced) {
       this._placeStructures(AIRPORT.buildings, 'airportBuildings');
-      // sit each building on the (now-flattened) airfield ground rather than y=0
-      for (const m of this.airportBuildings.children) m.position.y = this._meshY(m.position.x, m.position.z);
+      // sit each building on the (now-flattened) airfield ground rather than y=0, and
+      // make each hand-placed structure individually demolishable
+      this.airportBuildings.children.forEach((m, i) => { m.position.y = this._meshY(m.position.x, m.position.z); part(m, `b${i}`, 'Airport building'); });
     }
 
     // --- footprint mask (unbuildable) ---
@@ -1517,7 +1526,7 @@ export class Scene3D {
     const g = this.airportGroup;
     if (!g) return;
     if (this._airPlaneGroup && this._airPlaneGroup.parent) this._airPlaneGroup.parent.remove(this._airPlaneGroup);
-    const grp = new THREE.Group(); g.add(grp); this._airPlaneGroup = grp;   // ride in the airport's scaled/rotated local frame
+    const grp = new THREE.Group(); grp.userData._mover = true; g.add(grp); this._airPlaneGroup = grp;   // ride in the airport's scaled/rotated local frame (excluded from teardown bounds)
 
     // runway geometry in the LOCAL airport frame (+Z = runway long axis, +X*SIDE = terminal side)
     const nw = (p) => ({ x: (p.x - 0.5) * WORLD, z: (0.5 - p.y) * WORLD });
@@ -1793,7 +1802,7 @@ export class Scene3D {
           const g = this._groundPoint(p);
           const pick = this.pickDemo(p);
           const cell = (pick && pick.x != null) ? { x: pick.x, y: pick.y } : (g ? this._cellOfWorld(g) : null);
-          const landmark = (pick && pick.kind === 'landmark') ? pick : null;
+          const landmark = (pick && pick.x == null) ? pick : null;   // cell-less pick: a landmark or an airport building
           if (this.onTileTap) this.onTileTap(cell ? cell.x : -1, cell ? cell.y : -1, g, landmark);
         } else {
           const g = this._groundPoint(p);
@@ -1966,6 +1975,7 @@ export class Scene3D {
         if (d) {
           if (d.kind === 'heritage') { const pl = d.placement; const c = (pl.cells && pl.cells.length) ? pl.cells[0] : [pl.gx, pl.gy]; return { kind: 'heritage', x: c[0], y: c[1] }; }
           if (d.kind === 'landmark') return { kind: 'landmark', id: d.id, label: d.label };
+          if (d.kind === 'airportPart') return { kind: 'airportPart', part: d.part, label: d.label };
           return { kind: d.kind, x: d.x, y: d.y };
         }
         o = o.parent;
@@ -2289,7 +2299,7 @@ export class Scene3D {
       const pick = this.pickDemo(p);
       if (pick && pick.x != null) cell = { x: pick.x, y: pick.y };   // the object's cell, not the ground behind it
       this.hoverCell = cell; this.hoverWorld = g;
-      if (this.onDemolishHover) this.onDemolishHover(cell, g, (pick && pick.kind === 'landmark') ? pick : null);
+      if (this.onDemolishHover) this.onDemolishHover(cell, g, (pick && pick.x == null) ? pick : null);   // forward cell-less picks (landmark / airport part)
       return;
     }
     this.hoverCell = cell; this.hoverWorld = g;
@@ -2359,6 +2369,7 @@ export class Scene3D {
     else if (t.kind === 'heritage') { const m = this._heritageMeshAt(t.x, t.y); if (m) this._tintObjectRed(m, true); else this._demoTile(t.key, t.x, t.y, true); }
     else if (t.kind === 'tree') this._tintObjectRed(this.natureCells && this.natureCells.get(`${t.x},${t.y}`), true);
     else if (t.kind === 'landmark') this._tintObjectRed(this._landmarkGroup(t.id), true);
+    else if (t.kind === 'airportPart') this._tintObjectRed(this._airportPartByKey(t.part), true);
     else this._demoRibbon(t.key, t.poly, true);   // road cut / rail / runway ribbon
   }
   _demoUnshow(t) {
@@ -2366,6 +2377,7 @@ export class Scene3D {
     else if (t.kind === 'heritage') { const m = this._heritageMeshAt(t.x, t.y); if (m) this._tintObjectRed(m, false); else this._demoTile(t.key, null, null, false); }
     else if (t.kind === 'tree') this._tintObjectRed(this.natureCells && this.natureCells.get(`${t.x},${t.y}`), false);
     else if (t.kind === 'landmark') this._tintObjectRed(this._landmarkGroup(t.id), false);
+    else if (t.kind === 'airportPart') this._tintObjectRed(this._airportPartByKey(t.part), false);
     else this._demoRibbon(t.key, null, false);
   }
   // The pickable group for a placed building OR one still under construction (so both tint red).
@@ -2430,6 +2442,47 @@ export class Scene3D {
   // Advance the visible teardown of buildings (red + shrinking with progress) and
   // pop them when the engine finishes the demolition; rebuild infra once when the
   // engine removes a demolished road / rail / runway.
+  // Is this object (or an ancestor) a flagged MOVER — a taxiing/flying aircraft —
+  // that should be excluded from a static teardown bounding box?
+  _isMover(o) { let n = o; while (n) { if (n.userData && n.userData._mover) return true; n = n.parent; } return false; }
+  // World AABB of a group over its STATIC meshes only (moving aircraft excluded) —
+  // so the airport barrier sits on the runway/terminal, not chasing a plane aloft.
+  _boxOfStatic(g) {
+    const box = new THREE.Box3(); box.makeEmpty();
+    const tmp = new THREE.Box3();
+    g.updateMatrixWorld(true);
+    let any = false;
+    g.traverse((o) => { if (o.isMesh && o.geometry && !this._isMover(o)) { tmp.setFromObject(o); if (isFinite(tmp.min.x)) { box.union(tmp); any = true; } } });
+    if (!any) box.setFromObject(g);   // fallback (nothing static found)
+    return box;
+  }
+  // The airport building sub-object registered under a stable key (terminal, pier…).
+  _airportPartByKey(key) { const p = (this.airportParts || []).find((q) => q.key === key); return p ? p.obj : null; }
+  // Tear an airport BUILDING off the complex for good: pull the mesh, free the grid
+  // cells under its footprint so the player can build there, and remember it removed.
+  removeAirportPart(key) {
+    const obj = this._airportPartByKey(key); if (!obj) return false;
+    const box = this._boxOfStatic(obj);
+    if (obj.parent) obj.parent.remove(obj);
+    this.airportParts = (this.airportParts || []).filter((q) => q.key !== key);
+    if (this.state) (this.state.removedAirportParts || (this.state.removedAirportParts = {}))[key] = 1;
+    // free the footprint cells (inside the airport mask) so the cleared ground is buildable
+    if (this.airportMask && isFinite(box.min.x)) {
+      for (let y = 0; y < this.land.length; y++) for (let x = 0; x < this.land.length; x++) {
+        if (!this.airportMask[y][x]) continue;
+        const w = cellToWorld(x, y);
+        if (w.x >= box.min.x - 2 && w.x <= box.max.x + 2 && w.z >= box.min.z - 2 && w.z <= box.max.z + 2) this.airportMask[y][x] = false;
+      }
+    }
+    const c = box.isEmpty() ? { x: obj.position.x, z: obj.position.z } : { x: (box.min.x + box.max.x) / 2, z: (box.min.z + box.max.z) / 2 };
+    this._spawnDust(c.x, c.z, 0xbfb09a, 22);
+    return true;
+  }
+  // Re-apply removed airport parts after the complex is (re)built from a save.
+  _applyRemovedAirportParts(state) {
+    const rm = (state && state.removedAirportParts) || {};
+    for (const key of Object.keys(rm)) this.removeAirportPart(key);
+  }
   // The 3D mesh a demolish timer is tearing down: a player building (in
   // this.buildings) OR a prebuilt heritage house (in the heritage group). Both get
   // a hoarding + wrecking crane so a slow teardown READS as a job in progress.
@@ -2468,7 +2521,8 @@ export class Scene3D {
     // a landmark, a light barrier for a tree) and crumble the mesh down.
     for (const d of (state.demoVisual || [])) {
       const vid = `dv:${d.kind}:${d.id != null ? d.id : d.x + ',' + d.y}`; active.add(vid);
-      const group = d.kind === 'tree' ? (this.natureCells && this.natureCells.get(`${d.x},${d.y}`)) : this._landmarkGroup(d.id);
+      const group = d.kind === 'tree' ? (this.natureCells && this.natureCells.get(`${d.x},${d.y}`))
+        : d.kind === 'airportPart' ? this._airportPartByKey(d.id) : this._landmarkGroup(d.id);
       if (group && group.visible) {
         if (!this._demoSites || !this._demoSites.has(vid)) this._startDemoSite(vid, d.x, d.y, group, d.kind === 'tree');
         const p = Math.max(0.04, d.left / Math.max(1, d.total));
@@ -2486,6 +2540,7 @@ export class Scene3D {
       if (meta.visual) {                          // finished tree / landmark teardown
         const d = meta.visual;
         if (d.kind === 'tree') { if (this.removeTreeAt) this.removeTreeAt(d.x, d.y); }
+        else if (d.kind === 'airportPart') { if (this.removeAirportPart) this.removeAirportPart(d.id); }
         else if (d.kind === 'landmark') { if (this.removeLandmark) this.removeLandmark(d.id); }
         continue;
       }
@@ -2878,7 +2933,7 @@ export class Scene3D {
     return g;
   }
   // ---- external API (mirrors the 2D view) ----------------------------------
-  setState(state) { this.state = state; this._loadRemovedTrees(state); this._applyRemovedLandmarks(state); this.rebuildRoadNet(); this._relocateHeritageOffRoads(); this.applyHeritageToGrid(state); this._syncReclaimed(); this.syncAll(); this._buildPlayerRailways(state); this._buildPlayerAirstrips(state); this.syncRoadworks(state); this._buildPlayerPlants(state); this._syncSurfaces(state); this.refreshFoundationCarves(); }
+  setState(state) { this.state = state; this._loadRemovedTrees(state); this._applyRemovedLandmarks(state); this._applyRemovedAirportParts(state); this.rebuildRoadNet(); this._relocateHeritageOffRoads(); this.applyHeritageToGrid(state); this._syncReclaimed(); this.syncAll(); this._buildPlayerRailways(state); this._buildPlayerAirstrips(state); this.syncRoadworks(state); this._buildPlayerPlants(state); this._syncSurfaces(state); this.refreshFoundationCarves(); }
   // Restore which ambient trees the player has bulldozed (so they stay gone across saves).
   _loadRemovedTrees(state) { this._removedTrees = new Set(Object.keys((state && state.removedTrees) || {})); }
   setShortages(s) { this.shortages = s; }
@@ -3098,8 +3153,8 @@ export class Scene3D {
     if (!this._demoSites) this._demoSites = new Map();
     if (this._demoSites.has(id)) return;
     const g = group || (this.buildings.get(id) || {}).group; if (!g) return;
-    const box = new THREE.Box3().setFromObject(g);
-    if (!isFinite(box.min.y) || !isFinite(box.max.y)) return;
+    const box = this._boxOfStatic(g);   // exclude moving parts (e.g. taxiing/flying aircraft) from the barrier bounds
+    if (!isFinite(box.min.y) || !isFinite(box.max.y) || box.isEmpty()) return;
     const rcell = (x != null && y != null) ? this.state?.grid?.[y]?.[x] : null;
     const baseY = (rcell && typeof rcell.fy === 'number') ? rcell.fy
       : (x != null && y != null && this.terrainHeight ? this.terrainHeight(x, y) : box.min.y);

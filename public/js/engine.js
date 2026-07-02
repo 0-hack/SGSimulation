@@ -95,6 +95,7 @@ export function newGame({ name = 'New Singapore', owner = 'Anonymous' } = {}) {
     surfaces: {},             // painted ground surfaces, sparse: "x,y" -> surface type (cosmetic only)
     removedTrees: {},         // ambient trees the player bulldozed, sparse: "x,y" -> 1 (so clearings persist)
     removedLandmarks: {},     // fixed landmarks the player demolished, sparse: id -> 1 (e.g. "airport")
+    removedAirportParts: {},  // individual airport buildings the player tore down, sparse: key -> 1
     landmarks: [],            // 3D-designed landmarks saved into THIS world (per-player; for build menu + visitors)
     projects: [],             // active guided national projects the player is building toward
     projectsDone: [],         // ids of completed national projects
@@ -191,6 +192,7 @@ export function ensureGrid(state) {
   if (!state.surfaces || typeof state.surfaces !== 'object') state.surfaces = {};
   if (!state.removedTrees || typeof state.removedTrees !== 'object') state.removedTrees = {};
   if (!state.removedLandmarks || typeof state.removedLandmarks !== 'object') state.removedLandmarks = {};
+  if (!state.removedAirportParts || typeof state.removedAirportParts !== 'object') state.removedAirportParts = {};
   if (!state.economy) state.economy = { inflation: 0.02, priceIndex: 1, currency: 1 };
   // Rebuild the active-construction & demolition lists from the grid (robust across saves).
   state.constructing = [];
@@ -312,9 +314,12 @@ export function queueDemolish(state, items) {
 export function queueDemoVisual(state, item) {
   if (!item) return 0;
   if (!Array.isArray(state.demoVisual)) state.demoVisual = [];
-  const days = item.kind === 'tree' ? 6 : 150;
-  const key = item.kind === 'landmark' ? `L:${item.id}` : `${item.x},${item.y}`;
-  if (state.demoVisual.some((d) => (d.kind === 'landmark' ? `L:${d.id}` : `${d.x},${d.y}`) === key)) return 0; // already coming down
+  const days = item.kind === 'tree' ? 6 : item.kind === 'airportPart' ? 45 : 150;
+  // one dedup key derivation for both the new item and existing entries, so a
+  // landmark / airport building already coming down isn't queued a second time
+  const dkey = (d) => (d.kind === 'landmark' || d.kind === 'airportPart') ? `L:${d.kind}:${d.id}` : `${d.x},${d.y}`;
+  const key = dkey(item);
+  if (state.demoVisual.some((d) => dkey(d) === key)) return 0; // already coming down
   state.demoVisual.push({ kind: item.kind, x: item.x, y: item.y, id: item.id, total: days, left: days });
   state.treasury -= item.kind === 'tree' ? 1 : 8;
   return days;

@@ -309,6 +309,36 @@ try {
   });
   ok(dmPick.found && dmPick.pickedRight, 'pointing at a building body picks the BUILDING (true 3D mesh pick, any angle)');
 
+  // (6a) demolish just ONE airport building (not the whole complex), with its
+  // hoarding sitting ON the building (not chasing a taxiing/flying aircraft).
+  const dmAP = await p.evaluate(() => {
+    const v = window.__sgview, S = window.__sg;
+    if (!(v.airportParts && v.airportParts.length)) return { found: false };
+    const nParts = v.airportParts.length;
+    const key = v.airportParts[0].key;
+    const box = v._boxOfStatic(v._airportPartByKey(key));
+    const pc = { x: (box.min.x + box.max.x) / 2, z: (box.min.z + box.max.z) / 2 };
+    S.setBulldoze(true);
+    S.onTileTap(-1, -1, { x: pc.x, z: pc.z }, { kind: 'airportPart', part: key, label: 'Airport building' });
+    const sel = S.demoSel.size === 1;
+    S.commitDemolish();
+    const dv = (v.state.demoVisual || []).find((d) => d.kind === 'airportPart' && d.id === key);
+    const timed = !!dv, total = dv ? dv.total : 0;
+    v.syncDemolition(v.state);
+    const site = v._demoSites && v._demoSites.get(`dv:airportPart:${key}`);
+    const barrierOnPart = site ? Math.hypot(site.group.position.x - pc.x, site.group.position.z - pc.z) < 4 : false;
+    const standingAfter = !!v._airportPartByKey(key);
+    if (total) S.tick(total + 3);
+    const gone = !v._airportPartByKey(key);
+    const airportStays = !!(v.airportGroup && v.airportGroup.visible) && v.airportParts.length === nParts - 1;
+    const persisted = !!(v.state.removedAirportParts && v.state.removedAirportParts[key]);
+    S.setBulldoze(false);
+    return { found: true, nParts, sel, timed, total, barrierOnPart, standingAfter, gone, airportStays, persisted };
+  });
+  ok(dmAP.found && dmAP.nParts >= 2 && dmAP.sel && dmAP.timed, `the airport is several demolishable buildings (${dmAP.nParts}); one can be selected & torn down on its own timer`);
+  ok(dmAP.barrierOnPart && dmAP.standingAfter, 'its hoarding sits ON the building (not chasing an aircraft) and it stands until the teardown finishes');
+  ok(dmAP.gone && dmAP.airportStays && dmAP.persisted, 'only that building is removed — the rest of the airport remains — and it stays gone on reload');
+
   // (6) AIRPORT (fixed landmark): selectable, demolished on Done, land freed, persisted
   const dmAir = await p.evaluate(() => {
     const v = window.__sgview, S = window.__sg, N = v.land.length;

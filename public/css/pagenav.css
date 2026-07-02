@@ -1,0 +1,25 @@
+/* Shared page-switcher — ONE consistent navigation component across the game,
+   the Map Tracer and the 3D Designer, so moving between the three reads and
+   behaves the same everywhere (not ad-hoc text links per page). Rendered by
+   /js/pagenav.js into a #page-nav mount; the current page shows as active. */
+.pagenav {
+  display: inline-flex; gap: 3px; padding: 4px; border-radius: 999px;
+  background: rgba(22, 25, 30, 0.9); border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.28); backdrop-filter: blur(8px);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif; vertical-align: middle;
+}
+.pagenav-item {
+  display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px;
+  border-radius: 999px; text-decoration: none; color: #cdd3da; font-weight: 700;
+  font-size: 13px; line-height: 1; white-space: nowrap; border: none; background: none;
+  cursor: pointer; transition: background .15s ease, color .15s ease;
+}
+a.pagenav-item:hover { background: rgba(255, 255, 255, 0.1); color: #fff; }
+.pagenav-item.is-active { background: #fff; color: #16181c; cursor: default; }
+.pagenav-ico { font-size: 15px; }
+/* fixed top-centre bar on the full-screen tool pages (tracer / designer) */
+.pagenav.pagenav-fixed { position: fixed; top: 10px; left: 50%; transform: translateX(-50%); z-index: 3000; }
+@media (max-width: 560px) {
+  .pagenav-lbl { display: none; }
+  .pagenav-item { padding: 8px 11px; }
+}

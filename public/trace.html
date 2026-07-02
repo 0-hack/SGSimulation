@@ -31,6 +31,7 @@
   #stat b { color: #fff; }
   canvas { display: block; position: fixed; inset: 0; touch-action: none; cursor: crosshair; }
 </style>
+<link rel="stylesheet" href="/css/pagenav.css" />
 </head>
 <body>
 <div id="bar">
@@ -54,9 +55,8 @@
     <input id="brot" type="range" min="-180" max="180" value="0">
     <input id="bhgt" type="range" min="3" max="40" value="10">
   </div>
-  <div class="grp" title="Jump between the map tracer, the 3D designer and the game">
-    <a class="btn" href="/" style="text-decoration:none" title="Back to the game">🎮 Game</a>
-    <a class="btn" href="/design.html" style="text-decoration:none" title="Design buildings &amp; landmarks in 3D">🏗 3D Designer</a>
+  <div class="grp" style="border-right:none" title="Switch between the game and the creator tools">
+    <div id="page-nav"></div>
   </div>
   <div class="grp" id="vis" title="Show / hide layers"><small>show</small></div>
   <div class="grp"><span><small>map</small> <input id="opacity" type="range" min="0" max="100" value="55"></span></div>
@@ -596,5 +596,6 @@ fetch('/trace-data.json').then(r => r.json()).then(d => {
   bgImg.onload = boot; bgImg.onerror = () => { $('hint').textContent = 'Could not load /trace-map.jpg'; boot(); };
 }).catch(err => { $('hint').textContent = 'Could not load /trace-data.json — ' + err.message; });
 </script>
+<script type="module" src="/js/pagenav.js"></script>
 </body>
 </html>

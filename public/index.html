@@ -7,6 +7,7 @@
   <title>Singapore Nation Builder</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🇸🇬</text></svg>" />
   <link rel="stylesheet" href="/css/style.css" />
+  <link rel="stylesheet" href="/css/pagenav.css" />
 </head>
 <body>
 
@@ -31,7 +32,8 @@
       <button id="btn-browse" class="btn ghost big"><span class="bi" data-icon="globe"></span>Visit Other Nations</button>
 
       <p class="version">A society simulation · save &amp; share on the cloud</p>
-      <p class="creator-tools">Creator tools: <a href="/trace.html">🗺 Map Tracer</a> · <a href="/design.html">🏗 3D Designer</a></p>
+      <p class="creator-tools">Creator tools</p>
+      <div id="page-nav"></div>
     </div>
   </div>
 
@@ -143,6 +145,7 @@
     <div id="dc-actions" class="dc-actions"><button id="dc-build" class="dc-build">Build</button></div>
   </div>
 
+  <script type="module" src="/js/pagenav.js"></script>
   <script type="module" src="/js/main.js"></script>
 </body>
 </html>

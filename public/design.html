@@ -31,10 +31,12 @@
   #toast { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); background: #2ecc71; color: #052915; padding: 8px 14px; border-radius: 8px; font-weight: 700; opacity: 0; transition: opacity .4s; pointer-events: none; }
   #hud { position: absolute; top: 8px; left: 8px; background: #000a; padding: 5px 9px; border-radius: 7px; font-size: 12px; }
 </style>
+<link rel="stylesheet" href="/css/pagenav.css" />
 </head>
 <body>
 <div id="wrap">
   <div id="side">
+    <div id="page-nav" style="margin-bottom:10px"></div>
     <h2>🏗 Building / Landmark Designer</h2>
     <input id="name" type="text" placeholder="Name (e.g. City Hall)" value="New Landmark">
 
@@ -80,7 +82,7 @@
       <label class="btn">📂 Load<input id="load" type="file" accept="application/json" hidden></label>
     </div>
     <div class="row"><button id="newd">＋ New design</button> <button id="manage">📋 Placed…</button></div>
-    <small>Saved to <b>your</b> landmarks (this browser) — build them from the game's Build ▸ Landmarks. <b>⬇ JSON</b> exports a design to share; <b>📂 Load</b> imports one. <a href="/">🎮 Game</a> · <a href="/trace.html">🗺 Tracer</a></small>
+    <small>Saved to <b>your</b> landmarks (this browser) — build them from the game's Build ▸ Landmarks. <b>⬇ JSON</b> exports a design to share; <b>📂 Load</b> imports one.</small>
   </div>
   <div id="view">
     <canvas id="c"></canvas>
@@ -256,5 +258,6 @@ $('manage').onclick = () => {
 
 addPart('box'); resize(); $('hud').textContent = 'ready · ' + parts.length + ' part(s) · drag orbit, wheel zoom, right-drag pan, click to select';
 </script>
+<script type="module" src="/js/pagenav.js"></script>
 </body>
 </html>

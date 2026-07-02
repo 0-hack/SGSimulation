@@ -6356,6 +6356,62 @@ export function makeBuilding(key, theme) {
       g.add(tower(2.4, 7, 2.4, 'office', 2.4, -1, { color: 0x4a5b8a }));
       g.add(cyl(0.5, 0.5, 0.8, 0x2a44dd, -1.5, 4.4, 1.8));
     }
+  } else if (cat === 'heritage') {
+    // Historic 1950s–60s central-area landmarks — stylised low-poly of the real
+    // exteriors, sized (~9 units) to sit among the old town.
+    if (key === 'raffles_hotel') {
+      lawn(g, 9.4, 9.4, 0x6fae5a);
+      g.add(partBox(8.4, 5.4, 5, mat(0xf3ede0), 0, 2.7, 0));                       // long cream colonial wing, 3 storeys
+      for (let fy = 1.5; fy <= 4.4; fy += 1.45)
+        for (let fx = -3.4; fx <= 3.4; fx += 1.13) g.add(partBox(0.5, 0.9, 0.1, mat(0x2f5d43), fx, fy, 2.56)); // green shuttered windows
+      g.add(partBox(9, 0.7, 5.8, mat(0x9c5636), 0, 5.75, 0));                      // hipped terracotta roof
+      g.add(partBox(9.4, 0.35, 0.4, mat(0xf3ede0), 0, 1.9, 2.95));                 // verandah fascia
+      for (let cx = -3.8; cx <= 3.8; cx += 1.27) g.add(cyl(0.11, 0.11, 1.85, 0xf7f2e6, cx, 0.95, 3.0)); // colonnade columns
+      g.add(partBox(2.2, 0.7, 0.25, mat(0x24503a), 0, 4.1, 3.05));                 // dark green name board
+    } else if (key === 'fullerton') {
+      lawn(g, 9.4, 9.4, 0x86a6a0);
+      g.add(partBox(9, 6.2, 6.4, mat(0xc7c3b6), 0, 3.1, 0));                       // grey neoclassical mass
+      for (let cx = -3.6; cx <= 3.6; cx += 1.03) g.add(cyl(0.33, 0.33, 5.0, 0xdedbce, cx, 2.6, 3.35)); // Doric colonnade
+      g.add(partBox(9, 0.7, 0.9, mat(0xbcb8ab), 0, 5.4, 3.35));                    // entablature over the columns
+      g.add(partBox(9.3, 0.8, 6.8, mat(0xb4b0a3), 0, 6.4, 0));                     // cornice / roof slab
+      g.add(partBox(3.4, 1.3, 1.2, mat(0xcfccbf), 0, 7.05, 0));                    // low central pediment block
+    } else if (key === 'victoria_theatre') {
+      lawn(g, 9.4, 9.4, 0x86a6a0);
+      g.add(partBox(8.6, 4.6, 5, mat(0xe9e2d2), 0, 2.3, 0));                       // pale colonial hall
+      g.add(partBox(8.8, 0.55, 5.4, mat(0x8a4636), 0, 4.75, 0));                   // roof band
+      for (let fx = -3.4; fx <= 3.4; fx += 1.13) g.add(partBox(0.5, 1.7, 0.12, mat(0x9c8f75), fx, 2.2, 2.56)); // tall arched windows
+      g.add(partBox(1.7, 8.6, 1.7, mat(0xe9e2d2), 0, 4.3, 0));                     // central clock tower shaft
+      g.add(partBox(1.85, 1.85, 0.12, mat(0xf7f2e6), 0, 7.9, 0.9));                // clock face
+      g.add(partBox(0.85, 0.85, 0.06, mat(0x2b2b2b), 0, 7.9, 0.97));               // clock dial
+      const spire = new THREE.Mesh(new THREE.ConeGeometry(1.2, 2.2, 4), toon(0x5a6b6a)); spire.position.y = 9.9; spire.rotation.y = Math.PI / 4; g.add(spire);
+    } else if (key === 'sri_mariamman') {
+      lawn(g, 9.4, 9.4, 0x86a6a0);
+      g.add(partBox(8.6, 3.0, 8, mat(0xf0e9d8), 0, 1.5, 0));                       // walled temple compound
+      const tiers = [[3.6, 2.6], [3.0, 2.9], [2.4, 3.2], [1.8, 3.5], [1.2, 3.75]];  // colourful TIERED gopuram over the gateway
+      const cols = [0xe0533a, 0xf3c41a, 0x2e9e5b, 0xe0533a, 0xf3c41a];
+      tiers.forEach((t, i) => g.add(partBox(t[0], 1.15, t[0] * 0.42, mat(cols[i]), 0, t[1], 3.4)));
+      const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.9, 0.7, 12), toon(0xf3c41a)); cap.position.set(0, 4.6, 3.4); g.add(cap);
+      g.add(partBox(1.9, 2.1, 0.3, mat(0x8a3b2a), 0, 1.05, 4.0));                  // temple doorway
+    } else if (key === 'sultan_mosque') {
+      lawn(g, 9.4, 9.4, 0x86a6a0);
+      g.add(partBox(8, 4.2, 8, mat(0xe6d3a3), 0, 2.1, 0));                         // sandstone prayer hall
+      const dome = new THREE.Mesh(new THREE.SphereGeometry(2.5, 20, 14, 0, Math.PI * 2, 0, Math.PI * 0.55), toon(0xe0b23f)); dome.position.y = 4.0; g.add(dome); // golden dome
+      const finial = new THREE.Mesh(new THREE.SphereGeometry(0.38, 10, 8), toon(0xe0b23f)); finial.position.y = 6.5; g.add(finial);
+      for (const [mx, mz] of [[-3.6, -3.6], [3.6, -3.6], [-3.6, 3.6], [3.6, 3.6]]) {  // corner minarets
+        g.add(cyl(0.35, 0.4, 6.4, 0xefe0bf, mx, 3.2, mz));
+        const mc = new THREE.Mesh(new THREE.SphereGeometry(0.5, 10, 8, 0, Math.PI * 2, 0, Math.PI * 0.6), toon(0xe0b23f)); mc.position.set(mx, 6.5, mz); g.add(mc);
+      }
+    } else if (key === 'lau_pa_sat') {
+      lawn(g, 9.4, 9.4, 0x9fb0a8);
+      const hall = new THREE.Mesh(new THREE.CylinderGeometry(4.2, 4.2, 3.4, 8), toon(0xb7bcbf)); hall.position.y = 1.7; g.add(hall);   // octagonal cast-iron market
+      const roof = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 4.6, 1.6, 8), toon(0xd8d2c2)); roof.position.y = 4.2; g.add(roof);   // low octagonal roof
+      for (let a = 0; a < 8; a++) { const an = a / 8 * Math.PI * 2; g.add(cyl(0.14, 0.14, 3.4, 0x5a6066, Math.cos(an) * 4.0, 1.7, Math.sin(an) * 4.0)); } // iron columns
+      g.add(cyl(0.7, 0.9, 3.0, 0xcfc8b6, 0, 5.5, 0));                              // central clock tower
+      const spire2 = new THREE.Mesh(new THREE.ConeGeometry(0.9, 1.6, 8), toon(0x7a8085)); spire2.position.y = 7.8; g.add(spire2);
+    } else {
+      lawn(g, 9, 9, 0x86a6a0);
+      g.add(partBox(7, 4, 6, mat(col), 0, 2, 0));
+    }
   } else if (cat === 'green') {
     lawn(g, 9.4, 9.4, key === 'gardens' ? 0x4f9e3a : key === 'forest' ? 0x35702f : 0x66bd5a);
     if (key === 'forest') {

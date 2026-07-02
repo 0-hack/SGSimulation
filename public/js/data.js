@@ -50,6 +50,7 @@ export const CATEGORIES = [
   { id: 'plants', name: 'Plants', icon: '🌿' },
   { id: 'agriculture', name: 'Farms', icon: '🌾' },
   { id: 'leisure', name: 'Coast & Leisure', icon: '⛱️' },
+  { id: 'heritage', name: 'Heritage', icon: '🏛️' },
   { id: 'roads', name: 'Transport', icon: '🛣️' },
   { id: 'land', name: 'Reclaim', icon: '🏝️' },
 ];
@@ -337,6 +338,41 @@ export const BUILDINGS = {
     desc: 'A compact 1965 three-aspect signal you can drop FREELY at any junction or crossing kerb (not grid-locked, so it can sit right at the roadside). Smoother, safer traffic.',
   },
 
+  // ---- Heritage: 1950s–60s central-area landmarks (Raffles, Chinatown, the civic
+  // district). Modelled close to the real exteriors; buildable & demolishable so a
+  // player can keep the old district or reshape it. Beloved landmarks — a happiness
+  // & tourism-income lift — and available from the start (they predate independence).
+  raffles_hotel: {
+    name: 'Raffles Hotel', cat: 'heritage', icon: '🏨', color: '#f0e8d6', year: 1887,
+    cost: 40, upkeep: 1.2, homes: 0, jobs: 120, power: -6, water: -6, pollution: 0, happiness: 9, income: 5,
+    desc: 'The grand colonial hotel (1887) — white verandahs, travellers’ palms and the Long Bar. A tourism draw and a symbol of old Singapore.',
+  },
+  fullerton: {
+    name: 'Fullerton Building', cat: 'heritage', icon: '🏛️', color: '#c7c3b6', year: 1928,
+    cost: 48, upkeep: 1.4, homes: 0, jobs: 180, power: -8, water: -5, pollution: 0, happiness: 7, income: 4,
+    desc: 'The 1928 General Post Office — a monumental Doric colonnade at the river mouth. Civic grandeur and a working landmark.',
+  },
+  victoria_theatre: {
+    name: 'Victoria Theatre', cat: 'heritage', icon: '🎭', color: '#e9e2d2', year: 1905,
+    cost: 34, upkeep: 1.0, homes: 0, jobs: 70, power: -5, water: -3, pollution: 0, happiness: 8, income: 3,
+    desc: 'The Victoria Theatre & Concert Hall with its clock tower — the stage of the civic district and its cultural life.',
+  },
+  sri_mariamman: {
+    name: 'Sri Mariamman Temple', cat: 'heritage', icon: '🛕', color: '#e0533a', year: 1843,
+    cost: 26, upkeep: 0.6, homes: 0, jobs: 20, power: -2, water: -2, pollution: 0, happiness: 10, income: 2,
+    desc: 'Singapore’s oldest Hindu temple in Chinatown — a brightly painted, tiered gopuram gateway. A place of faith and festival.',
+  },
+  sultan_mosque: {
+    name: 'Sultan Mosque', cat: 'heritage', icon: '🕌', color: '#e6d3a3', year: 1932,
+    cost: 30, upkeep: 0.7, homes: 0, jobs: 24, power: -3, water: -3, pollution: 0, happiness: 10, income: 2,
+    desc: 'The golden-domed mosque of Kampong Glam — the heart of the Malay-Muslim quarter and a landmark of the old town.',
+  },
+  lau_pa_sat: {
+    name: 'Lau Pa Sat', cat: 'heritage', icon: '🍢', color: '#b7bcbf', year: 1894,
+    cost: 22, upkeep: 0.8, homes: 0, jobs: 90, power: -4, water: -4, pollution: 1, happiness: 8, income: 3,
+    desc: 'The octagonal Telok Ayer cast-iron market — a bustling hawker hall under a Victorian filigree roof, with its own clock tower.',
+  },
+
   mall: {
     name: 'Shopping Mall', cat: 'industry', icon: '🛍️', color: '#d98fc0', customizable: true,
     cost: 240, upkeep: 4.5, year: 1971, homes: 0, jobs: 5000,
@@ -584,6 +620,8 @@ export const BUILD_MONTHS = {
   // Environment / leisure
   park: 4, community_garden: 2, forest: 3, gardens: 30, beach: 4, ferry_terminal: 15,
   marina: 18, cinema: 9, stadium: 24, hawker_centre: 6,
+  // Heritage landmarks — careful restoration-grade builds
+  raffles_hotel: 30, fullerton: 30, victoria_theatre: 20, sri_mariamman: 14, sultan_mosque: 16, lau_pa_sat: 14,
   // Farms
   market_garden: 2, poultry_farm: 2, fish_farm: 3, hydroponic_farm: 6, vertical_farm: 12,
 };

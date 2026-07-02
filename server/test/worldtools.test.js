@@ -411,6 +411,31 @@ try {
   ok(hi.shown && hi.hasName && hi.txtLen > 20, 'hovering a building in Demolish mode shows what it is (name + what it does)');
   ok(hi.gone, 'the building info clears when you leave Demolish mode');
 
+  // ---- HOVER shows TIME LEFT on anything under construction / demolition ------
+  const prg = await p.evaluate(async () => {
+    const v = window.__sgview, S = window.__sg, N = v.land.length;
+    const clear = (x, y) => v.isLand(x, y) && !v.buildings.has(`${x},${y}`) && !v.isRoadAt(x, y) && !v.state.grid[y][x] && !(v.heritageLabelAt && v.heritageLabelAt(x, y));
+    let cy = Math.round(N * 0.52), cx = -1;
+    for (let x = Math.round(N * 0.44); x < N * 0.6; x++) if (clear(x, cy)) { cx = x; break; }
+    if (cx < 0) return { found: false };
+    S.selectBuilding('hospital'); S.onTileTap(cx, cy, v.worldOfCell(cx, cy)); S.commitAdjust();  // a hospital ~3.5yr build
+    v.scene.updateMatrixWorld(true);
+    const at = v._progressAt(v.worldOfCell(cx, cy));
+    // simulate a hover directly over it (any tool mode)
+    const site = v.sites.get(`${cx},${cy}`) || v.buildings.get(`${cx},${cy}`);
+    const gy0 = site && site.group ? site.group.position.y : 0;
+    const w = v.worldOfCell(cx, cy);
+    const sp = v.worldToScreen(w.x, gy0 + 2, w.z); const rect = v.canvas.getBoundingClientRect();
+    v._updateProgressHover({ x: sp.x - rect.left, y: sp.y - rect.top });
+    await new Promise((r) => setTimeout(r, 20));
+    const card = document.querySelector('.hover-info');
+    const shown = !!(card && getComputedStyle(card).display !== 'none');
+    const txt = shown ? card.textContent : '';
+    return { found: true, kind: at && at.kind, left: at && at.left, total: at && at.total, shown, hasTime: /left/i.test(txt), hasBuild: /construction/i.test(txt), hasPct: /% done/.test(txt) };
+  });
+  ok(prg.found && prg.kind === 'build' && prg.left > 100, `hovering a site under construction reports the job + days left (${prg.left}/${prg.total})`);
+  ok(prg.shown && prg.hasTime && prg.hasBuild && prg.hasPct, 'a floating card shows "under construction · N% done · ~time left"');
+
   // ---- TRAINS: reduced line speeds + accel/braking ---------------------------
   const trn = await p.evaluate(() => {
     const v = window.__sgview, N = v.land.length, C = v.worldOfCell(Math.round(N * 0.5), Math.round(N * 0.5));

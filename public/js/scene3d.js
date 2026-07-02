@@ -201,7 +201,7 @@ const AIRPORT = {
 };
 
 export class Scene3D {
-  constructor(canvas, { onTileTap, onGroundTap, onDemolishHover, onDemolishStroke, onAdjustRotate, onDisaster, onFireHover } = {}) {
+  constructor(canvas, { onTileTap, onGroundTap, onDemolishHover, onDemolishStroke, onAdjustRotate, onDisaster, onFireHover, onProgressHover } = {}) {
     this.canvas = canvas;
     this.onTileTap = onTileTap;
     this.onGroundTap = onGroundTap;       // freeform road drawing taps
@@ -210,6 +210,7 @@ export class Scene3D {
     this.onAdjustRotate = onAdjustRotate;   // drag-rotated the pending building -> sync angle to UI
     this.onDisaster = onDisaster;           // a fire burned a building down -> apply the economic consequence
     this.onFireHover = onFireHover;         // cursor moved over a blaze -> explain WHY it's burning
+    this.onProgressHover = onProgressHover; // cursor over a work-in-progress -> show time left
     this.climate = { water: 1, heat: 0.3 }; // slow reservoir yield + heat load, fed to the engine each tick
     this.roadMode = false;
     this.edgePts = []; this.edgeLen = []; this.edgeMeta = []; this.edgeN1 = []; this.edgeN2 = []; this.edgeMid = []; this.navAdj = []; this.navNodes = [];
@@ -1806,7 +1807,7 @@ export class Scene3D {
     };
     c.addEventListener('pointerup', end);
     c.addEventListener('pointercancel', end);
-    c.addEventListener('pointerleave', () => { if (this.ghost) this.ghost.visible = false; this._hideHoverTile(); if (this._paintBrush) this._paintBrush.visible = false; if (this._fireHovered) { this._fireHovered = null; if (this.onFireHover) this.onFireHover(null); } if (this.bulldoze && this.onDemolishHover) this.onDemolishHover(null, null); if (this._demoDrawing) { this._demoDrawing = false; this._demoStroke = null; this._clearDemoStrokePreview(); } this.showDemoRoadHover([]); this._clearSnapMarker(); this._hideDrawCursor(); if (this.pieceMode) this.clearRoadPreview(); });
+    c.addEventListener('pointerleave', () => { if (this.ghost) this.ghost.visible = false; this._hideHoverTile(); if (this._paintBrush) this._paintBrush.visible = false; if (this._fireHovered) { this._fireHovered = null; if (this.onFireHover) this.onFireHover(null); } if (this._progHovered) { this._progHovered = false; if (this.onProgressHover) this.onProgressHover(null); } if (this.bulldoze && this.onDemolishHover) this.onDemolishHover(null, null); if (this._demoDrawing) { this._demoDrawing = false; this._demoStroke = null; this._clearDemoStrokePreview(); } this.showDemoRoadHover([]); this._clearSnapMarker(); this._hideDrawCursor(); if (this.pieceMode) this.clearRoadPreview(); });
     c.addEventListener('wheel', (e) => {
       e.preventDefault();
       this.cam.radius = THREE.MathUtils.clamp(this.cam.radius * (e.deltaY < 0 ? 0.92 : 1.08), this.MIN_R, this.MAX_R);
@@ -2258,6 +2259,7 @@ export class Scene3D {
 
   _hover(p) {
     this._updateFireHover(p);                             // "why is it burning?" — independent of the active tool
+    this._updateProgressHover(p);                         // "how long left to build / tear down / reclaim?" — any tool
     if (this.plantMode) {                                 // Plants tool: ghost specimen follows the cursor
       const g = this._raycastGround(p);
       if (g && this.plantGhost) { this.plantGhost.position.set(g.x, this._heightAt(g.x, g.z), g.z); this.plantGhost.visible = true; }
@@ -3807,6 +3809,86 @@ export class Scene3D {
     if (g) for (const f of this._fires) { const dx = f.x - g.x, dz = f.z - g.z, d = dx * dx + dz * dz; if (d < bestD) { bestD = d; best = f; } }
     if (best) { this._fireHovered = best; if (this.onFireHover) this.onFireHover(this._fireInfo(best)); }
     else if (this._fireHovered) { this._fireHovered = null; if (this.onFireHover) this.onFireHover(null); }
+  }
+  // Shortest distance from a world point to a polyline of {x,z} points.
+  _distToPoly(gx, gz, pts) {
+    if (!pts || pts.length < 1) return Infinity;
+    if (pts.length === 1) return Math.hypot(pts[0].x - gx, pts[0].z - gz);
+    let best = Infinity;
+    for (let i = 0; i + 1 < pts.length; i++) {
+      const a = pts[i], b = pts[i + 1], dx = b.x - a.x, dz = b.z - a.z, L2 = dx * dx + dz * dz || 1;
+      let t = ((gx - a.x) * dx + (gz - a.z) * dz) / L2; t = t < 0 ? 0 : t > 1 ? 1 : t;
+      const d = Math.hypot(a.x + dx * t - gx, a.z + dz * t - gz);
+      if (d < best) best = d;
+    }
+    return best;
+  }
+  _polyOf(e) {   // the {x,z} polyline of a road/rail/air entry (edge nodes or a traced poly)
+    if (e.poly && e.poly.length >= 2) return e.poly;
+    const n = this.state && this.state.roads && this.state.roads.nodes;
+    if (n && e.a != null && e.b != null && n[e.a] && n[e.b]) return [{ x: n[e.a].x, z: n[e.a].z }, { x: n[e.b].x, z: n[e.b].z }];
+    return null;
+  }
+  _pointInPoly(x, z, poly) {
+    if (!poly || poly.length < 3) return false;
+    let inside = false;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const xi = poly[i][0], zi = poly[i][1], xj = poly[j][0], zj = poly[j][1];
+      if (((zi > z) !== (zj > z)) && (x < (xj - xi) * (z - zi) / ((zj - zi) || 1e-9) + xi)) inside = !inside;
+    }
+    return inside;
+  }
+  // Any active construction / demolition / land-reclamation job at a world point,
+  // with its time left — buildings, trees, landmarks, roads/rail/runways and
+  // reclaimed land. Returns { kind:'build'|'demolish'|'reclaim', label, left, total }.
+  _progressAt(g) {
+    const st = this.state; if (!st || !g) return null;
+    // 1) a building on the hovered cell
+    const cell = this._cellOfWorld(g);
+    if (cell) {
+      const c = st.grid && st.grid[cell.y] && st.grid[cell.y][cell.x];
+      if (c) {
+        const name = c.name || (BUILDINGS[c.k] && BUILDINGS[c.k].name) || (c.heritage ? 'Old building' : 'Building');
+        if (c.build && c.build.left > 0) return { kind: 'build', label: name, left: c.build.left, total: c.build.total };
+        if (c.demolish) return { kind: 'demolish', label: name, left: c.demolish.left, total: c.demolish.total };
+      }
+    }
+    // 2) a tree or landmark coming down (no grid cell)
+    for (const d of (st.demoVisual || [])) {
+      let cx, cz, r;
+      if (d.kind === 'tree') { const w = cellToWorld(d.x, d.y); cx = w.x; cz = w.z; r = 2.6; }
+      else { const ctr = this._airportCenter; if (!ctr) continue; cx = ctr.cx; cz = ctr.cz; r = Math.max(30, (ctr.len || 40)); }
+      if ((cx - g.x) * (cx - g.x) + (cz - g.z) * (cz - g.z) < r * r) return { kind: 'demolish', label: d.kind === 'tree' ? 'Trees' : 'Landmark', left: d.left, total: d.total };
+    }
+    // 3) a road / railway / runway under construction
+    for (const w of (st.roadworks || [])) {
+      if (this._distToPoly(g.x, g.z, w.pts) < 3) {
+        const nm = w.kind === 'railway' ? 'Railway' : w.kind === 'airport' ? 'Runway' : w.mrt ? 'MRT line' : 'Road';
+        return { kind: 'build', label: nm, left: w.left, total: w.total };
+      }
+    }
+    // 4) a road / railway / runway being torn down
+    const demoEdges = (arr, nm) => { for (const e of (arr || [])) { if (e && e.demolish) { const pl = this._polyOf(e) || (e.length ? e : null); if (pl && this._distToPoly(g.x, g.z, pl) < 3) return { kind: 'demolish', label: nm, left: e.demolish.left, total: e.demolish.total }; } } return null; };
+    const re = (st.roads && demoEdges(st.roads.edges, 'Road')) || demoEdges(st.railways, 'Railway') || demoEdges(st.airstrips, 'Runway');
+    if (re) return re;
+    // 5) land reclamation (free-shaped areas + legacy per-cell)
+    for (const a of (st.reclaimAreas || [])) if (a && a.left > 0 && this._pointInPoly(g.x, g.z, a.poly)) return { kind: 'reclaim', label: 'Land reclamation', left: a.left, total: a.total };
+    if (cell) for (const r of (st.reclaiming || [])) if (r.x === cell.x && r.y === cell.y) return { kind: 'reclaim', label: 'Land reclamation', left: r.left, total: r.total };
+    return null;
+  }
+  // Progress hover — runs on every hover in any tool mode. Cheap early-out when
+  // nothing is under way; otherwise reports the job + time left under the cursor.
+  _updateProgressHover(p) {
+    const st = this.state;
+    const busy = st && ((st.constructing && st.constructing.length) || (st.demolishing && st.demolishing.length)
+      || (st.demoVisual && st.demoVisual.length) || (st.roadworks && st.roadworks.length)
+      || (st.reclaimAreas && st.reclaimAreas.length) || (st.reclaiming && st.reclaiming.length)
+      || (st.roads && st.roads.edges && st.roads.edges.some((e) => e && e.demolish)));
+    if (!busy) { if (this._progHovered) { this._progHovered = false; if (this.onProgressHover) this.onProgressHover(null); } return; }
+    const g = this._raycastGround(p);
+    const info = g ? this._progressAt(g) : null;
+    if (info) { this._progHovered = true; if (this.onProgressHover) this.onProgressHover(info); }
+    else if (this._progHovered) { this._progHovered = false; if (this.onProgressHover) this.onProgressHover(null); }
   }
   // A CPU-driven particle emitter (fire or smoke): each particle carries its own
   // age/lifetime/velocity/size so it lives, moves and dies individually — a real

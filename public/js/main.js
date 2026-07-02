@@ -246,7 +246,7 @@ function showGameShell(playing = true) {
   $('toolbar').classList.remove('hidden');
   if (!G.view) {
     try {
-      G.view = new Scene3D($('city'), { onTileTap: onTileTap, onGroundTap: onGroundTap, onDemolishHover: onDemolishHover, onDemolishStroke: onDemolishStroke, onAdjustRotate: onAdjustRotate, onDisaster: onDisaster, onFireHover: onFireHover });
+      G.view = new Scene3D($('city'), { onTileTap: onTileTap, onGroundTap: onGroundTap, onDemolishHover: onDemolishHover, onDemolishStroke: onDemolishStroke, onAdjustRotate: onAdjustRotate, onDisaster: onDisaster, onFireHover: onFireHover, onProgressHover: onProgressHover });
       window.__sgview = G.view; // exposed for debugging / disaster FX hooks
     } catch (err) {
       reportSceneError(err);
@@ -715,6 +715,27 @@ function fireInfoHtml(info) {
   return `<b>🔥 ${escapeHtml(info.kindLabel || 'Something')} on fire</b>${label}${why}${tip}`;
 }
 
+// The cursor is over a work-in-progress (a building/road/land being built, torn
+// down or reclaimed): show its progress and time LEFT. Defers to the fire card and,
+// in Demolish mode, to the demolish card (which shows the same line inline).
+let _progressHoverShown = false;
+function onProgressHover(info) {
+  if (G.build && G.build.bulldoze) { if (_progressHoverShown) { hideHoverInfo(); _progressHoverShown = false; } return; }
+  if (_fireHoverShown) { if (_progressHoverShown) { hideHoverInfo(); _progressHoverShown = false; } return; }  // fire card wins
+  if (info) { showHoverInfo(progressInfoHtml(info)); _progressHoverShown = true; }
+  else if (_progressHoverShown) { hideHoverInfo(); _progressHoverShown = false; }
+}
+// A short "🏗️ Name — 62% done · ~1.3 yr left" style card for an active job.
+function progressLine(info) {
+  const pct = info.total ? Math.max(0, Math.min(100, Math.round((1 - info.left / info.total) * 100))) : 0;
+  const verb = info.kind === 'build' ? 'Under construction' : info.kind === 'reclaim' ? 'Reclaiming land' : 'Being demolished';
+  return `<div class="hi-stats">${verb} · ${pct}% done</div><div class="hi-body">⏳ ~${fmtDur(info.left)} left. Fast-forward with the speed controls to finish sooner.</div>`;
+}
+function progressInfoHtml(info) {
+  const icon = info.kind === 'build' ? '🏗️' : info.kind === 'reclaim' ? '🏝️' : '🚜';
+  return `<b>${icon} ${escapeHtml(info.label || 'Works')}</b>${progressLine(info)}`;
+}
+
 // ---- placement-tool state (build / bulldoze / reclaim / road) --------------
 // You stay in "place mode" so you can place many in a row; this shows what's
 // active and gives an explicit way to STOP (the ✕ Done button or Esc).
@@ -1065,13 +1086,21 @@ function buildingStatLine(b) {
 // The name / description / stats for whatever the demolish cursor is over.
 function demoInfoHtml(t) {
   if (!t) return null;
-  if (t.kind === 'landmark') return `<b>${escapeHtml(t.label || 'Landmark')}</b><div class="hi-body">A fixed national landmark. Removing it clears the land.</div>`;
-  if (t.kind === 'tree') return `<b>🌳 Tree</b><div class="hi-body">Greenery that cleans the air and cools the city.</div>`;
+  const prog = progressAtCell(t);   // if it's mid-build / mid-teardown, show the time left too
+  if (t.kind === 'landmark') return `<b>${escapeHtml(t.label || 'Landmark')}</b>${prog}<div class="hi-body">A fixed national landmark. Removing it clears the land.</div>`;
+  if (t.kind === 'tree') return `<b>🌳 Tree</b>${prog}<div class="hi-body">Greenery that cleans the air and cools the city.</div>`;
   const c = G.state.grid?.[t.y]?.[t.x], b = c && BUILDINGS[c.k];
-  if (!b) return `<b>${t.kind === 'heritage' ? '🏚️ Heritage building' : 'Building'}</b><div class="hi-body">Part of the standing 1965 town.</div>`;
+  if (!b) return `<b>${t.kind === 'heritage' ? '🏚️ Heritage building' : 'Building'}</b>${prog}<div class="hi-body">Part of the standing 1965 town.</div>`;
   const nm = (c.name ? `${escapeHtml(c.name)} · ` : '') + escapeHtml(b.name);
   const stats = buildingStatLine(b);
-  return `<b>${b.icon || ''} ${nm}</b>${stats ? `<div class="hi-stats">${stats}</div>` : ''}<div class="hi-body">${escapeHtml(b.desc || '')}</div>`;
+  return `<b>${b.icon || ''} ${nm}</b>${stats ? `<div class="hi-stats">${stats}</div>` : ''}${prog}<div class="hi-body">${escapeHtml(b.desc || '')}</div>`;
+}
+// A time-left line for a cell mid-build or mid-teardown (used inside the demolish card).
+function progressAtCell(t) {
+  const c = (t && t.x != null) ? G.state.grid?.[t.y]?.[t.x] : null;
+  if (c && c.build && c.build.left > 0) return progressLine({ kind: 'build', left: c.build.left, total: c.build.total });
+  if (c && c.demolish) return progressLine({ kind: 'demolish', left: c.demolish.left, total: c.demolish.total });
+  return '';
 }
 
 function onDemolishHover(cell, world, landmark) {

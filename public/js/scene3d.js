@@ -3787,8 +3787,9 @@ export class Scene3D {
     const w = this.weather;
     // dryness eases toward a weather-set target: parched in clear hot sun, damp in
     // rain/cloud. (Singapore is humid, so it dries out slowly and wets fast.)
-    const dryTarget = THREE.MathUtils.clamp(0.92 - w.rain * 1.5 - w.cloud * 0.55, 0.08, 0.95);
-    this._dryness += (dryTarget - this._dryness) * Math.min(1, dt * (w.rain > 0.1 ? 0.3 : 0.02));
+    const wetEff = Math.max(w.rain, this._floodRain ? 1 : 0);   // a flood soaks the ground like heavy rain
+    const dryTarget = THREE.MathUtils.clamp(0.92 - wetEff * 1.5 - w.cloud * 0.55, 0.08, 0.95);
+    this._dryness += (dryTarget - this._dryness) * Math.min(1, dt * (wetEff > 0.1 ? 0.3 : 0.02));
 
     this._igniteTimer -= dt;
     if (this._igniteTimer <= 0) {
@@ -3802,10 +3803,18 @@ export class Scene3D {
     }
 
     const wx = Math.cos(w.windDir), wz = Math.sin(w.windDir);
+    // Physics/chemistry: water snuffs fire. A flood raises a water plane over the
+    // land — any flame the rising water reaches is doused, and SAVED like heavy rain.
+    const floodY = (this.disaster && this.disaster.type === 'flood' && this.floodPlane && this.floodPlane.visible) ? this.floodPlane.position.y : null;
     for (let i = this._fires.length - 1; i >= 0; i--) {
       const f = this._fires[i];
-      f.life -= dt * (w.rain > 0.3 ? 4 + w.rain * 7 : 1);          // rain douses it fast
-      if (w.rain > 0.3) f.rainSeconds = (f.rainSeconds || 0) + dt; // ...and if enough rain falls, the building is SAVED (see _extinguish)
+      const rainDouse = w.rain > 0.3;
+      const submerged = floodY != null && floodY >= (f.baseY || 0) - 0.2;   // the flood water has reached this fire
+      if (submerged) {
+        f.rainSeconds = Math.max(f.rainSeconds || 0, 1.5);                  // water on the flames — the building survives
+        if (!f._steamed) { f._steamed = true; this._spawnDust(f.x, f.z, 0xe6ecef, 24); }   // a hiss of steam where water meets fire
+      } else if (rainDouse) f.rainSeconds = (f.rainSeconds || 0) + dt;      // enough rain over its life SAVES it (see _extinguish)
+      f.life -= dt * (submerged ? 26 : rainDouse ? 4 + w.rain * 7 : 1);     // flood snuffs it near-instantly; rain fast; else it burns down
       const k = Math.max(0, f.life / f.dur), now = performance.now();
       // volumetric flame + smoke plumes (each particle lives & moves on its own)
       this._stepParticles(f.flameSys, dt, wx, wz, w.wind, Math.min(1, k * 1.6 + 0.15));

@@ -28,6 +28,26 @@ db.exec(`
     updated_at   INTEGER NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_worlds_public ON worlds (is_public, updated_at DESC);
+
+  -- Community-shared custom buildings designed in the 3D designer. The design column
+  -- is the JSON (parts, stats, base) the game needs to render and price the build;
+  -- func is its functionality (house / economy / entertainment / power / water / ...)
+  -- so the community menu can filter by it, and downloads drives the popularity sort.
+  CREATE TABLE IF NOT EXISTS builds (
+    id          TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    author      TEXT NOT NULL,
+    func        TEXT NOT NULL DEFAULT 'landmark',
+    size        REAL NOT NULL DEFAULT 1,
+    year        INTEGER NOT NULL DEFAULT 1965,
+    design      TEXT NOT NULL,
+    token       TEXT NOT NULL,
+    downloads   INTEGER NOT NULL DEFAULT 0,
+    created_at  INTEGER NOT NULL,
+    updated_at  INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_builds_downloads ON builds (downloads DESC, updated_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_builds_func ON builds (func, downloads DESC);
 `);
 
 const stmts = {
@@ -152,6 +172,66 @@ export const dbApi = {
         updatedAt: row.updated_at,
       })),
     };
+  },
+};
+
+// ---- Community builds (custom buildings shared between players) --------------
+const bstmts = {
+  insert: db.prepare(`
+    INSERT INTO builds (id, name, author, func, size, year, design, token, downloads, created_at, updated_at)
+    VALUES (@id, @name, @author, @func, @size, @year, @design, @token, 0, @created_at, @updated_at)
+  `),
+  getById: db.prepare(`SELECT * FROM builds WHERE id = ?`),
+  delete: db.prepare(`DELETE FROM builds WHERE id = ?`),
+  bump: db.prepare(`UPDATE builds SET downloads = downloads + 1 WHERE id = ?`),
+  countAll: db.prepare(`SELECT COUNT(*) AS n FROM builds`),
+  countFunc: db.prepare(`SELECT COUNT(*) AS n FROM builds WHERE func = @func`),
+  listNew: db.prepare(`SELECT * FROM builds ORDER BY updated_at DESC LIMIT @limit OFFSET @offset`),
+  listTop: db.prepare(`SELECT * FROM builds ORDER BY downloads DESC, updated_at DESC LIMIT @limit OFFSET @offset`),
+  listNewFunc: db.prepare(`SELECT * FROM builds WHERE func = @func ORDER BY updated_at DESC LIMIT @limit OFFSET @offset`),
+  listTopFunc: db.prepare(`SELECT * FROM builds WHERE func = @func ORDER BY downloads DESC, updated_at DESC LIMIT @limit OFFSET @offset`),
+};
+
+// Public metadata for a build row (no secret token; design only when asked).
+function buildMeta(row, withDesign = false) {
+  if (!row) return null;
+  const m = {
+    id: row.id, name: row.name, author: row.author, func: row.func, size: row.size,
+    year: row.year, downloads: row.downloads, createdAt: row.created_at, updatedAt: row.updated_at,
+  };
+  if (withDesign) m.design = JSON.parse(row.design);
+  return m;
+}
+
+export const buildsApi = {
+  create({ id, name, author, func, size, year, design, token }) {
+    const now = Date.now();
+    bstmts.insert.run({ id, name, author, func, size, year, design: JSON.stringify(design), token, created_at: now, updated_at: now });
+    return buildMeta(bstmts.getById.get(id));
+  },
+  getRaw(id) { return bstmts.getById.get(id); },
+  getFull(id) { return buildMeta(bstmts.getById.get(id), true); },
+  getMeta(id) { return buildMeta(bstmts.getById.get(id)); },
+  delete(id) { return bstmts.delete.run(id).changes > 0; },
+  // Count a download AND hand back the full design so the player can construct it.
+  download(id) {
+    const row = bstmts.getById.get(id);
+    if (!row) return null;
+    bstmts.bump.run(id);
+    return buildMeta(bstmts.getById.get(id), true);
+  },
+  list({ sort = 'downloads', func = null, limit = 24, offset = 0 } = {}) {
+    const args = { limit, offset };
+    let rows, total;
+    if (func) {
+      args.func = func;
+      rows = (sort === 'recent' ? bstmts.listNewFunc : bstmts.listTopFunc).all(args);
+      total = bstmts.countFunc.get({ func }).n;
+    } else {
+      rows = (sort === 'recent' ? bstmts.listNew : bstmts.listTop).all(args);
+      total = bstmts.countAll.get().n;
+    }
+    return { total, builds: rows.map((r) => buildMeta(r)) };
   },
 };
 

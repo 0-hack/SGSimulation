@@ -5,7 +5,7 @@ import express from 'express';
 import { randomUUID, randomBytes, createHash } from 'crypto';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-import { dbApi } from './db.js';
+import { dbApi, buildsApi } from './db.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = join(__dirname, '..', 'public');
@@ -95,6 +95,65 @@ api.delete('/worlds/:id', (req, res) => {
     return res.status(403).json({ error: 'Invalid edit token for this world.' });
   }
   dbApi.delete(req.params.id);
+  res.json({ ok: true });
+});
+
+// ---- Community builds (custom buildings designed in the 3D designer & shared) --
+const BUILD_FUNCS = ['house', 'economy', 'entertainment', 'power', 'water', 'civic', 'landmark'];
+function validDesign(d) {
+  return d && typeof d === 'object' && Array.isArray(d.parts) && d.parts.length > 0 && d.parts.length <= 400;
+}
+
+// Publish a custom build to the community. Returns its id + a secret token (needed
+// to delete it later). `design` carries the parts, chosen functionality, size etc.
+api.post('/builds', (req, res) => {
+  const { name, author, func, size, year, design } = req.body || {};
+  if (!validDesign(design)) return res.status(400).json({ error: 'Invalid design (needs parts).' });
+  const id = randomUUID();
+  const token = newToken();
+  const build = buildsApi.create({
+    id,
+    name: clampName(name, 'Custom Building'),
+    author: clampName(author, 'Anonymous'),
+    func: BUILD_FUNCS.includes(func) ? func : 'landmark',
+    size: Math.min(Math.max(Number(size) || 1, 0.2), 6),
+    year: Math.min(Math.max(parseInt(year, 10) || 1965, 1900), 2100),
+    design,
+    token: hash(token),
+  });
+  res.json({ ...build, token });
+});
+
+// Browse the community — sort=downloads (default) | recent, optional func filter.
+api.get('/builds', (req, res) => {
+  const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 24, 1), 100);
+  const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+  const sort = req.query.sort === 'recent' ? 'recent' : 'downloads';
+  const func = BUILD_FUNCS.includes(req.query.func) ? req.query.func : null;
+  res.json(buildsApi.list({ sort, func, limit, offset }));
+});
+
+// Full build (metadata + design parts) WITHOUT counting a download (for preview).
+api.get('/builds/:id', (req, res) => {
+  const b = buildsApi.getFull(req.params.id);
+  if (!b) return res.status(404).json({ error: 'Build not found.' });
+  res.json(b);
+});
+
+// Download a build to construct it in your game — counts toward its popularity.
+api.post('/builds/:id/download', (req, res) => {
+  const b = buildsApi.download(req.params.id);
+  if (!b) return res.status(404).json({ error: 'Build not found.' });
+  res.json(b);
+});
+
+// Delete a community build (requires the token returned when it was published).
+api.delete('/builds/:id', (req, res) => {
+  const row = buildsApi.getRaw(req.params.id);
+  if (!row) return res.status(404).json({ error: 'Build not found.' });
+  const token = req.get('x-build-token') || req.body?.token;
+  if (!token || hash(token) !== row.token) return res.status(403).json({ error: 'Invalid token.' });
+  buildsApi.delete(req.params.id);
   res.json({ ok: true });
 });
 

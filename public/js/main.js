@@ -1,6 +1,6 @@
 // Main controller: boots the menu, runs the game loop, wires the UI & cloud.
 import {
-  newGame, tickDay, build, demolish, queueDemolish, canPlace, derive, fireDamage,
+  newGame, tickDay, build, demolish, queueDemolish, queueDemoVisual, canPlace, derive, fireDamage,
   resolveEvent, snapshot, refreshSummary, ensureGrid, packState, issueBond, repayDebt,
   projectProgress, checkProjects,
   reclaimLand, reclaimCost, buildingCost, priced,
@@ -978,6 +978,7 @@ function commitDemolish() {
   const cuts = G.demoCuts || [];
   if (!G.demoSel.size && !cuts.length) { cancelTools(); return; }
   const items = [];
+  let maxDemo = 0;                       // longest teardown in this batch (for the toast)
   for (const t of G.demoSel.values()) {
     if (t.kind === 'building') items.push({ kind: 'building', x: t.x, y: t.y });
     else if (t.kind === 'heritage') {
@@ -988,8 +989,10 @@ function commitDemolish() {
       if (c && c.heritage) items.push({ kind: 'building', x: t.x, y: t.y });
       else if (G.view.removeHeritageVisual) G.view.removeHeritageVisual(t.x, t.y);
     }
-    else if (t.kind === 'tree') { if (G.view.removeTreeAt) G.view.removeTreeAt(t.x, t.y); G.dirty = true; }
-    else if (t.kind === 'landmark') { if (G.view.removeLandmark) G.view.removeLandmark(t.id); G.dirty = true; }
+    // Trees & fixed landmarks (airport) also come down over time, behind a hoarding —
+    // a tree in days, a landmark over months — instead of vanishing at once.
+    else if (t.kind === 'tree') { maxDemo = Math.max(maxDemo, queueDemoVisual(G.state, { kind: 'tree', x: t.x, y: t.y })); G.dirty = true; }
+    else if (t.kind === 'landmark') { maxDemo = Math.max(maxDemo, queueDemoVisual(G.state, { kind: 'landmark', id: t.id })); G.dirty = true; }
     else { const ref = infraRef(t); if (ref) items.push({ kind: t.kind, ref }); }
   }
   // freehand road erasers: split each covered road and queue the covered pieces
@@ -1001,7 +1004,6 @@ function commitDemolish() {
   }
   const n = G.demoSel.size + cuts.length;
   if (items.length) queueDemolish(G.state, items);
-  let maxDemo = 0;                       // longest building teardown in this batch
   for (const it of items) { if (it.kind === 'building') { const c = G.state.grid?.[it.y]?.[it.x]; if (c && c.demolish) maxDemo = Math.max(maxDemo, c.demolish.total); } }
   G.demoSel.clear(); G.demoHover = null; G.demoCuts = []; G.demoRoadPreview = null;
   G.view.demoSetSelection([]);          // drop the selection tint; the teardown visuals take over

@@ -90,6 +90,7 @@ export function newGame({ name = 'New Singapore', owner = 'Anonymous' } = {}) {
     threat: 0.5,   // external/regional danger (0 calm … 1 dire). 1965 opened tense — Konfrontasi, a hostile split from Malaysia, Britain leaving. Offset by military strength; shaped by the International Stance.
     constructing: [],         // [x,y] cells whose building is still being built
     demolishing: [],          // [x,y] cells whose building is being torn down (timed teardown)
+    demoVisual: [],           // timed teardowns for scenery without a grid cell: { kind:'tree'|'landmark', x, y, id, total, left }
     plants: [],               // individually-placed tropical plants: { x, z, kind, rot, s } in world coords
     surfaces: {},             // painted ground surfaces, sparse: "x,y" -> surface type (cosmetic only)
     removedTrees: {},         // ambient trees the player bulldozed, sparse: "x,y" -> 1 (so clearings persist)
@@ -170,6 +171,7 @@ export function ensureGrid(state) {
   if (!state.climate) state.climate = { water: 1, heat: 0.3 };
   if (typeof state.threat !== 'number') state.threat = 0.5;
   if (typeof state.unrest !== 'number') state.unrest = 0.1;
+  if (!Array.isArray(state.demoVisual)) state.demoVisual = [];
   if (!state.affairsAt || typeof state.affairsAt !== 'object') state.affairsAt = {};
   if (!state.pathFlags || typeof state.pathFlags !== 'object') state.pathFlags = {};
   // Older saves stored population as one number — split it into age cohorts once.
@@ -303,6 +305,21 @@ export function queueDemolish(state, items) {
   return fee;
 }
 
+// Queue a TIMED teardown for scenery that has no grid cell / economic output — an
+// ambient tree (cleared in days) or a fixed landmark like the airport (a big,
+// months-long job). The 3D view raises a hoarding around it and removes it only
+// when the timer runs out. Returns the teardown length in game-days.
+export function queueDemoVisual(state, item) {
+  if (!item) return 0;
+  if (!Array.isArray(state.demoVisual)) state.demoVisual = [];
+  const days = item.kind === 'tree' ? 6 : 150;
+  const key = item.kind === 'landmark' ? `L:${item.id}` : `${item.x},${item.y}`;
+  if (state.demoVisual.some((d) => (d.kind === 'landmark' ? `L:${d.id}` : `${d.x},${d.y}`) === key)) return 0; // already coming down
+  state.demoVisual.push({ kind: item.kind, x: item.x, y: item.y, id: item.id, total: days, left: days });
+  state.treasury -= item.kind === 'tree' ? 1 : 8;
+  return days;
+}
+
 // Advance every teardown by one day; remove what has finished. Buildings clear to
 // an empty cell; infra entries are filtered out of their arrays. Sets a counter
 // the view watches so it can rebuild the road/rail/runway meshes once on change.
@@ -328,6 +345,13 @@ function advanceDemolition(state) {
   state.railways = sweep(state.railways);
   state.airstrips = sweep(state.airstrips);
   if (infraDone) state._infraDemoDone = (state._infraDemoDone || 0) + 1;
+  // Visual-only teardowns (trees, landmarks): tick down; the view finalises the
+  // removal when an entry drops out of the list.
+  if (state.demoVisual && state.demoVisual.length) {
+    const still = [];
+    for (const d of state.demoVisual) { d.left -= 1; if (d.left > 0) still.push(d); }
+    state.demoVisual = still;
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -2447,7 +2447,7 @@ export class Scene3D {
       const c = state.grid[y] && state.grid[y][x]; if (!c || !c.demolish) continue;
       const tgt = this._demoTargetMesh(x, y);
       if (tgt && tgt.group) {
-        if (!this._demoSites || !this._demoSites.has(id)) this._startDemoSite(x, y, tgt.group);  // hoarding + crane BEFORE it shrinks
+        if (!this._demoSites || !this._demoSites.has(id)) this._startDemoSite(id, x, y, tgt.group);  // hoarding + crane BEFORE it shrinks
         const p = Math.max(0.04, c.demolish.left / Math.max(1, c.demolish.total)); // crumbles down as it's torn
         const site = this._demoSites.get(id);
         if (tgt.heritage) {
@@ -2461,11 +2461,33 @@ export class Scene3D {
       }
       if (!this._teardown.has(id)) this._teardown.set(id, { heritage: !!(tgt && tgt.heritage) });
     }
+    // Scenery with no grid cell — ambient trees & fixed landmarks (airport) — tear
+    // down on their own timer (state.demoVisual): raise a hoarding (a full crane for
+    // a landmark, a light barrier for a tree) and crumble the mesh down.
+    for (const d of (state.demoVisual || [])) {
+      const vid = `dv:${d.kind}:${d.id != null ? d.id : d.x + ',' + d.y}`; active.add(vid);
+      const group = d.kind === 'tree' ? (this.natureCells && this.natureCells.get(`${d.x},${d.y}`)) : this._landmarkGroup(d.id);
+      if (group && group.visible) {
+        if (!this._demoSites || !this._demoSites.has(vid)) this._startDemoSite(vid, d.x, d.y, group, d.kind === 'tree');
+        const p = Math.max(0.04, d.left / Math.max(1, d.total));
+        const site = this._demoSites.get(vid);
+        const bs = (site && site.baseScaleY != null) ? site.baseScaleY : group.scale.y;
+        group.scale.y = bs * p;                   // crumbles into the ground
+        this._setDemoSiteProgress(vid, p);
+      }
+      if (!this._teardown.has(vid)) this._teardown.set(vid, { visual: d });
+    }
     for (const [id, meta] of [...this._teardown]) {
       if (active.has(id)) continue;
       this._teardown.delete(id);
-      const [x, y] = id.split(',').map(Number);
       this._removeDemoSite(id);                   // pull the hoarding/crane once it's gone
+      if (meta.visual) {                          // finished tree / landmark teardown
+        const d = meta.visual;
+        if (d.kind === 'tree') { if (this.removeTreeAt) this.removeTreeAt(d.x, d.y); }
+        else if (d.kind === 'landmark') { if (this.removeLandmark) this.removeLandmark(d.id); }
+        continue;
+      }
+      const [x, y] = id.split(',').map(Number);
       if (meta.heritage) { if (this.removeHeritageVisual) this.removeHeritageVisual(x, y); }  // clear the old house + its cells
       else { this._setBuildingRed(x, y, false); this.onDemolished(x, y); }   // dust + remove + greenery returns
     }
@@ -3069,15 +3091,15 @@ export class Scene3D {
   // hoarding (corner posts) wraps the building, a wrecking crane stands beside it, and
   // a hazard platform descends as the structure crumbles — so a slow teardown READS as
   // a teardown, just like a slow build reads as a build.
-  _startDemoSite(x, y, group) {
-    const id = `${x},${y}`;
+  _startDemoSite(id, x, y, group, light) {
     if (!this._demoSites) this._demoSites = new Map();
     if (this._demoSites.has(id)) return;
     const g = group || (this.buildings.get(id) || {}).group; if (!g) return;
     const box = new THREE.Box3().setFromObject(g);
     if (!isFinite(box.min.y) || !isFinite(box.max.y)) return;
-    const rcell = this.state?.grid?.[y]?.[x];
-    const baseY = (rcell && typeof rcell.fy === 'number') ? rcell.fy : this.terrainHeight(x, y);
+    const rcell = (x != null && y != null) ? this.state?.grid?.[y]?.[x] : null;
+    const baseY = (rcell && typeof rcell.fy === 'number') ? rcell.fy
+      : (x != null && y != null && this.terrainHeight ? this.terrainHeight(x, y) : box.min.y);
     const sx = Math.max(2.5, box.max.x - box.min.x), sz = Math.max(2.5, box.max.z - box.min.z);
     const H = Math.max(4, box.max.y - baseY);
     const wrap = new THREE.Group();
@@ -3096,15 +3118,18 @@ export class Scene3D {
     }
     const plat = new THREE.Mesh(new THREE.BoxGeometry(sx + 1.0, 0.3, sz + 1.0), toon(0xff8a3a, { transparent: true, opacity: 0.55 }));
     plat.position.y = H; wrap.add(plat);
-    const mast = new THREE.Mesh(new THREE.BoxGeometry(0.34, H + 7, 0.34), hazard);
-    mast.position.set(hw + 1.3, (H + 7) / 2, hd + 1.3); wrap.add(mast);
-    const jib = new THREE.Mesh(new THREE.BoxGeometry(sx + 3.4, 0.26, 0.26), hazard);
-    jib.position.set(hw + 1.3 - (sx + 3.4) / 2 + 0.3, H + 6.4, hd + 1.3); wrap.add(jib);
-    const ball = new THREE.Mesh(new THREE.SphereGeometry(0.7, 10, 8), toon(0x33373d));   // wrecking ball
-    ball.position.set(hw + 1.3 - (sx + 3.0), H + 2.6, hd + 1.3); wrap.add(ball);
+    let ball = null;
+    if (!light) {                                                           // a full wrecking crane (skipped for small scenery like a tree)
+      const mast = new THREE.Mesh(new THREE.BoxGeometry(0.34, H + 7, 0.34), hazard);
+      mast.position.set(hw + 1.3, (H + 7) / 2, hd + 1.3); wrap.add(mast);
+      const jib = new THREE.Mesh(new THREE.BoxGeometry(sx + 3.4, 0.26, 0.26), hazard);
+      jib.position.set(hw + 1.3 - (sx + 3.4) / 2 + 0.3, H + 6.4, hd + 1.3); wrap.add(jib);
+      ball = new THREE.Mesh(new THREE.SphereGeometry(0.7, 10, 8), toon(0x33373d));   // wrecking ball
+      ball.position.set(hw + 1.3 - (sx + 3.0), H + 2.6, hd + 1.3); wrap.add(ball);
+    }
     this.scene.add(wrap);
-    this._demoSites.set(id, { group: wrap, plat, ball, H, baseScaleY: g.scale.y });   // remember the mesh's scale so heritage can crumble from it
-    const cw = cellToWorld(x, y); this._spawnDust(cw.x, cw.z, 0x9a8f80, 12);
+    this._demoSites.set(id, { group: wrap, plat, ball, H, baseScaleY: g.scale.y });   // remember the mesh's scale so it can crumble from it
+    this._spawnDust(g.position.x, g.position.z, 0x9a8f80, 12);
   }
   _setDemoSiteProgress(id, p) {
     const s = this._demoSites && this._demoSites.get(id); if (!s) return;

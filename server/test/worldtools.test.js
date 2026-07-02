@@ -245,13 +245,19 @@ try {
     S.onDemolishHover({ x: gx, y: gy }, c); let red = 0; grp.traverse((o) => { if (o.userData && o.userData._origMat) red++; });
     S.onTileTap(gx, gy, c); const sel = S.demoSel.size === 1;
     S.commitDemolish();
+    // a tree now clears over a few days (behind a light hoarding), not instantly
+    const dv = (v.state.demoVisual || []).find((d) => d.kind === 'tree' && d.x === gx && d.y === gy);
+    const timed = !!dv, total = dv ? dv.total : 0;
+    const standingAfterDone = grp.visible;
+    if (total) S.tick(total + 3);
     const gone = grp.visible === false, persisted = !!(v.state.removedTrees && v.state.removedTrees[key]);
     S.setBulldoze(false);
-    return { found: true, isTree, red: red > 0, sel, gone, persisted };
+    return { found: true, isTree, red: red > 0, sel, timed, standingAfterDone, gone, persisted };
   });
   ok(dmT.found && dmT.isTree, 'an ambient tree is detected by Demolish');
   ok(dmT.red, 'hovering a tree turns it red');
-  ok(dmT.sel && dmT.gone && dmT.persisted, 'Done removes the tree and the clearing is saved');
+  ok(dmT.timed && dmT.standingAfterDone, 'a tree is cleared over a few days (still there right after Done), not instantly');
+  ok(dmT.sel && dmT.gone && dmT.persisted, 'the tree is removed once its clearance finishes and the clearing is saved');
 
   // (4) roads: a freehand DRAG marks the covered portion (any length, not a whole edge) -
   const dmR = await p.evaluate(() => {
@@ -311,15 +317,22 @@ try {
     S.onTileTap(-1, -1, { x: v._airportCenter.cx, z: v._airportCenter.cz }, lm);  // simulate the 3D pick selecting it
     const sel = S.demoSel.size === 1;
     S.commitDemolish();
+    // the airport is a huge landmark — it now comes down over MONTHS behind a
+    // hoarding, not in a blink
+    const dv = (v.state.demoVisual || []).find((d) => d.kind === 'landmark' && d.id === 'airport');
+    const timed = !!dv, total = dv ? dv.total : 0;
+    const standingAfterDone = v.airportGroup.visible;
+    if (total) S.tick(total + 3);
     const hidden = v.airportGroup.visible === false;
     let maskedAfter = false;
     for (let y = 0; y < N && !maskedAfter; y++) for (let x = 0; x < N; x++) if (v.airportMask[y][x]) { maskedAfter = true; break; }
     const persisted = !!(v.state.removedLandmarks && v.state.removedLandmarks.airport);
     S.setBulldoze(false);
-    return { found: true, maskedBefore, sel, hidden, freed: !maskedAfter, persisted };
+    return { found: true, maskedBefore, sel, timed, total, standingAfterDone, hidden, freed: !maskedAfter, persisted };
   });
   ok(dmAir.found && dmAir.maskedBefore && dmAir.sel, 'the airport (fixed landmark) can be selected for demolition');
-  ok(dmAir.hidden && dmAir.freed && dmAir.persisted, 'Done removes the airport, frees its land, and the removal persists');
+  ok(dmAir.timed && dmAir.total >= 60 && dmAir.standingAfterDone, 'the airport is torn down over months behind a hoarding (still there right after Done), not instantly');
+  ok(dmAir.hidden && dmAir.freed && dmAir.persisted, 'once the teardown finishes the airport is gone, its land freed, and the removal persists');
 
   // (7) CS-style road bulldozer: hover shows a live chunk; a single CLICK tears it out
   const dmBull = await p.evaluate(() => {

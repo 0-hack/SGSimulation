@@ -82,6 +82,7 @@ export function newGame({ name = 'New Singapore', owner = 'Anonymous' } = {}) {
     pendingEvent: null,       // legacy single event slot (kept for save migration)
     pendingDecisions: [],     // queue of decisions awaiting the PM — NON-blocking; the country runs on meanwhile
     _decUid: 0,               // monotonic id for decision cards
+    props: [],                // free-placed street furniture (lamps, signals): { type, x, z, rot } in WORLD coords, not grid-bound
     roads: { nodes: [], edges: [], islands: [] }, // player-drawn freeform road network
     reclaimed: [],            // [x,y] sea cells reclaimed into finished, buildable land
     reclaiming: [],           // { x,y,total,left } cells still rising from the sea (legacy per-cell)
@@ -195,6 +196,7 @@ export function ensureGrid(state) {
   if (!state.removedTrees || typeof state.removedTrees !== 'object') state.removedTrees = {};
   if (!state.removedLandmarks || typeof state.removedLandmarks !== 'object') state.removedLandmarks = {};
   if (!state.removedAirportParts || typeof state.removedAirportParts !== 'object') state.removedAirportParts = {};
+  if (!Array.isArray(state.props)) state.props = [];
   if (!Array.isArray(state.pendingDecisions)) state.pendingDecisions = [];
   if (typeof state._decUid !== 'number') state._decUid = 0;
   if (state.pendingEvent) {   // migrate an old single pending event into the non-blocking queue
@@ -331,6 +333,27 @@ export function queueDemoVisual(state, item) {
   state.demoVisual.push({ kind: item.kind, x: item.x, y: item.y, id: item.id, total: days, left: days });
   state.treasury -= item.kind === 'tree' ? 1 : 8;
   return days;
+}
+
+// Free-placed street furniture — a lamp / signal dropped at an exact WORLD spot,
+// NOT tied to the grid, so it can sit right at the kerb next to (or over) a road.
+// Charges its small cost and goes up at once (a lamp is a quick job). Returns the
+// new prop, or null if it isn't a prop type / can't be afforded.
+export function placeProp(state, { type, x, z, rot = 0 }) {
+  const b = BUILDINGS[type];
+  if (!b || !b.prop) return null;
+  const cost = buildingCost(state, type);
+  if (state.treasury < cost) return null;
+  state.treasury -= cost;
+  if (!Array.isArray(state.props)) state.props = [];
+  const prop = { type, x, z, rot };
+  state.props.push(prop);
+  return prop;
+}
+export function removeProp(state, i) {
+  if (!Array.isArray(state.props) || i < 0 || i >= state.props.length) return false;
+  state.props.splice(i, 1);
+  return true;
 }
 
 // Advance every teardown by one day; remove what has finished. Buildings clear to

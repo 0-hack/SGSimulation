@@ -1976,6 +1976,7 @@ export class Scene3D {
           if (d.kind === 'heritage') { const pl = d.placement; const c = (pl.cells && pl.cells.length) ? pl.cells[0] : [pl.gx, pl.gy]; return { kind: 'heritage', x: c[0], y: c[1] }; }
           if (d.kind === 'landmark') return { kind: 'landmark', id: d.id, label: d.label };
           if (d.kind === 'airportPart') return { kind: 'airportPart', part: d.part, label: d.label };
+          if (d.kind === 'prop') return { kind: 'prop', i: d.i, label: d.label };
           return { kind: d.kind, x: d.x, y: d.y };
         }
         o = o.parent;
@@ -2370,6 +2371,7 @@ export class Scene3D {
     else if (t.kind === 'tree') this._tintObjectRed(this.natureCells && this.natureCells.get(`${t.x},${t.y}`), true);
     else if (t.kind === 'landmark') this._tintObjectRed(this._landmarkGroup(t.id), true);
     else if (t.kind === 'airportPart') this._tintObjectRed(this._airportPartByKey(t.part), true);
+    else if (t.kind === 'prop') this._tintObjectRed(this.propMeshes && this.propMeshes[t.i], true);
     else this._demoRibbon(t.key, t.poly, true);   // road cut / rail / runway ribbon
   }
   _demoUnshow(t) {
@@ -2378,6 +2380,7 @@ export class Scene3D {
     else if (t.kind === 'tree') this._tintObjectRed(this.natureCells && this.natureCells.get(`${t.x},${t.y}`), false);
     else if (t.kind === 'landmark') this._tintObjectRed(this._landmarkGroup(t.id), false);
     else if (t.kind === 'airportPart') this._tintObjectRed(this._airportPartByKey(t.part), false);
+    else if (t.kind === 'prop') this._tintObjectRed(this.propMeshes && this.propMeshes[t.i], false);
     else this._demoRibbon(t.key, null, false);
   }
   // The pickable group for a placed building OR one still under construction (so both tint red).
@@ -2933,7 +2936,24 @@ export class Scene3D {
     return g;
   }
   // ---- external API (mirrors the 2D view) ----------------------------------
-  setState(state) { this.state = state; this._loadRemovedTrees(state); this._applyRemovedLandmarks(state); this._applyRemovedAirportParts(state); this.rebuildRoadNet(); this._relocateHeritageOffRoads(); this.applyHeritageToGrid(state); this._syncReclaimed(); this.syncAll(); this._buildPlayerRailways(state); this._buildPlayerAirstrips(state); this.syncRoadworks(state); this._buildPlayerPlants(state); this._syncSurfaces(state); this.refreshFoundationCarves(); }
+  setState(state) { this.state = state; this._loadRemovedTrees(state); this._applyRemovedLandmarks(state); this._applyRemovedAirportParts(state); this.rebuildRoadNet(); this._relocateHeritageOffRoads(); this.applyHeritageToGrid(state); this._syncReclaimed(); this.syncAll(); this._buildPlayerRailways(state); this._buildPlayerAirstrips(state); this.syncRoadworks(state); this._buildPlayerPlants(state); this._syncSurfaces(state); this._syncProps(state); this.refreshFoundationCarves(); }
+  // Free-placed street furniture (lamps / signals) from state.props: each a small
+  // makeBuilding model dropped at an EXACT world spot on the terrain (not grid-bound),
+  // tagged so the Demolish tool can pick it. Rebuilt whole on any change (few exist).
+  _syncProps(state) {
+    if (this._propGroup) { this._propGroup.traverse((o) => { if (o.geometry) o.geometry.dispose(); }); this.scene.remove(this._propGroup); }
+    this._propGroup = new THREE.Group(); this.scene.add(this._propGroup);
+    this.propMeshes = [];
+    for (const [i, pr] of ((state && state.props) || []).entries()) {
+      if (!BUILDINGS[pr.type]) continue;
+      const g = makeBuilding(pr.type); g.scale.setScalar(MODEL_SCALE);
+      g.position.set(pr.x, this._roadY(pr.x, pr.z), pr.z); g.rotation.y = pr.rot || 0;
+      g.userData.demo = { kind: 'prop', i };
+      this._propGroup.add(g); this.propMeshes.push(g);
+    }
+  }
+  // called by main.js right after a prop is placed / removed, to re-render the layer
+  syncProps(state) { this._syncProps(state || this.state); }
   // Restore which ambient trees the player has bulldozed (so they stay gone across saves).
   _loadRemovedTrees(state) { this._removedTrees = new Set(Object.keys((state && state.removedTrees) || {})); }
   setShortages(s) { this.shortages = s; }

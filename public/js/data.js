@@ -325,16 +325,16 @@ export const BUILDINGS = {
     desc: 'An old-school railway station in the colonial style — a long platform canopy, a clock-towered booking hall and a steam/diesel train at the platform. Put it on the railway line so trains stop in town.',
   },
   street_lamp: {
-    name: 'Street Lamp', cat: 'roads', icon: '💡', color: '#d8c27a',
+    name: 'Street Lamp', cat: 'roads', icon: '💡', color: '#d8c27a', prop: true,
     cost: 1, upkeep: 0.05, year: 1965, homes: 0, jobs: 0,
     power: -1, water: 0, pollution: 0, happiness: 1, safety: 2,
-    desc: 'A single street lamp that glows after dark — place your own along roads and paths. (Roads already get lit automatically; use this to light squares, parks and corners.) Safer streets at night.',
+    desc: 'A single street lamp that glows after dark — drop it FREELY at the kerb, on a verge, in a square or park (it isn\'t tied to the grid, so it can sit right beside a road). Safer streets at night.',
   },
   traffic_light: {
-    name: 'Traffic Light', cat: 'roads', icon: '🚦', color: '#cf6f5a',
+    name: 'Traffic Light', cat: 'roads', icon: '🚦', color: '#cf6f5a', prop: true,
     cost: 3, upkeep: 0.1, year: 1965, homes: 0, jobs: 0,
     power: -1, water: 0, pollution: 0, happiness: 1, safety: 4,
-    desc: 'A three-aspect traffic signal you can drop at a junction or crossing. (Cross junctions get them automatically; use this to control any spot you like.) Smoother, safer traffic.',
+    desc: 'A compact 1965 three-aspect signal you can drop FREELY at any junction or crossing kerb (not grid-locked, so it can sit right at the roadside). Smoother, safer traffic.',
   },
 
   mall: {

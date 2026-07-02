@@ -3,7 +3,7 @@ import {
   newGame, tickDay, build, demolish, queueDemolish, queueDemoVisual, canPlace, derive, fireDamage,
   resolveEvent, snapshot, refreshSummary, ensureGrid, packState, issueBond, repayDebt,
   projectProgress, checkProjects,
-  reclaimLand, reclaimCost, buildingCost, priced,
+  reclaimLand, reclaimCost, buildingCost, priced, placeProp, removeProp,
   routeLength, addRoadwork, smoothRoute, spliceRoad,
   polyArea, reclaimAreaCost, addReclaimArea,
   roadEraseCover, eraseRoadsAlong,
@@ -515,7 +515,7 @@ function onTileTap(x, y, world, landmark) {
     // Multi-select: a tap TOGGLES the item under the cursor in/out of the teardown
     // selection (tap a red one again to undo). Nothing is removed until ✓ Done.
     // `landmark` (e.g. the airport) is a fixed structure the 3D pick hit directly.
-    const t = landmark ? { kind: landmark.kind || 'landmark', id: landmark.id, part: landmark.part, label: landmark.label } : findDemoTarget({ x, y }, world);
+    const t = landmark ? { kind: landmark.kind || 'landmark', id: landmark.id, part: landmark.part, i: landmark.i, label: landmark.label } : findDemoTarget({ x, y }, world);
     if (t) {
       const key = demoKey(t);
       if (G.demoSel.has(key)) G.demoSel.delete(key);        // tap a selected (red) item again -> undo
@@ -556,7 +556,12 @@ function onTileTap(x, y, world, landmark) {
     // MRT stations snap onto the MRT line you've drawn (cell-locked, no free offset).
     let tx = x, ty = y, wx = world && world.x, wz = world && world.z;
     if (b.selected === 'mrt') { const s = G.view._nearestTrackCell(x, y, 4, true); if (s && placementOk(s.x, s.y)) { tx = s.x; ty = s.y; wx = undefined; wz = undefined; } }
-    if (!placementOk(tx, ty)) {
+    // Street furniture (a lamp / signal) is a PROP: it isn't grid-bound, so it can be
+    // dropped FREELY at the kerb / verge / even over a road — land is the only rule.
+    const isProp = !!(BUILDINGS[b.selected] && BUILDINGS[b.selected].prop);
+    if (isProp) {
+      if (!G.view.isLand(tx, ty)) { toast('You can only place it on land. 🏝️'); return; }
+    } else if (!placementOk(tx, ty)) {
       if (G.view.heritageAt && G.view.heritageAt(tx, ty)) toast(`🏛 ${G.view.heritageAt(tx, ty)} — a 1965 landmark already stands here.`);
       else if (!G.view.isLand(tx, ty)) toast('You can only build on land. 🏝️');
       else if (G.view.isRoadAt(tx, ty)) toast('There is a road here — you can\'t build on the road. 🛣️');
@@ -570,11 +575,13 @@ function onTileTap(x, y, world, landmark) {
     // On steep/uneven ground the building gets a foundation so it isn't buried by
     // the slope: default to ELEVATE (a platform up to the high side, always fully
     // visible); the player can switch to EXCAVATE (cut the hill open) in the banner.
-    const fnd = b.selected === 'mrt' ? null : slopeFoundation(tx, ty);
+    // Props sit straight on the ground (no foundation).
+    const fnd = (b.selected === 'mrt' || isProp) ? null : slopeFoundation(tx, ty);
     const fmode = fnd ? 'lift' : null, fy = fnd ? fnd.fhi : null;
-    G.adjust = { x: tx, y: ty, key: b.selected, theme, rot, wx, wz, fy, fmode, flo: fnd ? fnd.flo : null, fhi: fnd ? fnd.fhi : null };
+    G.adjust = { x: tx, y: ty, key: b.selected, prop: isProp, theme, rot, wx, wz, fy, fmode, flo: fnd ? fnd.flo : null, fhi: fnd ? fnd.fhi : null };
     G.view.enterAdjust(tx, ty, b.selected, theme, G.adjust.rot, wx, wz, fy, fmode);
     updateToolBanner();
+    if (isProp) { toast(`Positioning ${BUILDINGS[b.selected].name}. Drag to rotate · tap to move · ✓ Done — drop it right at the kerb.`); return; }
     const linked = b.selected === 'mrt' && (tx !== x || ty !== y) ? ' Linked to the MRT line.' : '';
     const slope = fnd ? ' Uneven ground — 🏗 Elevated on a platform; tap ⛰ to Excavate (cut the hill) instead.' : '';
     toast(`Positioning ${BUILDINGS[b.selected].name}.${linked}${slope} Drag it to rotate · tap to move · ✓ Done.`);
@@ -620,6 +627,16 @@ function alignAdjustToViaduct(gx, gy) {
 // ✓ Done — commit the positioned object: charge for it and start construction.
 function commitAdjust() {
   const a = G.adjust; if (!a) return;
+  if (a.prop) {                                       // free street furniture: no grid cell, no build time
+    const ctr = G.view.worldOfCell(a.x, a.y);
+    const wx = (a.wx != null) ? a.wx : ctr.x, wz = (a.wz != null) ? a.wz : ctr.z;
+    const p = placeProp(G.state, { type: a.key, x: wx, z: wz, rot: a.rot || 0 });
+    if (!p) { toast(`Need ${money(buildingCost(G.state, a.key))} to place ${BUILDINGS[a.key].name}.`); return; }
+    G.view.clearAdjust(); G.view.syncProps(G.state); G.adjust = null; afterEdit();
+    toast(`${BUILDINGS[a.key].icon} ${BUILDINGS[a.key].name} placed at the kerb.`);
+    updateToolBanner();
+    return;
+  }
   if (!canPlace(G.state, a.x, a.y, a.key)) {
     if (G.state.treasury < buildingCost(G.state, a.key)) toast(`Need ${money(buildingCost(G.state, a.key))} to build ${BUILDINGS[a.key].name}.`);
     else toast('Cannot build here.');
@@ -949,7 +966,7 @@ function findDemoTarget(cell, world) {
 function demoKey(t) {
   return t.kind === 'building' ? `b:${t.x},${t.y}` : t.kind === 'heritage' ? `h:${t.x},${t.y}`
     : t.kind === 'tree' ? `t:${t.x},${t.y}` : t.kind === 'landmark' ? `L:${t.id}`
-    : t.kind === 'airportPart' ? `A:${t.part}` : `${t.kind}:${t.i}`;
+    : t.kind === 'airportPart' ? `A:${t.part}` : t.kind === 'prop' ? `P:${t.i}` : `${t.kind}:${t.i}`;
 }
 // The live state-object behind an infra target (for queueing its timed teardown).
 function infraRef(t) {
@@ -999,8 +1016,10 @@ function commitDemolish() {
   const cuts = G.demoCuts || [];
   if (!G.demoSel.size && !cuts.length) { cancelTools(); return; }
   const items = [];
+  const propIdx = [];                    // free-placed street furniture cleared at once (a lamp is a quick job)
   let maxDemo = 0;                       // longest teardown in this batch (for the toast)
   for (const t of G.demoSel.values()) {
+    if (t.kind === 'prop') { propIdx.push(t.i); continue; }
     if (t.kind === 'building') items.push({ kind: 'building', x: t.x, y: t.y });
     else if (t.kind === 'heritage') {
       // A prebuilt heritage house that sits in the grid tears down over TIME (hoarding
@@ -1025,6 +1044,10 @@ function commitDemolish() {
     if (pieces.length) roadsRebuilt = true;
   }
   const n = G.demoSel.size + cuts.length;
+  if (propIdx.length) {                  // remove props highest-index-first so earlier indices stay valid
+    propIdx.sort((p, q) => q - p).forEach((i) => removeProp(G.state, i));
+    G.view.syncProps(G.state); G.dirty = true;
+  }
   if (items.length) queueDemolish(G.state, items);
   for (const it of items) { if (it.kind === 'building') { const c = G.state.grid?.[it.y]?.[it.x]; if (c && c.demolish) maxDemo = Math.max(maxDemo, c.demolish.total); } }
   G.demoSel.clear(); G.demoHover = null; G.demoCuts = []; G.demoRoadPreview = null;
@@ -1090,6 +1113,7 @@ function demoInfoHtml(t) {
   const prog = progressAtCell(t);   // if it's mid-build / mid-teardown, show the time left too
   if (t.kind === 'landmark') return `<b>${escapeHtml(t.label || 'Landmark')}</b>${prog}<div class="hi-body">A fixed national landmark. Removing it clears the land. Tap a single building to remove just that part.</div>`;
   if (t.kind === 'airportPart') return `<b>✈️ ${escapeHtml(t.label || 'Airport building')}</b>${prog}<div class="hi-body">One building of the airport complex. You can tear it down on its own — the rest of the airport stays.</div>`;
+  if (t.kind === 'prop') { const pr = G.state.props?.[t.i], pb = pr && BUILDINGS[pr.type]; return `<b>${pb?.icon || '🪧'} ${escapeHtml(pb?.name || 'Street furniture')}</b>${prog}<div class="hi-body">Free-placed street furniture. Removing it clears the spot at once.</div>`; }
   if (t.kind === 'tree') return `<b>🌳 Tree</b>${prog}<div class="hi-body">Greenery that cleans the air and cools the city.</div>`;
   const c = G.state.grid?.[t.y]?.[t.x], b = c && BUILDINGS[c.k];
   if (!b) return `<b>${t.kind === 'heritage' ? '🏚️ Heritage building' : 'Building'}</b>${prog}<div class="hi-body">Part of the standing 1965 town.</div>`;
@@ -1107,7 +1131,7 @@ function progressAtCell(t) {
 
 function onDemolishHover(cell, world, landmark) {
   if (G.readOnly || !G.build.bulldoze) { hideHoverInfo(); return; }
-  const t = landmark ? { kind: landmark.kind || 'landmark', id: landmark.id, part: landmark.part, label: landmark.label } : findDemoTarget(cell, world);
+  const t = landmark ? { kind: landmark.kind || 'landmark', id: landmark.id, part: landmark.part, i: landmark.i, label: landmark.label } : findDemoTarget(cell, world);
   G.demoHover = t ? { ...t, key: demoKey(t) } : null;
   const info = t ? demoInfoHtml(t) : null;   // show the player what it is before they decide
   if (info) showHoverInfo(info); else hideHoverInfo();

@@ -25,7 +25,12 @@ function makeLandmarkPart(p, toonMat) {
   // global night-glow pass; everything else uses a plain toon material.
   const m = new THREE.Mesh(geo, p.light ? litMat(col) : toonMat(col));
   m.castShadow = p.type !== 'window' && p.type !== 'door'; m.receiveShadow = true;
-  m.position.set(p.x || 0, (p.y || 0) + yoff, p.z || 0); m.rotation.y = (p.rot || 0) + extraRot;
+  m.position.set(p.x || 0, (p.y || 0) + yoff, p.z || 0);
+  // rot is the yaw the designer edits (DEGREES, matching design.html); rx/rz are optional
+  // tilts (pitched roofs, ramps) captured when a game building is imported — both DEGREES,
+  // 0 for hand-authored parts.
+  const DEG = Math.PI / 180;
+  m.rotation.set((p.rx || 0) * DEG, (p.rot || 0) * DEG + extraRot, (p.rz || 0) * DEG);
   return m;
 }
 import { HEIGHTS_1966 } from './heights1966.js';
@@ -7006,4 +7011,56 @@ function makePerson(kind) {
       shortSleeve: Math.random() < 0.5 });
   }
   return { mesh: buildPerson(o), len: 1.0 };
+}
+
+// Convert a procedural game building into an EDITABLE parts list in the design.html
+// format ({type,x,y,z,w,h,d,rot,color,light,rx,rz}), so a player can import a stock
+// building into the 3D designer and remix it. Runs makeBuilding, flattens the nested
+// group to building-local space, and maps each primitive mesh to the nearest designer
+// part: Box→box, Cylinder→cyl, Cone→pyramid, Sphere→dome. Pitched roofs and ramps keep
+// their tilt via rx/rz (honoured by makeLandmarkPart above and the designer preview).
+// An approximate but faithful starting point — not every flourish survives, but the
+// massing, colours and roofs come across. Returns { parts, name, cat }.
+export function buildingToParts(key) {
+  const b = BUILDINGS[key];
+  const g = makeBuilding(key, null);
+  g.updateMatrixWorld(true);
+  const pos = new THREE.Vector3(), quat = new THREE.Quaternion(), scl = new THREE.Vector3();
+  const eul = new THREE.Euler();
+  const r3 = (v) => Math.abs(v) < 1e-3 ? 0 : Math.round(v * 1000) / 1000;
+  const parts = [];
+  const CAP = 200;   // safety cap so a giant model can't produce a runaway part list
+  g.traverse((o) => {
+    if (parts.length >= CAP || !o.isMesh || !o.geometry) return;
+    const gp = o.geometry.parameters || {}, t = o.geometry.type;
+    o.matrixWorld.decompose(pos, quat, scl);
+    eul.setFromQuaternion(quat, 'XYZ');   // matches makeLandmarkPart's rotation.set(x,y,z)
+    let part;
+    if (t === 'BoxGeometry') {
+      part = { type: 'box', w: (gp.width || 1) * scl.x, h: (gp.height || 1) * scl.y, d: (gp.depth || 1) * scl.z };
+    } else if (t === 'CylinderGeometry') {
+      const r = Math.max(gp.radiusTop || 0, gp.radiusBottom || 0) || 0.5;
+      part = { type: 'cyl', w: 2 * r * scl.x, h: (gp.height || 1) * scl.y, d: 2 * r * scl.z };
+    } else if (t === 'ConeGeometry') {
+      const r = gp.radius || 0.7;
+      part = { type: 'pyramid', w: (r / 0.7) * scl.x, h: (gp.height || 1) * scl.y, d: (r / 0.7) * scl.z };
+    } else if (t === 'SphereGeometry') {
+      const r = gp.radius || 0.5;
+      part = { type: 'dome', w: 2 * r * scl.x, h: 2 * r * scl.y, d: 2 * r * scl.z };
+    } else { return; }   // skip shapes the designer can't represent
+    if (part.w < 0.05 && part.h < 0.05 && part.d < 0.05) return;   // drop degenerate slivers
+    // makeLandmarkPart re-adds yoff (h/2, or 0 for a dome), so store the BOTTOM y here
+    const yoff = part.type === 'dome' ? 0 : part.h / 2;
+    part.x = r3(pos.x); part.z = r3(pos.z); part.y = r3(pos.y - yoff);
+    // designer stores rotations in DEGREES; pyramids bake +45° in makeLandmarkPart, remove it
+    const DEG = 180 / Math.PI;
+    part.rot = r3(eul.y * DEG - (part.type === 'pyramid' ? 45 : 0));
+    const rx = r3(eul.x * DEG), rz = r3(eul.z * DEG); if (rx) part.rx = rx; if (rz) part.rz = rz;
+    const m = Array.isArray(o.material) ? o.material[0] : o.material;
+    if (m && m.color) part.color = '#' + m.color.getHexString();
+    if (m && m.userData && m.userData.glowK > 0.8) part.light = true;   // a lit window/sign
+    part.w = r3(part.w); part.h = r3(part.h); part.d = r3(part.d);
+    parts.push(part);
+  });
+  return { parts, name: (b && b.name) || key, cat: (b && b.cat) || null };
 }

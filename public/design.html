@@ -40,6 +40,13 @@
     <h2>🏗 Building / Landmark Designer</h2>
     <input id="name" type="text" placeholder="Name (e.g. City Hall)" value="New Landmark">
 
+    <h3>Start from a game building</h3>
+    <div class="row">
+      <select id="importsel" style="flex:1" title="Load a built-in game building into the designer as editable parts, then remix it"></select>
+      <button id="importbtn">⬇ Import</button>
+    </div>
+    <small>Imports a stock building as editable parts — reshape, resize &amp; recolour it, then Add&nbsp;to&nbsp;game or Publish your own version.</small>
+
     <h3>Add part — structure</h3>
     <div class="row">
       <button data-add="box">▢ Box</button>
@@ -111,6 +118,8 @@
 <script type="module">
 import * as THREE from './js/vendor/three.module.js';
 import { loadLibrary, addToLibrary, removeFromLibrary } from './js/landmarks.js';
+import { buildingToParts } from './js/scene3d.js';
+import { BUILDINGS, CATEGORIES } from './js/data.js';
 addEventListener('error', e => { const h = document.getElementById('hud'); if (h) h.textContent = 'ERR: ' + (e.message || e.error?.message); });
 addEventListener('unhandledrejection', e => { const h = document.getElementById('hud'); if (h) h.textContent = 'REJ: ' + (e.reason?.message || e.reason); });
 const $ = id => document.getElementById(id);
@@ -150,7 +159,10 @@ function partMesh(p) {
   if (p.light) { mat.emissive = new THREE.Color(p.color || '#ffe9a8'); mat.emissiveIntensity = night ? 1.1 : 0.55; }
   const m = new THREE.Mesh(geo, mat);
   m.castShadow = p.type !== 'window' && p.type !== 'door'; m.receiveShadow = true;
-  m.position.set(p.x || 0, (p.y || 0) + yoff, p.z || 0); m.rotation.y = (p.rot || 0) * Math.PI / 180 + ex;
+  const DEG = Math.PI / 180;
+  m.position.set(p.x || 0, (p.y || 0) + yoff, p.z || 0);
+  // rot is the editable yaw; rx/rz are optional tilts carried in from an imported building
+  m.rotation.set((p.rx || 0) * DEG, (p.rot || 0) * DEG + ex, (p.rz || 0) * DEG);
   return m;
 }
 function rebuild() {
@@ -179,6 +191,36 @@ function addPart(type) {
   sel = parts.length - 1; rebuild();
 }
 document.querySelectorAll('[data-add]').forEach(b => b.onclick = () => addPart(b.dataset.add));
+
+// ---- Import a stock game building as editable parts, then remix it ----
+const FUNC_BY_CAT = { residential: 'house', commercial: 'economy', industry: 'economy', economy: 'economy',
+  agriculture: 'economy', entertainment: 'entertainment', leisure: 'entertainment', power: 'power', water: 'water',
+  civic: 'civic', health: 'civic', education: 'civic', safety: 'civic', defence: 'civic', heritage: 'landmark' };
+(function populateImport() {
+  const s = $('importsel'); if (!s) return;
+  const catName = {}; for (const c of (CATEGORIES || [])) catName[c.key || c.id] = c.name || c.label || c.key || c.id;
+  const byCat = {};
+  for (const [key, b] of Object.entries(BUILDINGS)) {
+    if (!b || !b.name || b.community || b.landmarkParts) continue;   // skip community/already-designed
+    (byCat[b.cat] = byCat[b.cat] || []).push([key, b]);
+  }
+  s.innerHTML = Object.keys(byCat).sort().map(cat => {
+    const opts = byCat[cat].sort((a, b) => a[1].name.localeCompare(b[1].name))
+      .map(([key, b]) => `<option value="${key}">${b.icon ? b.icon + ' ' : ''}${b.name}</option>`).join('');
+    return `<optgroup label="${catName[cat] || cat}">${opts}</optgroup>`;
+  }).join('');
+})();
+$('importbtn').onclick = () => {
+  const key = $('importsel').value; if (!key) return;
+  let res; try { res = buildingToParts(key); } catch (e) { return toast('Import failed: ' + e.message, true); }
+  if (!res.parts || !res.parts.length) return toast('Nothing to import from that building', true);
+  parts = res.parts; sel = 0;
+  $('name').value = res.name || 'Imported building';
+  const f = FUNC_BY_CAT[res.cat] || 'landmark';
+  if ([...$('cfunc').options].some(o => o.value === f)) $('cfunc').value = f;
+  rebuild();
+  toast(`Imported “${res.name}” — ${parts.length} parts. Reshape it, then Add to game or Publish.`);
+};
 $('parts').onclick = e => {
   const del = e.target.dataset.del; if (del != null) { parts.splice(+del, 1); if (sel >= parts.length) sel = parts.length - 1; rebuild(); return; }
   const it = e.target.closest('.pitem'); if (it) { sel = +it.dataset.i; rebuild(); }

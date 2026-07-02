@@ -354,6 +354,18 @@ try {
     // hoarding, not in a blink
     const dv = (v.state.demoVisual || []).find((d) => d.kind === 'landmark' && d.id === 'airport');
     const timed = !!dv, total = dv ? dv.total : 0;
+    // the hoarding must be a set of LOW fences hugging each building + the runway
+    // strip — NOT one tall square that also fences off the greenery/roads around it
+    v.syncDemolition(v.state);
+    const asite = v._demoSites && v._demoSites.get('dv:landmark:airport');
+    let nFences = 0, barH = 99;
+    if (asite && asite.decks) {
+      nFences = asite.decks.length;
+      asite.group.updateMatrixWorld(true);
+      let miny = 1e9, maxy = -1e9;
+      asite.group.traverse((o) => { if (o.isMesh) { o.geometry.computeBoundingBox(); const bb = o.geometry.boundingBox.clone(); bb.applyMatrix4(o.matrixWorld); miny = Math.min(miny, bb.min.y); maxy = Math.max(maxy, bb.max.y); } });
+      barH = maxy - miny;
+    }
     const standingAfterDone = v.airportGroup.visible;
     if (total) S.tick(total + 3);
     const hidden = v.airportGroup.visible === false;
@@ -361,10 +373,11 @@ try {
     for (let y = 0; y < N && !maskedAfter; y++) for (let x = 0; x < N; x++) if (v.airportMask[y][x]) { maskedAfter = true; break; }
     const persisted = !!(v.state.removedLandmarks && v.state.removedLandmarks.airport);
     S.setBulldoze(false);
-    return { found: true, maskedBefore, sel, timed, total, standingAfterDone, hidden, freed: !maskedAfter, persisted };
+    return { found: true, maskedBefore, sel, timed, total, standingAfterDone, hidden, freed: !maskedAfter, persisted, nFences, barH };
   });
   ok(dmAir.found && dmAir.maskedBefore && dmAir.sel, 'the airport (fixed landmark) can be selected for demolition');
   ok(dmAir.timed && dmAir.total >= 60 && dmAir.standingAfterDone, 'the airport is torn down over months behind a hoarding (still there right after Done), not instantly');
+  ok(dmAir.nFences >= 2 && dmAir.barH < 9, `its hoarding is LOW fences hugging each building + the runway (${dmAir.nFences} fences, ${dmAir.barH.toFixed(1)}u tall), not one tall square over the field`);
   ok(dmAir.hidden && dmAir.freed && dmAir.persisted, 'once the teardown finishes the airport is gone, its land freed, and the removal persists');
 
   // (7) CS-style road bulldozer: hover shows a live chunk; a single CLICK tears it out

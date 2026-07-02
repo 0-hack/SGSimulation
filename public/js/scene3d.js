@@ -3146,58 +3146,105 @@ export class Scene3D {
     this.scene.remove(s.group); if (s.found) this.scene.remove(s.found); this.sites.delete(id);
   }
   // A demolition "site" mirrors the construction one in reverse: an orange safety
-  // hoarding (corner posts) wraps the building, a wrecking crane stands beside it, and
-  // a hazard platform descends as the structure crumbles — so a slow teardown READS as
-  // a teardown, just like a slow build reads as a build.
+  // hoarding wraps the building, a wrecking crane stands beside it, and a hazard
+  // platform descends as the structure crumbles — so a slow teardown READS as a
+  // teardown. The hoarding is kept LOW (a fence, not a wall) and HUGS the object's
+  // own footprint, so it never fences off the greenery/roads the player didn't pick.
+  //
+  // One LOW, surface-hugging hoarding around a single footprint. (wx,wz) world
+  // centre; halfX/halfZ half-footprint in the fence's local frame; rotY orientation;
+  // topY the structure's height above baseY; crane adds a small wrecking crane.
+  _addHoarding(wrap, wx, wz, baseY, halfX, halfZ, rotY, topY, crane) {
+    const hazard = toon(0xe2553a), rail = toon(0xf0a93a);
+    const FH = 2.8;                                                        // hoarding height — a fence, not a wall
+    const sub = new THREE.Group(); sub.position.set(wx, baseY, wz); sub.rotation.y = rotY || 0; wrap.add(sub);
+    const hw = Math.max(1.2, halfX) + 0.4, hd = Math.max(1.2, halfZ) + 0.4;
+    for (const [px, pz] of [[-hw, -hd], [hw, -hd], [hw, hd], [-hw, hd]]) {  // corner safety posts
+      const post = new THREE.Mesh(new THREE.BoxGeometry(0.22, FH, 0.22), hazard);
+      post.position.set(px, FH / 2, pz); sub.add(post);
+    }
+    for (const yb of [0.7, 1.9]) {                                         // two low hoarding rails
+      for (const [a, b, len, rot] of [[0, -hd, 2 * hw, 0], [0, hd, 2 * hw, 0], [-hw, 0, 2 * hd, Math.PI / 2], [hw, 0, 2 * hd, Math.PI / 2]]) {
+        const r = new THREE.Mesh(new THREE.BoxGeometry(len, 0.16, 0.08), rail); r.position.set(a, yb, b); r.rotation.y = rot; sub.add(r);
+      }
+    }
+    const deckTop = Math.max(FH, Math.min(14, topY || FH));               // capped so a tall block's deck never towers
+    const plat = new THREE.Mesh(new THREE.BoxGeometry(2 * hw, 0.26, 2 * hd), toon(0xff8a3a, { transparent: true, opacity: 0.4 }));
+    plat.position.y = deckTop; sub.add(plat);
+    let ball = null;
+    if (crane && deckTop > 5) {                                           // a modest wrecking crane, only for a big structure
+      const MH = deckTop + 3;
+      const mast = new THREE.Mesh(new THREE.BoxGeometry(0.28, MH, 0.28), hazard); mast.position.set(hw + 0.9, MH / 2, hd + 0.9); sub.add(mast);
+      const jib = new THREE.Mesh(new THREE.BoxGeometry(2 * hw + 1.6, 0.22, 0.22), hazard); jib.position.set(hw + 0.9 - (2 * hw + 1.6) / 2 + 0.3, MH - 0.3, hd + 0.9); sub.add(jib);
+      ball = new THREE.Mesh(new THREE.SphereGeometry(0.5, 10, 8), toon(0x33373d)); ball.position.set(hw + 0.9 - (2 * hw + 0.8), deckTop * 0.6 + 1, hd + 0.9); sub.add(ball);
+    }
+    return { plat, ball, deckTop };
+  }
+  // A structure's ORIENTED footprint measured in a parent frame (e.g. an airport
+  // building inside the rotated/scaled airport group): world centre + half-extents
+  // along the frame's own axes, so a fence hugs it snugly instead of ballooning to
+  // its world-axis-aligned bounding box. Moving parts (aircraft) are excluded.
+  _orientedBoxInFrame(obj, frame) {
+    frame.updateMatrixWorld(true);
+    const inv = new THREE.Matrix4().copy(frame.matrixWorld).invert();
+    const local = new THREE.Box3(); local.makeEmpty();
+    const tmp = new THREE.Box3(), m = new THREE.Matrix4();
+    obj.traverse((o) => {
+      if (!(o.isMesh && o.geometry) || this._isMover(o)) return;
+      if (!o.geometry.boundingBox) o.geometry.computeBoundingBox();
+      m.multiplyMatrices(inv, o.matrixWorld);
+      tmp.copy(o.geometry.boundingBox).applyMatrix4(m);
+      if (isFinite(tmp.min.x)) local.union(tmp);
+    });
+    if (local.isEmpty()) return null;
+    const c = local.getCenter(new THREE.Vector3()).applyMatrix4(frame.matrixWorld);
+    const sc = frame.scale.x || 1;
+    return { cx: c.x, cz: c.z, halfX: (local.max.x - local.min.x) / 2 * sc, halfZ: (local.max.z - local.min.z) / 2 * sc, topY: (local.max.y - local.min.y) * sc };
+  }
   _startDemoSite(id, x, y, group, light) {
     if (!this._demoSites) this._demoSites = new Map();
     if (this._demoSites.has(id)) return;
     const g = group || (this.buildings.get(id) || {}).group; if (!g) return;
-    const box = this._boxOfStatic(g);   // exclude moving parts (e.g. taxiing/flying aircraft) from the barrier bounds
-    if (!isFinite(box.min.y) || !isFinite(box.max.y) || box.isEmpty()) return;
-    const rcell = (x != null && y != null) ? this.state?.grid?.[y]?.[x] : null;
-    const baseY = (rcell && typeof rcell.fy === 'number') ? rcell.fy
-      : (x != null && y != null && this.terrainHeight ? this.terrainHeight(x, y) : box.min.y);
-    // Cap the hoarding footprint so a HUGE structure (the airport runway) gets a
-    // sensible work-zone barrier over its centre, not a fence spanning the whole map.
-    const CAP = 30;
-    const sx = Math.min(CAP, Math.max(2.5, box.max.x - box.min.x)), sz = Math.min(CAP, Math.max(2.5, box.max.z - box.min.z));
-    const H = Math.max(4, Math.min(40, box.max.y - baseY));
-    const cx = (box.min.x + box.max.x) / 2, cz = (box.min.z + box.max.z) / 2;
     const wrap = new THREE.Group();
-    wrap.position.set(cx, baseY, cz);
-    wrap.rotation.y = g.rotation.y;
-    const hazard = toon(0xe2553a), rail = toon(0xf0a93a);
-    const hw = sx / 2 + 0.6, hd = sz / 2 + 0.6;
-    for (const [px, pz] of [[-hw, -hd], [hw, -hd], [hw, hd], [-hw, hd]]) {   // corner safety posts
-      const post = new THREE.Mesh(new THREE.BoxGeometry(0.24, H + 1.2, 0.24), hazard);
-      post.position.set(px, (H + 1.2) / 2, pz); wrap.add(post);
-    }
-    for (const yb of [1.0, H * 0.5 + 0.5]) {                                 // two hoarding rails around the base
-      for (const [a, b, len, rot] of [[0, -hd, sx + 1.2, 0], [0, hd, sx + 1.2, 0], [-hw, 0, sz + 1.2, Math.PI / 2], [hw, 0, sz + 1.2, Math.PI / 2]]) {
-        const r = new THREE.Mesh(new THREE.BoxGeometry(len, 0.18, 0.1), rail); r.position.set(a, yb, b); r.rotation.y = rot; wrap.add(r);
+    const decks = [];
+    const rcell = (x != null && y != null) ? this.state?.grid?.[y]?.[x] : null;
+    if (g === this.airportGroup && (this.airportParts || []).length) {
+      // The airport is scattered buildings + a long runway: fence each BUILDING and
+      // the runway strip on their own, never one big square over the field between.
+      // wrap sits at world origin; each fence is positioned absolutely.
+      const base = this._airfieldY != null ? this._airfieldY : g.position.y;
+      for (const q of this.airportParts) {
+        const ob = this._orientedBoxInFrame(q.obj, g);
+        if (ob) decks.push(this._addHoarding(wrap, ob.cx, ob.cz, base, ob.halfX, ob.halfZ, g.rotation.y, ob.topY, ob.halfX > 5 || ob.halfZ > 5));
+      }
+      const c = this._airportCenter, SC = AIRPORT.scale;                  // + a thin fence hugging just the runway strip
+      if (c) decks.push(this._addHoarding(wrap, c.cx, c.cz, base, AIRPORT.rwHalfW * SC + 1, c.len / 2, c.rot, 2.2, false));
+    } else {
+      // A single structure: one snug axis-aligned fence. wrap sits AT the structure
+      // (so site.group.position points at it) and the hoarding is added locally.
+      const box = this._boxOfStatic(g);
+      if (box && !box.isEmpty() && isFinite(box.min.y) && isFinite(box.max.y)) {
+        const cx = (box.min.x + box.max.x) / 2, cz = (box.min.z + box.max.z) / 2;
+        const baseY = (rcell && typeof rcell.fy === 'number') ? rcell.fy
+          : (x != null && y != null && this.terrainHeight ? this.terrainHeight(x, y) : box.min.y);
+        wrap.position.set(cx, 0, cz);
+        decks.push(this._addHoarding(wrap, 0, 0, baseY, (box.max.x - box.min.x) / 2, (box.max.z - box.min.z) / 2, 0, box.max.y - baseY, !light));
       }
     }
-    const plat = new THREE.Mesh(new THREE.BoxGeometry(sx + 1.0, 0.3, sz + 1.0), toon(0xff8a3a, { transparent: true, opacity: 0.55 }));
-    plat.position.y = H; wrap.add(plat);
-    let ball = null;
-    if (!light) {                                                           // a full wrecking crane (skipped for small scenery like a tree)
-      const mast = new THREE.Mesh(new THREE.BoxGeometry(0.34, H + 7, 0.34), hazard);
-      mast.position.set(hw + 1.3, (H + 7) / 2, hd + 1.3); wrap.add(mast);
-      const jib = new THREE.Mesh(new THREE.BoxGeometry(sx + 3.4, 0.26, 0.26), hazard);
-      jib.position.set(hw + 1.3 - (sx + 3.4) / 2 + 0.3, H + 6.4, hd + 1.3); wrap.add(jib);
-      ball = new THREE.Mesh(new THREE.SphereGeometry(0.7, 10, 8), toon(0x33373d));   // wrecking ball
-      ball.position.set(hw + 1.3 - (sx + 3.0), H + 2.6, hd + 1.3); wrap.add(ball);
-    }
+    if (!decks.length) return;
     this.scene.add(wrap);
-    this._demoSites.set(id, { group: wrap, plat, ball, H, baseScaleY: g.scale.y });   // remember the mesh's scale so it can crumble from it
+    const H = Math.max(...decks.map((d) => d.deckTop));
+    // keep .plat/.ball pointing at the primary deck for progress checks & back-compat
+    this._demoSites.set(id, { group: wrap, decks, plat: decks[0].plat, ball: decks[0].ball, H, baseScaleY: g.scale.y });
     this._spawnDust(g.position.x, g.position.z, 0x9a8f80, 12);
   }
   _setDemoSiteProgress(id, p) {
     const s = this._demoSites && this._demoSites.get(id); if (!s) return;
     const f = Math.max(0.02, Math.min(1, p));    // p = fraction still standing (1 → 0)
-    s.plat.position.y = f * s.H + 0.2;           // hazard platform rides the shrinking top down
-    if (s.ball) s.ball.position.y = f * s.H + 2.2;
+    for (const d of (s.decks || [])) {           // every hoarding's hazard deck rides its own top down
+      if (d.plat) d.plat.position.y = f * d.deckTop + 0.2;
+      if (d.ball) d.ball.position.y = f * d.deckTop * 0.6 + 1;
+    }
   }
   _removeDemoSite(id) {
     const s = this._demoSites && this._demoSites.get(id); if (!s) return;

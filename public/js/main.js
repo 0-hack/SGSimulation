@@ -15,7 +15,7 @@ import {
   updateHud, renderBuild, renderPolicy, renderDash, renderNews,
   money, num, pct, el,
 } from './ui.js';
-import { BUILDINGS, CATEGORIES, POP_SCALE, ROAD_TYPES, PLANTS, SURFACE_TYPES, landmarkToBuilding, SANDBOX } from './data.js';
+import { BUILDINGS, CATEGORIES, POP_SCALE, ROAD_TYPES, PLANTS, SURFACE_TYPES, landmarkToBuilding, communityBuildToBuilding, SANDBOX } from './data.js';
 import { loadLibrary } from './landmarks.js';
 import { injectIcons, ICONS, WEATHER } from './icons.js';
 
@@ -30,6 +30,36 @@ function registerLandmarks(list) {
   }
   if (n && !CATEGORIES.some((c) => c.id === 'landmark')) CATEGORIES.push({ id: 'landmark', name: 'Landmarks', icon: '🏛️' });
   return n;
+}
+
+// Fetch the community list once (per sort/filter) into G.community, then re-render.
+// Caching in state avoids losing an in-flight fetch to a panel re-render.
+async function loadCommunity() {
+  G.community.loading = true; G.community.list = null; if (G.currentPanel === 'build') refreshPanel();
+  try {
+    const q = `/api/builds?sort=${G.community.sort}${G.community.func ? `&func=${G.community.func}` : ''}&limit=40`;
+    const data = await fetch(q).then((r) => r.json());
+    G.community.list = (data && data.builds) || [];
+  } catch (e) { G.community.list = 'error'; }
+  G.community.loading = false;
+  if (G.currentPanel === 'build') refreshPanel();
+}
+
+// Download a COMMUNITY build (counts toward its popularity), register it as a
+// buildable definition (priced by its size & era, like everything else) and select
+// it so the player just taps the map to construct it.
+async function downloadCommunity(build) {
+  try {
+    const full = await fetch(`/api/builds/${build.id}/download`, { method: 'POST' }).then((r) => r.json());
+    if (!full || full.error || !full.design) { toast('Could not download that build.', true); return; }
+    const [key, def] = communityBuildToBuilding(full);
+    BUILDINGS[key] = def;
+    clearAdjustSilently();
+    G.build.selected = key; G.build.bulldoze = false;
+    G.view.setPreview(key, null);
+    refreshPanel(); updateToolBanner(); closeSheet();
+    toast(`⬇ ${def.name} ready — tap the map to build it (${money(buildingCost(G.state, key))}).`);
+  } catch (e) { toast('Download failed: ' + e.message, true); }
 }
 
 const LS_SAVE = 'sg_save_v1';
@@ -77,6 +107,7 @@ const G = {
   lastFrame: 0,
   hudTimer: 0,
   build: { cat: 'residential', selected: null, bulldoze: false, theme: null, rot: 0 },
+  community: { sort: 'downloads', func: '', list: null, loading: false },   // browse state + cached results for the Community tab
   adjust: null,                 // { x, y, key, theme, rot, wx, wz } — a placed-but-not-yet-committed object being positioned (wx/wz = exact world spot)
   demoSel: new Map(),           // Demolish multi-select: key -> target ({kind,x,y|i,poly,label}). Committed (timed) on Done.
   demoHover: null,              // the Demolish target currently under the cursor (shown red alongside the selection)
@@ -1356,11 +1387,14 @@ function refreshPanel() {
     if (!G.readOnly) { const lib = loadLibrary(); registerLandmarks(lib); G.state.landmarks = lib; }
     content.append(renderBuild(G.state, {
       cat: G.build.cat, selected: G.build.selected, bulldoze: G.build.bulldoze, theme: G.build.theme,
+      community: G.community, downloadCommunity,
+      setCommSort: (s) => { G.community.sort = s; loadCommunity(); },
+      setCommFunc: (f) => { G.community.func = f; loadCommunity(); },
       road: G.road, reclaim: G.reclaim, toggleReclaim, plant: G.plant, selectPlant,
       surface: G.surface, selectSurface, setSurfaceScale,
       selectRoadTool, setRoadType: (t) => { G.road.type = t; applyRoadToolMode(); refreshPanel(); },
       toggleBridge: () => { G.road.elevated = !G.road.elevated; refreshPanel(); },
-      setCat: (c) => { clearAdjustSilently(); G.build.cat = c; if (c !== 'roads') { G.road.tool = null; G.view.setRoadMode(false); } if (c !== 'land') { G.reclaim.active = false; G.surface.active = false; G.view.setPaintMode(false); } if (c !== 'plants' && G.plant.active) { G.plant.active = false; G.plant.kind = null; G.view.setPlantMode(false); } refreshPanel(); updateToolBanner(); },
+      setCat: (c) => { clearAdjustSilently(); G.build.cat = c; if (c !== 'roads') { G.road.tool = null; G.view.setRoadMode(false); } if (c !== 'land') { G.reclaim.active = false; G.surface.active = false; G.view.setPaintMode(false); } if (c !== 'plants' && G.plant.active) { G.plant.active = false; G.plant.kind = null; G.view.setPlantMode(false); } refreshPanel(); updateToolBanner(); if (c === 'community' && !G.community.loading && G.community.list == null) loadCommunity(); },
       setTheme: (t) => { G.build.theme = t; if (G.adjust) { G.adjust.theme = t; G.view.enterAdjust(G.adjust.x, G.adjust.y, G.adjust.key, t, G.adjust.rot); } else if (G.build.selected) G.view.setPreview(G.build.selected, t); refreshPanel(); },
       selectBuilding: (k) => {
         clearAdjustSilently();

@@ -1,6 +1,6 @@
 // UI rendering helpers: builds the contents of each bottom sheet/panel.
 // Returns DOM and wires callbacks; keeps main.js focused on orchestration.
-import { BUILDINGS, CATEGORIES, POLICIES, POP_SCALE, THEMES, ROAD_TYPES, PLANTS, SURFACE_TYPES, SANDBOX } from './data.js';
+import { BUILDINGS, CATEGORIES, POLICIES, POP_SCALE, THEMES, ROAD_TYPES, PLANTS, SURFACE_TYPES, SANDBOX, FUNC_ICON, FUNC_LABEL } from './data.js';
 import { derive, isUnlocked, formatDate, debtCeiling, bondRate, reclaimCost, buildingCost, buildDays, priceIndex, inflationRate, currencyStrength } from './engine.js';
 import { ICONS, CAT_ICON } from './icons.js';
 
@@ -76,6 +76,9 @@ export function renderBuild(state, ctx) {
   } else if (ctx.cat === 'plants') {
     // Plants category shows the individual-plant palette instead of buildings.
     wrap.append(renderPlants(ctx)); return wrap;
+  } else if (ctx.cat === 'community') {
+    // Community shows a browser of player-shared designs (fetched from the server).
+    wrap.append(renderCommunity(ctx)); return wrap;
   }
 
   // Colour-theme picker — shown for categories that contain customizable builds.
@@ -345,6 +348,43 @@ export function renderPolicy(state, ctx) {
     wrap.append(box);
   }
   return wrap;
+}
+
+// The Community tab: browse player-shared designs (fetched from the server),
+// sorted by downloads or newest and filtered by functionality; tap Build to
+// download & construct one. Async — shows a spinner, then the cards.
+function renderCommunity(ctx) {
+  const wrap = el('div', 'community');
+  const c = ctx.community || { sort: 'downloads', func: '' };
+  const ctrls = el('div', 'comm-ctrls');
+  ctrls.append(el('span', 'comm-head', '🌐 Community builds'));
+  const sortSel = el('select', 'comm-sel');
+  for (const [v, t] of [['downloads', '↧ Most downloaded'], ['recent', '🕑 Newest']]) { const o = el('option', '', t); o.value = v; if (c.sort === v) o.selected = true; sortSel.append(o); }
+  sortSel.onchange = () => ctx.setCommSort(sortSel.value);
+  const funcSel = el('select', 'comm-sel');
+  { const o = el('option', '', 'All uses'); o.value = ''; if (!c.func) o.selected = true; funcSel.append(o); }
+  for (const f of ['house', 'economy', 'entertainment', 'power', 'water', 'civic', 'landmark']) { const o = el('option', '', `${FUNC_ICON[f]} ${FUNC_LABEL[f]}`); o.value = f; if (c.func === f) o.selected = true; funcSel.append(o); }
+  funcSel.onchange = () => ctx.setCommFunc(funcSel.value);
+  ctrls.append(sortSel, funcSel);
+  wrap.append(ctrls, el('div', 'comm-note', 'Player-designed buildings shared with everyone. Build one and it is priced for its size & era, like any other build.'));
+  const list = el('div', 'comm-list');
+  if (c.loading || c.list == null) list.append(el('div', 'comm-msg', 'Loading community builds…'));
+  else if (c.list === 'error') list.append(el('div', 'comm-msg', 'Could not reach the community server.'));
+  else if (!c.list.length) list.append(el('div', 'comm-msg', 'No community builds yet — publish one from the 3D Designer (🏗 above).'));
+  else for (const b of c.list) list.append(commCard(ctx, b));
+  wrap.append(list);
+  return wrap;
+}
+function commCard(ctx, b) {
+  const card = el('div', 'comm-card');
+  const info = el('div', 'cc-info');
+  const name = el('div', 'cc-name');
+  name.append(el('span', 'cc-ico', FUNC_ICON[b.func] || '🏛️'), document.createTextNode(' ' + (b.name || 'Untitled')));
+  info.append(name, el('div', 'cc-meta', `${b.author || 'Anonymous'} · ${FUNC_LABEL[b.func] || 'Landmark'} · ${b.year || ''} · ⬇ ${b.downloads || 0}`));
+  const btn = el('button', 'btn cc-build', 'Build');
+  btn.onclick = () => ctx.downloadCommunity(b);
+  card.append(info, btn);
+  return card;
 }
 
 // ===========================================================================

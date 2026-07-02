@@ -51,9 +51,14 @@ export const CATEGORIES = [
   { id: 'agriculture', name: 'Farms', icon: '🌾' },
   { id: 'leisure', name: 'Coast & Leisure', icon: '⛱️' },
   { id: 'heritage', name: 'Heritage', icon: '🏛️' },
+  { id: 'community', name: 'Community', icon: '🌐' },
   { id: 'roads', name: 'Transport', icon: '🛣️' },
   { id: 'land', name: 'Reclaim', icon: '🏝️' },
 ];
+
+// Icons for a custom build's functionality (community builds).
+export const FUNC_ICON = { house: '🏠', economy: '🏭', entertainment: '🎡', power: '⚡', water: '💧', civic: '🏥', landmark: '🏛️' };
+export const FUNC_LABEL = { house: 'Housing', economy: 'Economy', entertainment: 'Entertainment', power: 'Power', water: 'Water', civic: 'Civic', landmark: 'Landmark' };
 
 // Routes the player can draw, by transport mode: Road (cars), Railway (trains),
 // Airport (planes). `width` drives traffic/lane spacing; `renderHW` (when set) is
@@ -700,6 +705,33 @@ export function landmarkToBuilding(lm, i) {
     cost, upkeep, year: START_YEAR, homes: 0, jobs,
     power, water, pollution: 0, happiness, income: 0,
     desc: `A custom-designed landmark — ${complexity} part${complexity !== 1 ? 's' : ''}, ~${Math.round(vol)} vol${lit ? `, ${lit} lit window${lit !== 1 ? 's' : ''} (glow at night)` : ''}. Cost & utilities scale with size and complexity.`,
+    landmarkParts: parts, lmScale: scale,
+  }];
+}
+
+// Turn a downloaded COMMUNITY build into a buildable definition: reuse the landmark
+// cost/size model, then blend in the stats implied by its chosen FUNCTIONALITY and
+// stamp its ERA (so the normal build pricing factors year & condition, like anything
+// else). Rendered via landmarkParts, so it looks exactly as the author designed it.
+export function communityBuildToBuilding(build) {
+  const d = build.design || {};
+  const parts = d.parts || [];
+  const scale = d.scale || build.size || 1;
+  const [, base] = landmarkToBuilding({ name: build.name, parts, scale }, build.id || 'cm');
+  const st = d.stats || {};
+  const num = (v, fb) => (typeof v === 'number' ? v : fb);
+  const key = 'cm_' + (build.id || (build.name || 'x').toLowerCase().replace(/[^a-z0-9]+/g, '_'));
+  return [key, {
+    ...base,
+    name: build.name || 'Community Build', cat: 'community', icon: FUNC_ICON[build.func] || '🏛️',
+    // available to build ANY year (a player creation, not tech-gated); its price is
+    // factored by the PLAYER's current year & condition, and `era` is kept for flavour.
+    year: base.year, era: build.year, community: true, func: build.func || 'landmark', author: build.author || 'Anonymous',
+    homes: num(st.homes, 0), jobs: num(st.jobs, base.jobs),
+    power: num(st.power, base.power), water: num(st.water, base.water),
+    pollution: num(st.pollution, 0), happiness: num(st.happiness, base.happiness),
+    income: num(st.income, 0), upkeep: num(st.upkeep, base.upkeep), safety: num(st.safety, 0),
+    desc: `A community design${build.author ? ' by ' + build.author : ''} · ${FUNC_LABEL[build.func] || 'Landmark'} · ${build.downloads || 0} downloads. Priced for its size and the ${build.year || ''} era.`,
     landmarkParts: parts, lmScale: scale,
   }];
 }

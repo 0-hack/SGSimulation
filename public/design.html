@@ -75,6 +75,23 @@
     <div class="row"><label>rot</label><input id="lrot" type="number" step="5" value="0">° <label>×</label><input id="lscale" type="number" step="0.1" value="1"></div>
     <small>x/y are normalised island coords (0–1). Trace.html shows them; downtown ≈ 0.42, 0.49.</small>
 
+    <h3>Community build</h3>
+    <div class="row">
+      <label style="width:auto">use</label>
+      <select id="cfunc" style="flex:1" title="What this building does in-game — sets its benefits and how it is priced">
+        <option value="landmark">🏛️ Landmark (decor)</option>
+        <option value="house">🏠 Housing</option>
+        <option value="economy">🏭 Economy / jobs</option>
+        <option value="entertainment">🎡 Entertainment</option>
+        <option value="power">⚡ Power</option>
+        <option value="water">💧 Water</option>
+        <option value="civic">🏥 Civic / services</option>
+      </select>
+    </div>
+    <div class="row"><label style="width:auto">era</label><input id="cyear" type="number" step="1" value="1965" style="width:60px"> <label style="width:auto">by</label><input id="cauthor" type="text" placeholder="Your name" style="flex:1"></div>
+    <div class="row"><button id="publish" class="prim">🌐 Publish to community</button></div>
+    <small>Publishing shares your design so anyone can build it in their game (Build ▸ Community). Price &amp; build time scale with its size and the era it fits — like every other build.</small>
+
     <h3>Save</h3>
     <div class="row">
       <button id="send" class="prim">🎮 Add to game</button>
@@ -234,6 +251,34 @@ $('send').onclick = () => {
   const lm = design(); if (editId) lm.id = editId;
   editId = addToLibrary(lm);
   toast('Saved! In the game: Build (🏗) → 🏛️ Landmarks → tap the map to place “' + lm.name + '”.');
+};
+// Derive base game-stats from the chosen functionality + the build's volume, so a
+// published design behaves like a real building (and is priced like one in-game).
+function statsFor(func) {
+  const vol = parts.reduce((s, p) => s + (p.w || 4) * (p.h || 4) * (p.d || 4), 0);
+  const k = Math.max(1, Math.round(vol / 120));
+  const base = { homes: 0, jobs: 0, power: 0, water: 0, pollution: 0, happiness: 1, safety: 0, income: 0, upkeep: +(0.2 * k).toFixed(1) };
+  if (func === 'house') base.homes = 40 * k;
+  else if (func === 'economy') { base.jobs = 60 * k; base.income = 2 * k; base.power = -3 * k; }
+  else if (func === 'entertainment') { base.happiness = 4 * k; base.jobs = 15 * k; base.power = -2 * k; }
+  else if (func === 'power') { base.power = 30 * k; base.pollution = 2 * k; }
+  else if (func === 'water') { base.water = 25 * k; base.power = -3 * k; }
+  else if (func === 'civic') { base.happiness = 3 * k; base.safety = 3 * k; base.jobs = 10 * k; }
+  else base.happiness = 2 * k;   // landmark
+  return base;
+}
+// Publish to the shared community so ANYONE can build it (in-game: Build ▸ Community).
+$('publish').onclick = async () => {
+  if (!parts.length) return toast('Add at least one part', true);
+  const func = $('cfunc').value, size = +$('lscale').value || 1;
+  const body = { name: $('name').value || 'Custom Building', author: $('cauthor').value || 'Anonymous',
+    func, size, year: +$('cyear').value || 1965, design: { parts, scale: size, stats: statsFor(func) } };
+  try {
+    const r = await fetch('/api/builds', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }).then((x) => x.json());
+    if (r.error) return toast(r.error, true);
+    try { const mine = JSON.parse(localStorage.getItem('sg_my_builds') || '{}'); mine[r.id] = r.token; localStorage.setItem('sg_my_builds', JSON.stringify(mine)); } catch {}
+    toast('🌐 Published “' + body.name + '”! Anyone can now build it from Build ▸ Community.');
+  } catch (e) { toast('Publish failed: ' + e.message, true); }
 };
 // Export this design as a shareable JSON file (send it to a friend to import).
 $('export').onclick = () => { const b = new Blob([JSON.stringify(design(), null, 1)], { type: 'application/json' }); const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = ($('name').value || 'landmark') + '.json'; a.click(); };

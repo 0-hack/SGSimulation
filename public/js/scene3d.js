@@ -5872,6 +5872,19 @@ function lawn(g, w, d, color = 0x6fb15a) {
   const p = new THREE.Mesh(new THREE.PlaneGeometry(w, d), mat(color, {}, 0.1));
   p.rotation.x = -Math.PI / 2; p.position.y = 0.04; p.receiveShadow = true; g.add(p);
 }
+// A stylised 1950s–60s office tower/slab (the pioneer Raffles Place high-rises): a slim
+// masonry body wearing curtain-wall glazing that glows faintly after dark, banded by
+// floor lines, capped with a cornice and an optional rooftop crown. `floors` sets the
+// height in ~0.8-unit storeys, so an 18-storey block reads clearly above the shophouses.
+function officeSlab(g, { w = 4.2, d = 3.2, floors = 16, body = 0xcfccbe, glass = 0x42586a, crown = null, crownH = 0 } = {}) {
+  const fh = 0.8, h = floors * fh;
+  g.add(partBox(w, h, d, mat(body), 0, h / 2, 0));                                            // tower body
+  for (const fz of [d / 2 + 0.03, -(d / 2) - 0.03]) g.add(partBox(w - 0.7, h - 1.0, 0.05, mat(glass, {}, 0.7), 0, h / 2 + 0.1, fz)); // front/back glazing (lit at night)
+  for (const fx of [w / 2 + 0.03, -(w / 2) - 0.03]) g.add(partBox(0.05, h - 1.0, d - 0.7, mat(glass, {}, 0.7), fx, h / 2 + 0.1, 0)); // side glazing
+  for (let fy = fh * 1.5; fy < h - 0.5; fy += fh * 2) g.add(partBox(w + 0.05, 0.1, d + 0.05, mat(body), 0, fy, 0)); // horizontal floor bands
+  g.add(partBox(w + 0.35, 0.4, d + 0.35, mat(body), 0, h + 0.2, 0));                          // roof cornice
+  if (crown) g.add(partBox(w * 0.5, crownH, d * 0.5, mat(crown), 0, h + 0.4 + crownH / 2, 0)); // rooftop crown / plant room
+}
 
 // A 1950s propliner / early jet for the airport apron (silver with a red cheat
 // line). Built nose-along local +Z, lying on the ground.
@@ -6436,6 +6449,24 @@ export function makeBuilding(key, theme) {
       for (let a = 0; a < 8; a++) { const an = a / 8 * Math.PI * 2; g.add(cyl(0.14, 0.14, 3.4, 0x5a6066, Math.cos(an) * 4.0, 1.7, Math.sin(an) * 4.0)); } // iron columns
       g.add(cyl(0.7, 0.9, 3.0, 0xcfc8b6, 0, 5.5, 0));                              // central clock tower
       const spire2 = new THREE.Mesh(new THREE.ConeGeometry(0.9, 1.6, 8), toon(0x7a8085)); spire2.position.y = 7.8; g.add(spire2);
+    } else if (key === 'bank_of_china') {
+      lawn(g, 9, 9, 0x9aa0a2);
+      officeSlab(g, { w: 4.4, d: 3.4, floors: 17, body: 0xc3c6bd, glass: 0x3a5566, crown: 0xb2b5ac, crownH: 1.4 }); // tallest slab + a stepped crown
+    } else if (key === 'asia_insurance') {
+      lawn(g, 9, 9, 0x9aa0a2);
+      officeSlab(g, { w: 3.8, d: 3.2, floors: 18, body: 0xdcd3bd, glass: 0x5a6b74 }); // slender Art Deco shaft
+      g.add(partBox(2.0, 1.6, 1.6, mat(0xd6ccb4), 0, 18 * 0.8 + 1.2, 0));   // stepped setback
+      g.add(cyl(0.5, 0.7, 1.8, 0xcfc4a8, 0, 18 * 0.8 + 2.7, 0));           // rooftop lantern/tower
+    } else if (key === 'finlayson_house') {
+      lawn(g, 9, 9, 0x9aa0a2);
+      officeSlab(g, { w: 4.0, d: 3.2, floors: 11, body: 0xd0ccc0, glass: 0x47606e });
+    } else if (key === 'ocean_building') {
+      lawn(g, 9, 9, 0x86a6a0);
+      officeSlab(g, { w: 5.2, d: 3.8, floors: 8, body: 0xe0dccb, glass: 0x54626f }); // stately mid-rise waterfront block
+      g.add(partBox(5.7, 0.5, 4.3, mat(0xd7d2bf), 0, 8 * 0.8 + 0.6, 0));   // heavy classical cornice
+    } else if (key === 'maritime_building') {
+      lawn(g, 9, 9, 0x86a6a0);
+      officeSlab(g, { w: 5.0, d: 3.6, floors: 8, body: 0xcfc9ba, glass: 0x4e6472 });
     } else {
       lawn(g, 9, 9, 0x86a6a0);
       g.add(partBox(7, 4, 6, mat(col), 0, 2, 0));

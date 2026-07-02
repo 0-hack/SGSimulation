@@ -40,6 +40,14 @@ export const SEED_1965 = [
   { key: 'shophouse',    cx: 0.462, cy: 0.351, n: 3, spread: 0.009, name: 'Collyer Quay' },
   { key: 'shophouse',    cx: 0.423, cy: 0.349, n: 3, spread: 0.010, name: 'Tanjong Pagar' },
   { key: 'lau_pa_sat',   cx: 0.444, cy: 0.347, name: 'Lau Pa Sat (Telok Ayer Market)' },
+  // The pioneer skyscrapers already standing over Raffles Place / Collyer Quay by 1965 —
+  // a handful of tall bank, insurance and shipping offices poking above the low-rise mass
+  // (the dense high-rise CBD only rose from the 1970s). Buildable & demolishable (Heritage).
+  { key: 'bank_of_china',    cx: 0.456, cy: 0.354, name: 'Bank of China Building' },
+  { key: 'asia_insurance',   cx: 0.459, cy: 0.351, name: 'Asia Insurance Building' },
+  { key: 'finlayson_house',  cx: 0.453, cy: 0.352, name: 'Finlayson House' },
+  { key: 'ocean_building',   cx: 0.465, cy: 0.353, name: 'Ocean Building' },
+  { key: 'maritime_building',cx: 0.467, cy: 0.350, name: 'Maritime Building' },
   // ---- Port & dockyards lining Keppel Harbour, plus the coastal power stations ----
   { key: 'port',         cx: 0.414, cy: 0.332, name: 'Keppel Harbour' },
   { key: 'diesel',       cx: 0.432, cy: 0.338, name: 'St James Power Station' },

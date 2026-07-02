@@ -377,6 +377,34 @@ export const BUILDINGS = {
     cost: 22, upkeep: 0.8, homes: 0, jobs: 90, power: -4, water: -4, pollution: 1, happiness: 8, income: 3,
     desc: 'The octagonal Telok Ayer cast-iron market — a bustling hawker hall under a Victorian filigree roof, with its own clock tower.',
   },
+  // The handful of tall office blocks that already rose over the low-rise Raffles Place
+  // by 1965 — Singapore's first skyscrapers, home to the banks, insurers and trading
+  // houses. The dense high-rise CBD only came in the 1970s–80s; these are the pioneers.
+  bank_of_china: {
+    name: 'Bank of China Building', cat: 'heritage', icon: '🏦', color: '#bfc4bd', year: 1954,
+    cost: 62, upkeep: 2.0, homes: 0, jobs: 340, power: -13, water: -6, pollution: 0, happiness: 5, income: 9,
+    desc: 'The 1954 tower on Battery Road — Raffles Place’s tallest for two decades and the country’s first centrally air-conditioned building. A modernist slab of banking halls and offices.',
+  },
+  asia_insurance: {
+    name: 'Asia Insurance Building', cat: 'heritage', icon: '🏢', color: '#dcd3bd', year: 1955,
+    cost: 58, upkeep: 1.9, homes: 0, jobs: 300, power: -12, water: -5, pollution: 0, happiness: 5, income: 8,
+    desc: 'The 18-storey Art Deco tower on Finlayson Green (1955) — at 270 ft the tallest building in all Singapore until 1971, crowned by its stepped lantern.',
+  },
+  finlayson_house: {
+    name: 'Finlayson House', cat: 'heritage', icon: '🏢', color: '#d0ccc0', year: 1953,
+    cost: 44, upkeep: 1.5, homes: 0, jobs: 200, power: -8, water: -4, pollution: 0, happiness: 4, income: 6,
+    desc: 'One of Raffles Place’s first modernist office blocks, standing among the pioneer skyscrapers of the Green.',
+  },
+  ocean_building: {
+    name: 'Ocean Building', cat: 'heritage', icon: '🏢', color: '#e0dccb', year: 1924,
+    cost: 46, upkeep: 1.6, homes: 0, jobs: 220, power: -8, water: -5, pollution: 0, happiness: 6, income: 6,
+    desc: 'The stately second Ocean Building (1924) on Collyer Quay — a waterfront landmark of trading offices, famed for its Prince’s Restaurant.',
+  },
+  maritime_building: {
+    name: 'Maritime Building', cat: 'heritage', icon: '🏢', color: '#cfc9ba', year: 1923,
+    cost: 40, upkeep: 1.4, homes: 0, jobs: 170, power: -7, water: -4, pollution: 0, happiness: 5, income: 5,
+    desc: 'The old Union Building on Collyer Quay — a prominent waterfront block of shipping and mercantile offices facing the harbour.',
+  },
 
   mall: {
     name: 'Shopping Mall', cat: 'industry', icon: '🛍️', color: '#d98fc0', customizable: true,
@@ -627,6 +655,7 @@ export const BUILD_MONTHS = {
   marina: 18, cinema: 9, stadium: 24, hawker_centre: 6,
   // Heritage landmarks — careful restoration-grade builds
   raffles_hotel: 30, fullerton: 30, victoria_theatre: 20, sri_mariamman: 14, sultan_mosque: 16, lau_pa_sat: 14,
+  bank_of_china: 34, asia_insurance: 32, finlayson_house: 26, ocean_building: 28, maritime_building: 24,
   // Farms
   market_garden: 2, poultry_farm: 2, fish_farm: 3, hydroponic_farm: 6, vertical_farm: 12,
 };

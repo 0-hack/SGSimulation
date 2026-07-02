@@ -68,7 +68,7 @@ export const FUNC_LABEL = { house: 'Housing', economy: 'Economy', entertainment:
 // the street, NOT the old fat ~3.5-unit footpath buffer that sterilised ~1.4 tiles
 // of land on each side of every thin road.
 export const ROAD_TYPES = {
-  road:    { name: 'Road',    icon: '🚗', lanes: 2, width: 1.8, renderHW: 0.34, buildClear: 1.5, speed: 12, cost: 6,  asphalt: '#3a3e45' },
+  road:    { name: 'Road',    icon: '🚗', lanes: 2, width: 1.8, renderHW: 0.34, buildClear: 1.5, speed: 12, cost: 6,  asphalt: '#807a6f' },
   railway: { name: 'Railway', icon: '🚆', lanes: 1, width: 2.6, buildClear: 2.4, speed: 0,  cost: 30, asphalt: '#5b5040', rail: true },
   mrt:     { name: 'MRT',     icon: '🚇', lanes: 1, width: 2.4, buildClear: 2.2, speed: 0,  cost: 45, asphalt: '#9aa6b0', rail: true, mrt: true, alwaysElevated: true },
   airport: { name: 'Airport', icon: '✈️', lanes: 1, width: 9,   buildClear: 8,   speed: 0,  cost: 80, asphalt: '#35383d', air: true },

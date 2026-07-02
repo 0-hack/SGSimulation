@@ -551,7 +551,7 @@ export class Scene3D {
     const DS = THREE.DoubleSide;
     this.roadMeshes = [
       mk('pave', toon(0xc4bda8, { side: DS })),   // pavement (light warm grey)
-      mk('road', toon(0x34373d, { side: DS })),   // asphalt (clearly dark)
+      mk('road', toon(0x807a6f, { side: DS, emissive: 0x232019 })),   // asphalt (warm grey, blends with the dirt tone)
       mk('mark', toon(0xfaf3d8, { side: DS })),   // lane dashes + crossings (off-white)
     ];
   }
@@ -4845,7 +4845,7 @@ export class Scene3D {
       const hw = w.kind === 'rail' ? 1.7 : w.kind === 'air' ? T.width / 2 : (T.renderHW || T.width / 2 + 0.35);
       // faint full planned route, then the solid built part on top
       this._addRibbon(g, wp.map(toV), hw, 0x8a8f6a, 0.02);
-      if (built.length >= 2) this._addRibbon(g, built.map(toV), hw, (w.kind === 'rail' ? 0x5b5040 : 0x3a3e45), 0.05);
+      if (built.length >= 2) this._addRibbon(g, built.map(toV), hw, (w.kind === 'rail' ? 0x5b5040 : 0x807a6f), 0.05);
       const f = built[built.length - 1] || wp[0];
       const m = this._roadworkMarker(); m.position.set(f.x, this._roadY(f.x, f.z) + 0.1, f.z); g.add(m);
       this._addWorksFence(g, wp, hw + 0.8);   // hoarding + blinking lights ring the work zone
@@ -5082,10 +5082,10 @@ export class Scene3D {
     // track meets a sealed road, its colour is feathered toward the asphalt grey so
     // there is no hard brown/grey seam at the junction. Built separately (per-vertex colour).
     const dirtV = [], dirtC = [], dirtI = [];
-    // Palette pulled toward the paved-road tone (0x33363d) so dirt & asphalt read as one
+    // Palette pulled toward the paved-road tone (0x807a6f) so dirt & asphalt read as one
     // network: GRAVEL is a laterite that leans grey; VERGE is a muted grass lip; PAVE is
-    // the asphalt colour the track fades into at a junction.
-    const PAVE = [0.20, 0.212, 0.239], GRAVEL = [0.39, 0.31, 0.23], VERGE = [0.40, 0.50, 0.28];
+    // the asphalt colour the track fades into at a junction (matches the road mesh below).
+    const PAVE = [0.502, 0.478, 0.435], GRAVEL = [0.39, 0.31, 0.23], VERGE = [0.40, 0.50, 0.28];
     const lerp3 = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
     const ribbon = (buf, pts, hw, yOff) => {
       const [v, idx] = buf;
@@ -5253,7 +5253,7 @@ export class Scene3D {
       const m = new THREE.Mesh(g, material); m.receiveShadow = true; this.roadGroup.add(m);
     };
     const DS = THREE.DoubleSide;
-    mk(pave, toon(0xc4bda8, { side: DS, polygonOffset: true })); mk(road, toon(0x33363d, { side: DS, polygonOffset: true })); mk(mark, toon(0xfaf3d8, { side: DS, polygonOffset: true }));
+    mk(pave, toon(0xc4bda8, { side: DS, polygonOffset: true })); mk(road, toon(0x807a6f, { side: DS, polygonOffset: true, emissive: 0x232019 })); mk(mark, toon(0xfaf3d8, { side: DS, polygonOffset: true }));
     if (dirtV.length) {   // kampong dirt path — worn earth fading to grass at the verges (per-vertex colour)
       const g = new THREE.BufferGeometry();
       g.setAttribute('position', new THREE.Float32BufferAttribute(dirtV, 3));
@@ -5748,6 +5748,7 @@ function toonOpts(opts = {}) {
   const o = { gradientMap: toonGradient() };
   if (opts.transparent) o.transparent = true;
   if (opts.opacity != null) o.opacity = opts.opacity;
+  if (opts.emissive != null) o.emissive = opts.emissive;   // lift a flat decal out of the toon shadow band
   if (opts.side) o.side = opts.side;
   if (opts.map) o.map = opts.map;
   if (opts.emissiveMap) o.emissiveMap = opts.emissiveMap;

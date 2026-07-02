@@ -5361,7 +5361,12 @@ export class Scene3D {
         const gx = ngx + ox, gy = ngy + oy;
         if (gx >= 0 && gy >= 0 && gx < N && gy < N && this._shopMask[gy][gx]) { nearShops = true; break; }
       }
-      if (links.length < 4 && !nearShops) continue;
+      // Only signalise junctions with REAL urban traffic: the built-up town, or a
+      // junction a player road runs through. The rural 1966 lanes stay unsignalised —
+      // that clears hundreds of oversized lollipop posts off the countryside, and is
+      // realistic (1965 Singapore had traffic lights in town, not on kampong tracks).
+      const hasPlayerRoad = links.some((l) => this.edgeMeta[l.edge] && !this.edgeMeta[l.edge].traced);
+      if (!nearShops && !hasPlayerRoad) continue;
       // bearing of each incident road leaving the node
       const bear = (l) => {
         const pts = this.edgePts[l.edge];
@@ -5371,13 +5376,11 @@ export class Scene3D {
       const sorted = links.map((l) => ({ l, ang: bear(l) })).sort((p, q) => p.ang - q.ang);
       const grpByEdge = new Map();
       sorted.forEach((s, i) => grpByEdge.set(s.l.edge, i % 2));   // alternate → opposite roads pair up
-      const light = { node: n, grpByEdge, period: 7 + Math.random() * 3, t: Math.random() * 5, phase: 0, head: null };
-      // a little signal post with a coloured lamp
-      const post = new THREE.Group();
-      post.add(cyl(0.045, 0.055, 1.05, 0x3a3f45, 0, 0.525, 0));   // shorter signal post, sized to the smaller pedestrians
-      const head = new THREE.Mesh(new THREE.SphereGeometry(0.12, 10, 8), new THREE.MeshToonMaterial({ color: 0x2ecc71, emissive: 0x2ecc71, emissiveIntensity: 0.7, gradientMap: toonGradient() }));
-      head.position.set(0, 1.05, 0); post.add(head); light.head = head;
-      post.position.set(node.x, node.y, node.z); this.lightGroup.add(post);
+      const light = { node: n, grpByEdge, period: 7 + Math.random() * 3, t: Math.random() * 5, phase: 0, lenses: null };
+      const post = this._makeSignalPost();       // compact 1965 three-aspect signal (small, kerbside)
+      light.lenses = post.userData.lenses;
+      post.position.set(node.x, node.y, node.z); post.rotation.y = Math.random() * Math.PI * 2;
+      this.lightGroup.add(post);
       this.lights.push(light); this.lightByNode.set(n, light);
     }
   }
@@ -5450,9 +5453,9 @@ export class Scene3D {
     this._lampGroup = new THREE.Group(); this.scene.add(this._lampGroup);
     // cached lamp-part templates (built once, at origin: base on the ground, arm/head reaching +Z)
     if (!this._lampTpl) {
-      const postG = new THREE.CylinderGeometry(0.025, 0.034, 1.12, 6).translate(0, 0.56, 0);   // lamp post scaled to match the smaller people & signals
-      const armG = new THREE.BoxGeometry(0.028, 0.028, 0.225).translate(0, 1.09, 0.11);
-      const headG = new THREE.SphereGeometry(0.055, 8, 6).translate(0, 1.07, 0.215);
+      const postG = new THREE.CylinderGeometry(0.014, 0.02, 0.52, 6).translate(0, 0.26, 0);   // slim lamp post ~1/3 the old height, so it doesn't dwarf the scene
+      const armG = new THREE.BoxGeometry(0.02, 0.02, 0.13).translate(0, 0.5, 0.06);
+      const headG = new THREE.SphereGeometry(0.03, 8, 6).translate(0, 0.49, 0.11);
       this._lampTpl = { struct: this._mergeGeos([postG, armG]), head: headG };
     }
     const STEP = 20, MAX = 520;                                     // fixed distance between lamps along a road
@@ -5497,12 +5500,41 @@ export class Scene3D {
     const headMesh = new THREE.Mesh(this._mergeGeos(heads), headMat); this._lampGroup.add(headMesh);
     for (const g of structs) g.dispose(); for (const g of heads) g.dispose();
   }
+  // A compact, 1965-style THREE-ASPECT traffic signal: a slim dark post carrying a
+  // small black housing with red / amber / green lenses stacked vertically. Kept
+  // deliberately small (~0.55u, roughly a third of the old lollipop post) so a
+  // kerbside signal doesn't dwarf the cars & people. userData.lenses drives the phase.
+  _makeSignalPost() {
+    const g = new THREE.Group();
+    const body = new THREE.MeshToonMaterial({ color: 0x25282d, gradientMap: toonGradient() });
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.017, 0.023, 0.32, 6), body);
+    post.position.y = 0.16; g.add(post);
+    const housing = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.22, 0.065), body);
+    housing.position.y = 0.44; g.add(housing);
+    const lens = (hex, y) => {
+      const m = new THREE.Mesh(new THREE.CircleGeometry(0.028, 12), new THREE.MeshToonMaterial({ color: hex, emissive: hex, emissiveIntensity: 0.1, gradientMap: toonGradient() }));
+      m.position.set(0, y, 0.035); g.add(m); return m;
+    };
+    const red = lens(0x40100c, 0.52), amber = lens(0x3a2c06, 0.44), green = lens(0x0c3a1c, 0.36);
+    g.userData.lenses = { red, amber, green };
+    return g;
+  }
+  _setAspect(m, on, onHex, offHex) {
+    m.material.color.setHex(on ? onHex : offHex);
+    m.material.emissive.setHex(on ? onHex : offHex);
+    m.material.emissiveIntensity = on ? 1.0 : 0.1;
+  }
   _updateLights(dt) {
     if (!this.lights) return;
     for (const lt of this.lights) {
       lt.t += dt;
       if (lt.t >= lt.period) { lt.t -= lt.period; lt.phase ^= 1; }
-      if (lt.head) { const c = lt.phase === 0 ? 0x2ecc71 : 0xe23b2e; lt.head.material.color.setHex(c); lt.head.material.emissive.setHex(c); }
+      const L = lt.lenses; if (!L) continue;
+      // green while this phase runs, an amber warning in the last ~0.9s, then red
+      const state = lt.phase === 0 ? ((lt.period - lt.t) < 0.9 ? 'amber' : 'green') : 'red';
+      this._setAspect(L.red, state === 'red', 0xe23b2e, 0x40100c);
+      this._setAspect(L.amber, state === 'amber', 0xf3c41a, 0x3a2c06);
+      this._setAspect(L.green, state === 'green', 0x2ecc71, 0x0c3a1c);
     }
   }
   // green for the road `edge` arriving at junction `node`?
@@ -6266,20 +6298,21 @@ export function makeBuilding(key, theme) {
       g.add(partBox(7.6, 0.18, 1.55, mat(0xe8e2d2), 1.2, 2.45, -2.4));          // roof
     } else if (key === 'street_lamp') {
       // a single street lamp (sized so ×MODEL_SCALE matches the auto road lamps) —
-      // a slim post with an arm and a warm head that GLOWS after dark.
-      g.add(cyl(0.22, 0.3, 9.2, mat(0x3e444b), 0, 4.6, 0));                      // post
-      g.add(partBox(0.24, 0.24, 2.0, mat(0x3e444b), 0, 8.9, 1.0));              // arm reaching out
-      const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.52, 10, 8), mat(0xfff0b8, {}, 1.9));
-      lamp.position.set(0, 8.8, 1.95); g.add(lamp);                            // glowing head
+      // a slim post with an arm and a warm head that GLOWS after dark. ~1/3 the old
+      // size so a placed lamp reads at a realistic kerbside scale.
+      g.add(cyl(0.1, 0.14, 4.2, mat(0x3e444b), 0, 2.1, 0));                      // post
+      g.add(partBox(0.11, 0.11, 0.9, mat(0x3e444b), 0, 4.05, 0.45));            // arm reaching out
+      const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.24, 10, 8), mat(0xfff0b8, {}, 1.9));
+      lamp.position.set(0, 4.0, 0.88); g.add(lamp);                            // glowing head
     } else if (key === 'traffic_light') {
-      // a three-aspect signal on a post; the green aspect glows after dark
-      g.add(cyl(0.3, 0.38, 8.6, mat(0x33373d), 0, 4.3, 0));                      // post
-      g.add(partBox(0.5, 0.5, 1.4, mat(0x2a2e34), 0, 8.1, 0.55));               // arm bracket
-      g.add(partBox(1.2, 3.3, 1.0, mat(0x20232a), 0, 8.1, 1.2));                // signal housing
-      const aspects = [[0xe23b2e, 9.3, 0.3], [0xf3c41a, 8.1, 0.3], [0x2ecc71, 6.9, 1.4]]; // red, amber, green(lit)
+      // a compact 1965 three-aspect signal on a post; the green aspect glows after
+      // dark. ~1/3 the old size so it sits at the kerb without dwarfing the cars.
+      g.add(cyl(0.14, 0.18, 3.9, mat(0x33373d), 0, 1.95, 0));                    // post
+      g.add(partBox(0.55, 1.5, 0.45, mat(0x20232a), 0, 3.85, 0.28));            // signal housing
+      const aspects = [[0xe23b2e, 4.35, 0.3], [0xf3c41a, 3.85, 0.3], [0x2ecc71, 3.35, 1.4]]; // red, amber, green(lit)
       for (const [c, y, gk] of aspects) {
-        const lens = new THREE.Mesh(new THREE.SphereGeometry(0.42, 10, 8), mat(c, {}, gk));
-        lens.position.set(0, y, 1.72); g.add(lens);
+        const lens = new THREE.Mesh(new THREE.CircleGeometry(0.19, 12), mat(c, {}, gk));
+        lens.position.set(0, y, 0.52); g.add(lens);
       }
     } else if (key === 'school') {
       lawn(g, 9, 9, 0x6fb15a);

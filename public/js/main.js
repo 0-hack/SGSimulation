@@ -358,7 +358,7 @@ function loop(ts) {
   const dt = G.lastFrame ? (ts - G.lastFrame) / 1000 : 0;
   G.lastFrame = ts;
 
-  if (G.state && G.speed > 0 && !G.state.pendingEvent && !G.editPause) {
+  if (G.state && G.speed > 0 && !G.editPause) {
     // drive the day/night sun & weather clock in lockstep with the date
     const rate = currentRate();
     if (G.view) G.view.advanceClock(dt * Math.min(rate, SUN_CAP)); // cap the sun so fast-forward doesn't strobe
@@ -369,7 +369,6 @@ function loop(ts) {
       tickDay(G.state);
       G.acc -= 1;
       ticks++;
-      if (G.state.pendingEvent) break;
     }
     if (ticks > 0) {
       G.dirty = true;
@@ -379,12 +378,12 @@ function loop(ts) {
       updateHud(G.state, G.readOnly);
       updateShortages();
       flushProjectToasts();             // a national project may have just topped out
-      if (G.state.pendingEvent) { showEvent(); }
       // refresh open live panels occasionally
       if (G.currentPanel === 'dash' && G.hudTimer > 0.5) { refreshPanel(); G.hudTimer = 0; }
     }
   }
 
+  renderDecisions();                    // keep the (non-blocking) decisions panel in sync
   if (G.view) { G.view.render(); updateWeatherHud(); }
 }
 
@@ -1400,40 +1399,65 @@ function closeSheet() {
 // ===========================================================================
 // Events modal
 // ===========================================================================
-function showEvent() {
-  const ev = G.state.pendingEvent;
-  if (!ev) return;
-  disasterForPending();
-  G.prevSpeed = G.speed || 1;
-  setSpeed(0);
-  const kicker = $('event-kicker');
-  if (kicker) {
-    kicker.textContent = `${ev.icon || '📰'}  ${ev.kind || 'National News'}`;
-    kicker.className = 'event-kicker ' + (ev.scope === 'foreign' ? 'foreign' : 'internal');
+// The PM's decisions live in a NON-BLOCKING panel on the right. The clock keeps
+// running while briefings sit there — the country carries on under its existing
+// settings — and the PM answers each one whenever they like. Rebuilt only when the
+// set of pending decisions changes, so buttons stay clickable between frames.
+const _decFxSeen = new Set();
+function renderDecisions() {
+  const panel = $('decisions'); if (!panel) return;
+  const q = (G.state && G.state.pendingDecisions) || [];
+  // announce each briefing once as it appears: play its FX + a gentle toast (the
+  // panel no longer steals the screen, so the toast tells the player to look right)
+  for (const ev of q) {
+    if (_decFxSeen.has(ev.uid)) continue;
+    _decFxSeen.add(ev.uid);
+    const fx = DISASTER_FX[ev.id];
+    if (fx && G.view?.playDisaster) G.view.playDisaster(fx);
+    toast(`${ev.icon || '🏛'} ${ev.title} — decide when you're ready ▸`);
   }
-  $('event-title').textContent = ev.title;
-  $('event-body').textContent = ev.body;
-  const actions = $('event-actions');
-  actions.innerHTML = '';
+  if (!q.length) { panel.classList.add('hidden'); panel.innerHTML = ''; panel.dataset.sig = ''; return; }
+  const sig = q.map((d) => d.uid).join(',');
+  if (panel.dataset.sig === sig) return;   // unchanged — leave the live buttons alone
+  panel.dataset.sig = sig;
+  panel.innerHTML = '';
+  const head = el('div', 'dec-head');
+  head.append(el('span', 'dec-title', '🏛 Decisions'));
+  const count = el('span', 'dec-count', String(q.length)); head.querySelector('.dec-title').append(count);
+  const collapse = el('button', 'dec-collapse'); collapse.textContent = panel.classList.contains('collapsed') ? '▸' : '▾';
+  collapse.onclick = () => { panel.classList.toggle('collapsed'); collapse.textContent = panel.classList.contains('collapsed') ? '▸' : '▾'; };
+  head.append(collapse); panel.append(head);
+  const list = el('div', 'dec-list');
+  for (const ev of q) list.append(decisionCard(ev));
+  panel.append(list);
+  panel.classList.remove('hidden');
+}
+function decisionCard(ev) {
+  const card = el('div', 'dec-card ' + (ev.scope === 'foreign' ? 'foreign' : 'internal'));
+  const kicker = el('div', 'event-kicker ' + (ev.scope === 'foreign' ? 'foreign' : 'internal'));
+  kicker.textContent = `${ev.icon || '📰'}  ${ev.kind || 'National News'}`;
+  card.append(kicker, el('div', 'dec-card-title', ev.title), el('div', 'dec-card-body', ev.body));
+  const actions = el('div', 'dec-actions');
   ev.choice.options.forEach((opt, i) => {
     const b = el('button', 'btn' + (i === 0 ? ' btn-primary' : ''), opt.label);
-    b.onclick = () => {
-      resolveEvent(G.state, i);
-      $('event-modal').classList.add('hidden');
-      if (G.view) G.view.syncConstruction(G.state); // show anything the decision built itself (e.g. emergency hospital)
-      afterEdit();
-      const opt = ev.choice.options[i];
-      if (opt && opt.fx && opt.fx.spawn) toast('🏗 Works approved — construction has begun on the map.');
-      if (opt && opt.fx && opt.fx.project) {       // a guided build task: point the player at the Build menu
-        const p = opt.fx.project;
-        toast(`📋 National project: ${p.title}. ${p.hint}.`);
-        openPanel('build');
-      }
-      setSpeed(G.prevSpeed || 1);
-    };
+    b.onclick = () => onDecision(ev, i);
     actions.append(b);
   });
-  $('event-modal').classList.remove('hidden');
+  card.append(actions);
+  return card;
+}
+function onDecision(ev, i) {
+  const opt = resolveEvent(G.state, ev.uid, i);   // sim never paused — just drop this card
+  if (G.view) G.view.syncConstruction(G.state);   // show anything the decision built itself (e.g. an emergency hospital)
+  G.dirty = true;
+  if (opt && opt.fx && opt.fx.spawn) toast('🏗 Works approved — construction has begun on the map.');
+  if (opt && opt.fx && opt.fx.project) {           // a guided build task: point the player at the Build menu
+    const p = opt.fx.project;
+    toast(`📋 National project: ${p.title}. ${p.hint}.`);
+    openPanel('build');
+  }
+  renderDecisions();
+  updateHud(G.state, G.readOnly);
 }
 
 // Map affair ids to an animated disaster in the 3D scene.
@@ -1451,15 +1475,6 @@ function maybeAnnounce() {
     if (fx && G.view?.playDisaster) G.view.playDisaster(fx);
     G.state.lastEvent = null;
   }
-}
-
-// Also fire FX for events that carry a player choice (e.g. flood) as they appear.
-function disasterForPending() {
-  const ev = G.state?.pendingEvent;
-  if (!ev || ev._fxShown) return;
-  ev._fxShown = true;
-  const fx = DISASTER_FX[ev.id];
-  if (fx && G.view?.playDisaster) G.view.playDisaster(fx);
 }
 
 // ===========================================================================

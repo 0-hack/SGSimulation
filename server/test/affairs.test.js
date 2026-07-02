@@ -42,10 +42,10 @@ console.log('Emergent firing & branching:');
   // The founding briefing is the very first thing the PM faces.
   const s = newGame({ name: 'Pathalonia', owner: 'PM' });
   let first = null;
-  for (let i = 0; i < 400 && !first; i++) { tickDay(s); if (s.pendingEvent) first = s.pendingEvent; }
+  for (let i = 0; i < 400 && !first; i++) { tickDay(s); if (s.pendingDecisions[0]) first = s.pendingDecisions[0]; }
   ok(first && first.id === 'founding' && first.scope === 'internal', 'the founding briefing is the first affair to appear');
   ok(first.kind === 'Internal Affairs', 'the briefing is tagged with its affairs scope for the UI');
-  resolveEvent(s, 1); // "Build institutions" → sets a path flag
+  resolveEvent(s, first.uid, 1); // "Build institutions" → sets a path flag
   ok(s.pathFlags && Object.keys(s.pathFlags).length > 0, 'a founding choice records a branch in the nation\'s path');
 
   // The SAME crisis branches differently by choice: standing firm vs seeking a
@@ -54,8 +54,8 @@ console.log('Emergent firing & branching:');
   function tryOption(i) {
     const g = newGame({ name: 'Branch', owner: 'PM' });
     g.threatBuf = 0; g.pathFlags = {};
-    g.pendingEvent = { id: border.id, scope: border.scope, kind: 'Foreign Affairs', icon: border.icon, title: border.title, body: border.body, choice: border.choice };
-    resolveEvent(g, i);
+    g.pendingDecisions = [{ id: border.id, scope: border.scope, kind: 'Foreign Affairs', icon: border.icon, title: border.title, body: border.body, choice: border.choice, uid: 1 }];
+    resolveEvent(g, 1, i);
     return g;
   }
   const firm = tryOption(0);       // stand firm — raises tension
@@ -67,9 +67,10 @@ console.log('Emergent firing & branching:');
   const g = newGame({ name: 'Longrun', owner: 'PM' });
   let foreign = 0, internal = 0;
   for (let i = 0; i < 40 * 360; i++) {
-    if (g.pendingEvent) {
-      if (g.pendingEvent.scope === 'foreign') foreign++; else internal++;
-      resolveEvent(g, 0);
+    while (g.pendingDecisions.length) {
+      const d = g.pendingDecisions[0];
+      if (d.scope === 'foreign') foreign++; else internal++;
+      resolveEvent(g, d.uid, 0);
     }
     tickDay(g);
   }

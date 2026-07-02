@@ -79,7 +79,9 @@ export function newGame({ name = 'New Singapore', owner = 'Anonymous' } = {}) {
     unrest: 0.1,              // domestic unrest 0..1 — stoked by neglect & hard choices, drags approval, draws internal crises
     unlocked: {},             // buildings unlocked by choices
     log: [{ d: { ...START_DATE }, text: 'A young republic stands alone. The journey begins — and the path is yours to write.' }],
-    pendingEvent: null,       // event awaiting player choice
+    pendingEvent: null,       // legacy single event slot (kept for save migration)
+    pendingDecisions: [],     // queue of decisions awaiting the PM — NON-blocking; the country runs on meanwhile
+    _decUid: 0,               // monotonic id for decision cards
     roads: { nodes: [], edges: [], islands: [] }, // player-drawn freeform road network
     reclaimed: [],            // [x,y] sea cells reclaimed into finished, buildable land
     reclaiming: [],           // { x,y,total,left } cells still rising from the sea (legacy per-cell)
@@ -193,6 +195,12 @@ export function ensureGrid(state) {
   if (!state.removedTrees || typeof state.removedTrees !== 'object') state.removedTrees = {};
   if (!state.removedLandmarks || typeof state.removedLandmarks !== 'object') state.removedLandmarks = {};
   if (!state.removedAirportParts || typeof state.removedAirportParts !== 'object') state.removedAirportParts = {};
+  if (!Array.isArray(state.pendingDecisions)) state.pendingDecisions = [];
+  if (typeof state._decUid !== 'number') state._decUid = 0;
+  if (state.pendingEvent) {   // migrate an old single pending event into the non-blocking queue
+    if (!state.pendingDecisions.some((d) => d.id === state.pendingEvent.id)) state.pendingDecisions.push({ ...state.pendingEvent, uid: ++state._decUid });
+    state.pendingEvent = null;
+  }
   if (!state.economy) state.economy = { inflation: 0.02, priceIndex: 1, currency: 1 };
   // Rebuild the active-construction & demolition lists from the grid (robust across saves).
   state.constructing = [];
@@ -1238,8 +1246,9 @@ function affairWeight(state, d, a, mi) {
 // surface from the nation's OWN condition (threat, unrest, joblessness, housing)
 // plus chance, and the player's choices push that condition — so the timeline
 // branches into each player's own path.
+const DECISION_CAP = 3;   // let a few decisions queue up, but don't pile them endlessly
 function maybeAffair(state) {
-  if (state.pendingEvent) return;
+  if ((state.pendingDecisions || []).length >= DECISION_CAP) return;   // queue full — hold new briefings
   // The founding briefing fires first, once. (No derive needed for the gate below —
   // it reads cheap scalar stocks — so we only pay for a full derive once an affair
   // actually clears the probability check and needs its state-weighting.)
@@ -1312,7 +1321,7 @@ function dailyLifePool(state, d) {
   return pool;
 }
 function maybeDailyLife(state) {
-  if (state.pendingEvent) return;                 // don't clutter over a decision briefing
+  if ((state.pendingDecisions || []).length >= DECISION_CAP) return;   // don't clutter while decisions pile up
   if (Math.random() > 0.34) return;               // ~ a few colour items a year
   const d = derive(state);
   const pool = dailyLifePool(state, d);
@@ -1389,20 +1398,31 @@ function fireEvent(state, ev) {
   const scope = ev.scope || 'internal';
   logEvent(state, `${icon} ${ev.title}`, ev.body, scope);
   const brief = { id: ev.id, scope, kind: affairKind(ev), icon, title: ev.title, body: ev.body };
-  if (ev.choice) state.pendingEvent = { ...brief, choice: ev.choice };
-  else state.lastEvent = brief;
+  if (ev.choice) {
+    const q = state.pendingDecisions || (state.pendingDecisions = []);
+    if (!q.some((d) => d.id === brief.id)) {   // don't double-queue the same briefing
+      state._decUid = (state._decUid || 0) + 1;
+      q.push({ ...brief, choice: ev.choice, uid: state._decUid });
+    }
+  } else state.lastEvent = brief;
 }
 
-export function resolveEvent(state, optionIndex) {
-  const ev = state.pendingEvent;
-  if (!ev) return;
+// Resolve ONE queued decision (by its uid) — the sim never paused, so the player
+// answers whenever they like; until then the country runs on its existing settings.
+// Returns the chosen option (so the UI can react to spawn/project effects).
+export function resolveEvent(state, uid, optionIndex) {
+  const q = state.pendingDecisions || [];
+  const idx = q.findIndex((d) => d.uid === uid);
+  if (idx < 0) return null;
+  const ev = q[idx];
   const opt = ev.choice.options[optionIndex];
   applyEffects(state, opt?.fx, derive(state));
   const consequence = summarizeFx(opt?.fx);
   logEvent(state, `↳ ${ev.title}`,
     `Your decision: ${opt?.label || 'decided'}.${consequence ? ' ' + consequence : ''}`,
     ev.scope || 'internal');
-  state.pendingEvent = null;
+  q.splice(idx, 1);
+  return opt;
 }
 
 // A building has burned down (the 3D fire ran its course without being doused).

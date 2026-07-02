@@ -26,7 +26,7 @@ console.log('Engine simulation:');
   // Auto-resolve any event choices so the loop never blocks.
   let years = 0;
   for (let i = 0; i < 30 * 360; i++) { // ~30 years of days
-    if (s.pendingEvent) resolveEvent(s, 0);
+    while (s.pendingDecisions.length) resolveEvent(s, s.pendingDecisions[0].uid, 0);
     tickDay(s);
     if (s.date.m === 1 && s.date.d === 1) years++;
   }
@@ -57,7 +57,7 @@ console.log('World-technology timeline:');
   const s = newGame({ name: 'Techtopia', owner: 'Tester' });
   let sawNuclear = false, sawSolar = false;
   for (let i = 0; i < 60 * 360; i++) {        // run to ~2025
-    if (s.pendingEvent) resolveEvent(s, 0);
+    while (s.pendingDecisions.length) resolveEvent(s, s.pendingDecisions[0].uid, 0);
     tickDay(s);
     for (const t of (s.newTech || [])) { if (/Nuclear/.test(t)) sawNuclear = true; if (/Solar/.test(t)) sawSolar = true; }
     s.newTech = [];
@@ -72,7 +72,7 @@ await new Promise((resolve) => {
     const base = `http://localhost:${server.address().port}`;
     try {
       const s = newGame({ name: 'API City', owner: 'Api Tester' });
-      for (let i = 0; i < 100; i++) { if (s.pendingEvent) resolveEvent(s, 0); tickDay(s); }
+      for (let i = 0; i < 100; i++) { while (s.pendingDecisions.length) resolveEvent(s, s.pendingDecisions[0].uid, 0); tickDay(s); }
 
       // create
       let res = await fetch(`${base}/api/worlds`, {

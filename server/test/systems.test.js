@@ -11,7 +11,7 @@ import { BUILDINGS, SANDBOX } from '../../public/js/data.js';
 let passed = 0;
 function ok(cond, msg) { assert.ok(cond, msg); passed++; console.log('  ✓', msg); }
 function fresh(y) { const s = newGame({ name: 'Sys', owner: 'T' }); if (y) { s.date = { y, m: 1, d: 1 }; s.economy = { inflation: 0.02, priceIndex: 1, currency: 1 }; } return s; }
-function runMonths(s, n) { for (let i = 0; i < n * 31; i++) { if (s.pendingEvent) resolveEvent(s, 0); tickDay(s); } }
+function runMonths(s, n) { for (let i = 0; i < n * 31; i++) { while (s.pendingDecisions.length) resolveEvent(s, s.pendingDecisions[0].uid, 0); tickDay(s); } }
 
 console.log('Construction is the only time-gated system:');
 {
@@ -77,7 +77,7 @@ console.log('News carries detailed bodies (cause + consequence):');
   ok(/Fire Stations|greenery/i.test(f.log[0].detail || ''), 'the fire item also tells the player how to prevent it');
 
   const n = fresh(); let withDetail = 0; const scopes = new Set();
-  for (let i = 0; i < 22 * 31; i++) { if (n.pendingEvent) resolveEvent(n, 0); tickDay(n); }
+  for (let i = 0; i < 22 * 31; i++) { while (n.pendingDecisions.length) resolveEvent(n, n.pendingDecisions[0].uid, 0); tickDay(n); }
   for (const e of n.log) { if (e.detail && e.detail.length > 20) withDetail++; if (e.scope) scopes.add(e.scope); }
   ok(withDetail >= 3, `news items carry fuller detail bodies, not just headlines (${withDetail} detailed items)`);
   ok(scopes.has('daily') || scopes.has('incident'), `daily-life / on-the-ground news surfaces and is scope-tagged (${[...scopes].join(', ')})`);

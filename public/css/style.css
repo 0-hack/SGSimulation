@@ -466,6 +466,36 @@ body.edit-mode #city {
 .modal-card p { color: var(--muted); font-size: 14px; line-height: 1.55; }
 .modal-actions { display: grid; gap: 10px; margin-top: 18px; }
 
+/* ---------------- Decisions panel (non-blocking, right side) ----------------
+   Foreign/internal briefings the PM answers WHEN READY. Fixed to the right, over
+   the map, WITHOUT a full-screen backdrop — the game keeps running and the rest
+   of the UI stays usable. Collapsible so it never gets in the way. */
+.decisions { position: fixed; right: 10px; top: calc(66px + var(--safe-t, 0px)); z-index: 38;
+  width: min(320px, 84vw); max-height: calc(100dvh - 150px - var(--safe-t, 0px));
+  display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
+.decisions.hidden { display: none; }
+.decisions > * { pointer-events: auto; }
+.dec-head { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 7px 12px; background: var(--ink); color: #fff; border-radius: 12px;
+  box-shadow: var(--shadow); font-weight: 800; font-size: 13px; }
+.dec-title { display: inline-flex; align-items: center; }
+.dec-count { display: inline-grid; place-items: center; min-width: 18px; height: 18px; padding: 0 5px;
+  margin-left: 7px; background: var(--coral); color: #fff; border-radius: 999px; font-size: 11px; font-weight: 800; }
+.dec-collapse { background: transparent; color: #fff; border: none; font-size: 15px; line-height: 1;
+  cursor: pointer; width: 24px; height: 24px; border-radius: 8px; }
+.dec-collapse:hover { background: rgba(255,255,255,0.14); }
+.dec-list { display: flex; flex-direction: column; gap: 8px; overflow-y: auto; }
+.decisions.collapsed .dec-list { display: none; }
+.dec-card { background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--muted);
+  border-radius: 14px; padding: 12px 13px; box-shadow: var(--shadow); animation: pop .22s cubic-bezier(.22,1,.36,1); }
+.dec-card.foreign { border-left-color: #2b6fb0; }
+.dec-card.internal { border-left-color: #d08a3a; }
+.dec-card .event-kicker { margin: 0; }
+.dec-card-title { margin: 8px 0 5px; font-size: 15px; font-weight: 800; letter-spacing: -0.2px; line-height: 1.25; color: var(--ink); }
+.dec-card-body { color: var(--muted); font-size: 12.5px; line-height: 1.5; }
+.dec-actions { display: grid; gap: 7px; margin-top: 11px; }
+.dec-actions .btn { font-size: 13px; }
+
 /* ---------------- Toast ---------------- */
 .toast {
   position: fixed; left: 12px; top: calc(84px + env(safe-area-inset-top, 0px)); transform: none;

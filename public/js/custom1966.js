@@ -39,15 +39,17 @@ export const SEED_1965 = [
   { key: 'shophouse',    cx: 0.450, cy: 0.377, n: 5, spread: 0.010, name: 'Raffles Place & Boat Quay' },
   { key: 'shophouse',    cx: 0.462, cy: 0.372, n: 3, spread: 0.009, name: 'Collyer Quay' },
   { key: 'shophouse',    cx: 0.423, cy: 0.367, n: 3, spread: 0.010, name: 'Tanjong Pagar' },
-  { key: 'lau_pa_sat',   cx: 0.456, cy: 0.373, name: 'Lau Pa Sat (Telok Ayer Market)' },
+  { key: 'lau_pa_sat',   cx: 0.460, cy: 0.362, name: 'Lau Pa Sat (Telok Ayer Market)' },
   // The pioneer skyscrapers already standing over Raffles Place / Collyer Quay by 1965 —
   // a handful of tall bank, insurance and shipping offices poking above the low-rise mass
   // (the dense high-rise CBD only rose from the 1970s). Buildable & demolishable (Heritage).
-  { key: 'bank_of_china',    cx: 0.456, cy: 0.377, name: 'Bank of China Building' },
-  { key: 'asia_insurance',   cx: 0.459, cy: 0.374, name: 'Asia Insurance Building' },
-  { key: 'finlayson_house',  cx: 0.453, cy: 0.375, name: 'Finlayson House' },
-  { key: 'ocean_building',   cx: 0.465, cy: 0.375, name: 'Ocean Building' },
-  { key: 'maritime_building',cx: 0.467, cy: 0.372, name: 'Maritime Building' },
+  // Sited on the Collyer Quay waterfront, north-east of Tanjong Pagar station (where Raffles
+  // Place actually sits — well clear of the railway terminus), spaced so none overlap.
+  { key: 'finlayson_house',  cx: 0.463, cy: 0.359, name: 'Finlayson House' },
+  { key: 'asia_insurance',   cx: 0.470, cy: 0.359, name: 'Asia Insurance Building' },
+  { key: 'ocean_building',   cx: 0.476, cy: 0.359, name: 'Ocean Building' },
+  { key: 'bank_of_china',    cx: 0.466, cy: 0.362, name: 'Bank of China Building' },
+  { key: 'maritime_building',cx: 0.473, cy: 0.362, name: 'Maritime Building' },
   // The Malayan Railway's grand southern terminus at Keppel Road, at the end of the KTM
   // line (it snaps to solid ground right beside the terminal throat, not onto the track).
   { key: 'tanjong_pagar_station', cx: 0.444, cy: 0.363, name: 'Tanjong Pagar Railway Station' },

@@ -1152,8 +1152,6 @@ export class Scene3D {
     const place = (key, cx, cy, name) => {
       const wx = (cx - 0.5) * WORLD, wz = (0.5 - cy) * WORLD;
       let gx = Math.round(wx / TILE + N / 2), gy = Math.round(N / 2 - wz / TILE);
-      if (!this._heritageFree(gx, gy)) { const s = this._nearestFreeLand(gx, gy, SNAP_R); if (!s) return; gx = s.x; gy = s.y; }
-      const c = cellToWorld(gx, gy);
       const m = makeBuilding(key, null);
       // 1965 was a low-rise town of tiny shophouses: shrink the aggregate models
       // hard so the heritage city reads as the small, dense, fine-grained place the
@@ -1166,6 +1164,12 @@ export class Scene3D {
         : (key === 'port' || key === 'power_station' || key === 'factory' || key === 'processing') ? 0.62
         : 0.5;
       m.scale.setScalar(sc);
+      // footprint radius (in cells) from the scaled model's ground extent, so bigger
+      // landmarks reserve more room and no two buildings are seeded overlapping.
+      const bb = new THREE.Box3().setFromObject(m);
+      const fp = Math.max(0, Math.min(2, Math.round(Math.max(bb.max.x - bb.min.x, bb.max.z - bb.min.z) / (2 * TILE))));
+      if (!this._footprintFree(gx, gy, fp)) { const s = this._nearestFreeFootprint(gx, gy, fp, SNAP_R); if (!s) return; gx = s.x; gy = s.y; }
+      const c = cellToWorld(gx, gy);
       const rd = this._roadDir && this._roadDir[gy][gx];
       m.position.set(c.x, this.terrainHeight(gx, gy), c.z);
       // shophouses front the street: their facade (+Z) turns to FACE the nearest road,
@@ -1174,7 +1178,7 @@ export class Scene3D {
       m.rotation.y = faceRoad != null ? faceRoad
         : (rd == null || Number.isNaN(rd)) ? Math.floor(Math.random() * 4) * Math.PI / 2 : rd;
       g.add(m);
-      this.heritageMask[gy][gx] = true;
+      this._claimFootprint(gx, gy, fp);   // reserve the whole footprint so nothing overlaps it
       if (name) this.heritageInfo.set(`${gx},${gy}`, name);
       const pl = { key, gx, gy, name: name || null, mesh: m };
       m.userData.demo = { kind: 'heritage', placement: pl };   // pickable: the real shophouse/landmark model
@@ -1196,6 +1200,28 @@ export class Scene3D {
       if (x >= 0 && y >= 0 && x < N && y < N && this._heritageFree(x, y)) return { x, y };
     }
     return null;
+  }
+  // A building occupies a fp×fp block of cells (fp = footprint radius), not just its
+  // anchor — so two landmarks can't be seeded on top of each other. These check / claim
+  // the whole block, keeping the seeded city free of overlapping models.
+  _footprintFree(gx, gy, r) {
+    if (!this._heritageFree(gx, gy)) return false;                 // the anchor must be clean, buildable ground
+    for (let oy = -r; oy <= r; oy++) for (let ox = -r; ox <= r; ox++) {
+      const x = gx + ox, y = gy + oy;
+      if (x < 0 || y < 0 || x >= N || y >= N) return false;
+      if (this.heritageMask[y][x]) return false;                  // …and the block must be clear of OTHER buildings (may overhang a road/rail edge, e.g. a station beside the tracks)
+    }
+    return true;
+  }
+  _nearestFreeFootprint(gx, gy, r, reach) {
+    for (let d = 0; d <= reach; d++) for (let oy = -d; oy <= d; oy++) for (let ox = -d; ox <= d; ox++) {
+      if (Math.max(Math.abs(ox), Math.abs(oy)) !== d) continue;
+      if (this._footprintFree(gx + ox, gy + oy, r)) return { x: gx + ox, y: gy + oy };
+    }
+    return null;
+  }
+  _claimFootprint(gx, gy, r) {
+    for (let oy = -r; oy <= r; oy++) for (let ox = -r; ox <= r; ox++) { const x = gx + ox, y = gy + oy; if (x >= 0 && y >= 0 && x < N && y < N) this.heritageMask[y][x] = true; }
   }
   // The name of the 1965 heritage building on a cell (for the inspect tooltip).
   heritageAt(x, y) { return this.heritageInfo ? this.heritageInfo.get(`${x},${y}`) : null; }
@@ -5128,8 +5154,10 @@ export class Scene3D {
         });
       }
       // ground road: keep the drawn polyline's own points (already dense), draped on the
-      // terrain, and auto-bridge any span that crosses the rail or the sea/river.
-      return this._bridgeProfile(e.poly.map((p) => ({ x: p.x, y: this._roadY(p.x, p.z), z: p.z }))).pts;
+      // terrain. A player road auto-bridges any span crossing the rail or sea; the historic
+      // 1965 lanes cross the tracks at grade (level crossings), as they really did.
+      const gp = e.poly.map((p) => ({ x: p.x, y: this._roadY(p.x, p.z), z: p.z }));
+      return e.traced ? gp : this._bridgeProfile(gp).pts;
     }
     const a = roads.nodes[e.a], b = roads.nodes[e.b];
     if (!a || !b) return [];
@@ -5146,7 +5174,8 @@ export class Scene3D {
         return { x: p.x, y: gy + ramp * (deckY - gy), z: p.z };
       });
     }
-    return this._bridgeProfile(this._densifyRoad(base, 2.0, 0)).pts;   // ground road: auto-bridge over rail/water, follow the terrain otherwise
+    const gp = this._densifyRoad(base, 2.0, 0);
+    return e.traced ? gp : this._bridgeProfile(gp).pts;   // player road auto-bridges rail/water; historic lanes stay at grade
   }
 
   // Walk the traced-road graph into maximal polylines: chains run through degree-2
@@ -5274,8 +5303,11 @@ export class Scene3D {
         for (let s = 0; s < l - 0.01; s += step) {
           acc++; if (dashed && acc % 2 === 0) continue;
           const m0 = s, m1 = Math.min(s + (dashed ? 0.8 : l), l), n = v.length / 3;
-          v.push(a.x + ux * m0 + ox + px, a.y + 0.06, a.z + uz * m0 + oz + pz, a.x + ux * m0 + ox - px, a.y + 0.06, a.z + uz * m0 + oz - pz,
-                 a.x + ux * m1 + ox - px, a.y + 0.06, a.z + uz * m1 + oz - pz, a.x + ux * m1 + ox + px, a.y + 0.06, a.z + uz * m1 + oz + pz);
+          // follow the road's height along the segment so the mark sits ON the surface
+          // (not floating on a slope or a bridge ramp) — lerp y at each dash end.
+          const y0 = a.y + (b.y - a.y) * (m0 / l) + 0.06, y1 = a.y + (b.y - a.y) * (m1 / l) + 0.06;
+          v.push(a.x + ux * m0 + ox + px, y0, a.z + uz * m0 + oz + pz, a.x + ux * m0 + ox - px, y0, a.z + uz * m0 + oz - pz,
+                 a.x + ux * m1 + ox - px, y1, a.z + uz * m1 + oz - pz, a.x + ux * m1 + ox + px, y1, a.z + uz * m1 + oz + pz);
           idx.push(n, n + 1, n + 2, n, n + 2, n + 3);
         }
       }
@@ -5312,14 +5344,14 @@ export class Scene3D {
         // densely-traced curve renders as the exact smooth line the player drew — the
         // trace keeps its own points, we do NOT re-curve or distort it here).
         if (raw.length < 2) continue;
-        // auto-bridge: lift any part of the chain that crosses the KTM rail or the sea
-        const bp = this._bridgeProfile(this._densifyRoad(raw, 2.0, 0.10)), pts = bp.pts;
+        // the historic 1965 lanes stay on the ground and cross the KTM tracks at grade
+        // (level crossings) — only the player's modern roads auto-bridge over rail/sea.
+        const pts = this._densifyRoad(raw, 2.0, 0.10);
         if (dirt) { dirtRibbon(pts, HWD, pavedNode.has(nodes[0]), pavedNode.has(nodes[nodes.length - 1])); }  // narrow kampong track, feathered into asphalt at junctions
         else {
           ribbonSmooth(road, pts, oneway ? HW1 : HW2, 0.04);     // paved (standard or single lane)
           if (!oneway) markLine(pts, 0, true, 0.05);             // two-way: a dashed centre line down the middle
         }
-        if (bp.bridged) this._addPillars(this.roadGroup, pts, dirt || oneway ? 0.3 : 0.4);   // piers under the crossing span
       }
     }
 
@@ -5434,25 +5466,25 @@ export class Scene3D {
       if (best >= 0) return best;
       nodes.push({ x, z, y }); adj.push([]); return nodes.length - 1;
     };
-    const add = (pts, lanes, type, elevated, walk, traced, oneway) => {
+    const add = (pts, lanes, type, elevated, walk, traced, oneway, dirt) => {
       if (pts.length < 2) return;
       let len = 0; for (let i = 0; i < pts.length - 1; i++) len += Math.hypot(pts[i + 1].x - pts[i].x, pts[i + 1].z - pts[i].z);
       const n1 = nodeAt(pts[0].x, pts[0].z, pts[0].y), n2 = nodeAt(pts[pts.length - 1].x, pts[pts.length - 1].z, pts[pts.length - 1].y);
       if (n1 === n2) return;
       const ei = this.edgePts.length;
-      this.edgePts.push(pts); this.edgeLen.push(len); this.edgeMeta.push({ lanes, type, elevated, walk, traced: !!traced, oneway: !!oneway });
+      this.edgePts.push(pts); this.edgeLen.push(len); this.edgeMeta.push({ lanes, type, elevated, walk, traced: !!traced, oneway: !!oneway, dirt: !!dirt });
       this.edgeN1.push(n1); this.edgeN2.push(n2);
       const mid = pts[Math.floor(pts.length / 2)]; this.edgeMid.push({ x: mid.x, z: mid.z });
       adj[n1].push({ edge: ei, to: n2, fwd: true }); adj[n2].push({ edge: ei, to: n1, fwd: false });
     };
     if (this.roadEdges) for (const [[ai, aj], [bi, bj]] of this.roadEdges) {
       const a = cornerToWorld(ai, aj), b = cornerToWorld(bi, bj);
-      add([{ x: a.x, y: 0.16, z: a.z }, { x: b.x, y: 0.16, z: b.z }], 2, 'road', false, true, false, false);
+      add([{ x: a.x, y: 0.16, z: a.z }, { x: b.x, y: 0.16, z: b.z }], 2, 'road', false, true, false, false, false);
     }
     const roads = this.state?.roads;
     if (roads) roads.edges.forEach((e) => {
       const T = ROAD_TYPES[e.type] || ROAD_TYPES.road;
-      add(this._sampleEdge(roads, e), e.lanes || T.lanes, e.type, e.elevated, !e.elevated, e.traced, e.oneway);
+      add(this._sampleEdge(roads, e), e.lanes || T.lanes, e.type, e.elevated, !e.elevated, e.traced, e.oneway, e.dirt);
     });
     this.navNodes = nodes; this.navAdj = adj;
     this._computeOneWayGroups();   // group one-way edges into "roads" (capacity: one car each)
@@ -5577,11 +5609,25 @@ export class Scene3D {
       const sorted = links.map((l) => ({ l, ang: bear(l) })).sort((p, q) => p.ang - q.ang);
       const grpByEdge = new Map();
       sorted.forEach((s, i) => grpByEdge.set(s.l.edge, i % 2));   // alternate → opposite roads pair up
-      const light = { node: n, grpByEdge, period: 7 + Math.random() * 3, t: Math.random() * 5, phase: 0, lenses: null };
-      const post = this._makeSignalPost();       // compact 1965 three-aspect signal (small, kerbside)
-      light.lenses = post.userData.lenses;
-      post.position.set(node.x, node.y, node.z); post.rotation.y = Math.random() * Math.PI * 2;
-      this.lightGroup.add(post);
+      const light = { node: n, grpByEdge, period: 7 + Math.random() * 3, t: Math.random() * 5, phase: 0, posts: [], lenses: null };
+      // A real junction carries a signal head on EACH approach, standing at the near-side
+      // (left) kerb by the stop line and facing the oncoming traffic — NOT one post in the
+      // middle of the crossing. Place one per incident road at its corner.
+      for (const { l } of sorted) {
+        const pts = this.edgePts[l.edge]; if (!pts || pts.length < 2) continue;
+        const nodeEnd = l.fwd ? pts[0] : pts[pts.length - 1], inStep = l.fwd ? pts[1] : pts[pts.length - 2];
+        let dx = inStep.x - nodeEnd.x, dz = inStep.z - nodeEnd.z; const dl = Math.hypot(dx, dz) || 1; dx /= dl; dz /= dl;  // outward along the approach
+        const T = ROAD_TYPES[this.edgeMeta[l.edge].type] || ROAD_TYPES.road, hw = T.renderHW || T.width / 2 || 0.34;
+        const back = 2.2, off = hw + 0.45, px = -dz, pz = dx;       // set back to the stop line, out to the left kerb
+        const lx = node.x + dx * back - px * off, lz = node.z + dz * back - pz * off;
+        const post = this._makeSignalPost();       // compact 1965 three-aspect signal (small, kerbside)
+        post.position.set(lx, this._roadY(lx, lz), lz);
+        post.rotation.y = Math.atan2(dx, dz);      // face the oncoming cars (outward along the approach)
+        this.lightGroup.add(post);
+        light.posts.push({ lenses: post.userData.lenses, group: grpByEdge.get(l.edge) });
+      }
+      if (!light.posts.length) continue;
+      light.lenses = (light.posts.find((p) => p.group === 0) || light.posts[0]).lenses;  // representative group-0 head
       this.lights.push(light); this.lightByNode.set(n, light);
     }
   }
@@ -5654,12 +5700,12 @@ export class Scene3D {
     this._lampGroup = new THREE.Group(); this.scene.add(this._lampGroup);
     // cached lamp-part templates (built once, at origin: base on the ground, arm/head reaching +Z)
     if (!this._lampTpl) {
-      const postG = new THREE.CylinderGeometry(0.014, 0.02, 0.52, 6).translate(0, 0.26, 0);   // slim lamp post ~1/3 the old height, so it doesn't dwarf the scene
+      const postG = new THREE.CylinderGeometry(0.014, 0.02, 0.52, 5).translate(0, 0.26, 0);   // slim lamp post ~1/3 the old height, so it doesn't dwarf the scene
       const armG = new THREE.BoxGeometry(0.02, 0.02, 0.13).translate(0, 0.5, 0.06);
-      const headG = new THREE.SphereGeometry(0.03, 8, 6).translate(0, 0.49, 0.11);
+      const headG = new THREE.SphereGeometry(0.03, 6, 4).translate(0, 0.49, 0.11);   // low-poly head — thousands of these are drawn, keep them cheap
       this._lampTpl = { struct: this._mergeGeos([postG, armG]), head: headG };
     }
-    const STEP = 20, MAX = 520;                                     // fixed distance between lamps along a road
+    const STEP = 15, MAX = 2600;                                    // fixed distance between lamps along a road
     const structs = [], heads = [];
     const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0), scl = new THREE.Vector3(1, 1, 1), pos = new THREE.Vector3();
     let count = 0;
@@ -5676,10 +5722,12 @@ export class Scene3D {
     };
     for (let e = 0; e < this.edgePts.length && count < MAX; e++) {
       const meta = this.edgeMeta[e]; if (!meta || !meta.walk || meta.elevated) continue;   // surface roads only
+      if (meta.dirt) continue;                                       // dirt kampong tracks are unlit
       const pts = this.edgePts[e]; if (!pts || pts.length < 2) continue;
       const T = ROAD_TYPES[meta.type] || ROAD_TYPES.road;
       const off = (T.renderHW || T.width / 2 || 0.34) + 0.2;        // stand right beside the road, just off the kerb
-      let acc = STEP * 0.5;                                          // first pair a fixed offset in from the end
+      const both = !meta.oneway;                                    // a two-way road is lit on BOTH kerbs; a one-way on one
+      let acc = STEP * 0.5;                                          // first lamp a fixed offset in from the end
       for (let i = 0; i < pts.length - 1 && count < MAX; i++) {
         const a = pts[i], b = pts[i + 1];
         let dx = b.x - a.x, dz = b.z - a.z; const segL = Math.hypot(dx, dz); if (segL < 1e-3) continue;
@@ -5687,11 +5735,8 @@ export class Scene3D {
         const perpx = -dz, perpz = dx;                              // unit normal to the road
         while (acc <= segL && count < MAX) {
           const cx = a.x + dx * acc, cz = a.z + dz * acc, cy = a.y + (b.y - a.y) * (acc / segL);
-          // base 1966 roads light the town only; player-built roads are always lit
-          if (!meta.traced || this._nearShopTown(cx, cz)) {
-            addLamp(cx, cz, cy, perpx, perpz, 1, off);                  // a matched PAIR, one on each kerb,
-            if (count < MAX) addLamp(cx, cz, cy, perpx, perpz, -1, off); // so the spacing reads as a regular ladder
-          }
+          addLamp(cx, cz, cy, perpx, perpz, 1, off);                // fixed-interval lamp on the near kerb…
+          if (both && count < MAX) addLamp(cx, cz, cy, perpx, perpz, -1, off);  // …and a matching one opposite for a two-way road
           acc += STEP;
         }
         acc -= segL;
@@ -5733,12 +5778,16 @@ export class Scene3D {
     for (const lt of this.lights) {
       lt.t += dt;
       if (lt.t >= lt.period) { lt.t -= lt.period; lt.phase ^= 1; }
-      const L = lt.lenses; if (!L) continue;
-      // green while this phase runs, an amber warning in the last ~0.9s, then red
-      const state = lt.phase === 0 ? ((lt.period - lt.t) < 0.9 ? 'amber' : 'green') : 'red';
-      this._setAspect(L.red, state === 'red', 0xe23b2e, 0x40100c);
-      this._setAspect(L.amber, state === 'amber', 0xf3c41a, 0x3a2c06);
-      this._setAspect(L.green, state === 'green', 0x2ecc71, 0x0c3a1c);
+      // each approach head shows green while ITS phase runs, an amber warning in the last
+      // ~0.9s, then red — opposite approaches (same group) run together.
+      const posts = lt.posts || (lt.lenses ? [{ lenses: lt.lenses, group: 0 }] : []);
+      for (const p of posts) {
+        const L = p.lenses; if (!L) continue;
+        const active = p.group === lt.phase, amber = active && (lt.period - lt.t) < 0.9;
+        this._setAspect(L.red, !active, 0xe23b2e, 0x40100c);
+        this._setAspect(L.amber, amber, 0xf3c41a, 0x3a2c06);
+        this._setAspect(L.green, active && !amber, 0x2ecc71, 0x0c3a1c);
+      }
     }
   }
   // green for the road `edge` arriving at junction `node`?

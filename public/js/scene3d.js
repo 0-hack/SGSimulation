@@ -5287,10 +5287,18 @@ export class Scene3D {
       const pts = this._sampleEdge(roads, e);
       if (pts.length < 2) return;
       if (T.renderHW) {
-        // player-drawn Road: a slim carriageway matching the 1966 survey-map roads —
-        // a clean dark ribbon of uniform width (mitred so bends don't pinch).
+        // player-drawn Road / Avenue / Expressway: a clean dark carriageway of uniform
+        // width (mitred so bends don't pinch), wider for the bigger roads.
         ribbonSmooth(road, pts, T.renderHW, 0.04);
-        if (!e.oneway) markLine(pts, 0, true, 0.05);   // two-way: dashed centre line; one-way roads stay blank & narrower
+        const L = e.lanes || T.lanes || 2;
+        if (L >= 3) {
+          // multi-lane arterial/expressway: a solid centre line between the directions
+          // (for an even lane count) plus dashed lane dividers within each carriageway.
+          const HW = T.renderHW, lw = (2 * HW) / L;
+          for (let k = 1; k < L; k++) { const off = -HW + k * lw; markLine(pts, off, Math.abs(off) > 0.04, 0.045); }
+        } else if (!e.oneway) {
+          markLine(pts, 0, true, 0.05);                // two-way: dashed centre line; one-way roads stay blank & narrower
+        }
         if (e.elevated) this._addPillars(this.roadGroup, pts, 0.45);
         return;
       }

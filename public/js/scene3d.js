@@ -1150,7 +1150,7 @@ export class Scene3D {
       const heritageLandmark = BUILDINGS[key] && BUILDINGS[key].cat === 'heritage';
       const sc = key === 'shophouse' ? MODEL_SCALE   // same size as a player-built shophouse (the build-menu size)
         : key === 'kampong' ? 0.42
-        : heritageLandmark ? 0.72                     // named central-area landmarks stand a touch prouder than the shophouse mass
+        : heritageLandmark ? 0.5                      // named central-area landmarks: kept close to the surrounding low-rise scale of the survey map, only a little above the shophouses
         : (key === 'port' || key === 'power_station' || key === 'factory' || key === 'processing') ? 0.62
         : 0.5;
       m.scale.setScalar(sc);

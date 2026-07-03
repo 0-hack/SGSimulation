@@ -34,26 +34,26 @@ export const SEED_1965 = [
   //      mostly 2–5 storeys, with only a handful of taller blocks (the Asia
   //      Insurance and Bank of China buildings, ~18 storeys); the high-rise office
   //      CBD only rose in the 1970s–80s. Packed into the blocks between the streets ----
-  { key: 'godown',       cx: 0.448, cy: 0.336, n: 2, spread: 0.010, name: 'Singapore River godowns' },
-  { key: 'shophouse',    cx: 0.434, cy: 0.353, n: 6, spread: 0.010, name: 'Chinatown (Kreta Ayer)' },
-  { key: 'shophouse',    cx: 0.450, cy: 0.357, n: 5, spread: 0.010, name: 'Raffles Place & Boat Quay' },
-  { key: 'shophouse',    cx: 0.462, cy: 0.351, n: 3, spread: 0.009, name: 'Collyer Quay' },
-  { key: 'shophouse',    cx: 0.423, cy: 0.349, n: 3, spread: 0.010, name: 'Tanjong Pagar' },
-  { key: 'lau_pa_sat',   cx: 0.444, cy: 0.347, name: 'Lau Pa Sat (Telok Ayer Market)' },
+  { key: 'godown',       cx: 0.448, cy: 0.356, n: 2, spread: 0.010, name: 'Singapore River godowns' },
+  { key: 'shophouse',    cx: 0.434, cy: 0.373, n: 6, spread: 0.010, name: 'Chinatown (Kreta Ayer)' },
+  { key: 'shophouse',    cx: 0.450, cy: 0.377, n: 5, spread: 0.010, name: 'Raffles Place & Boat Quay' },
+  { key: 'shophouse',    cx: 0.462, cy: 0.372, n: 3, spread: 0.009, name: 'Collyer Quay' },
+  { key: 'shophouse',    cx: 0.423, cy: 0.367, n: 3, spread: 0.010, name: 'Tanjong Pagar' },
+  { key: 'lau_pa_sat',   cx: 0.444, cy: 0.369, name: 'Lau Pa Sat (Telok Ayer Market)' },
   // The pioneer skyscrapers already standing over Raffles Place / Collyer Quay by 1965 —
   // a handful of tall bank, insurance and shipping offices poking above the low-rise mass
   // (the dense high-rise CBD only rose from the 1970s). Buildable & demolishable (Heritage).
-  { key: 'bank_of_china',    cx: 0.456, cy: 0.354, name: 'Bank of China Building' },
-  { key: 'asia_insurance',   cx: 0.459, cy: 0.351, name: 'Asia Insurance Building' },
-  { key: 'finlayson_house',  cx: 0.453, cy: 0.352, name: 'Finlayson House' },
-  { key: 'ocean_building',   cx: 0.465, cy: 0.353, name: 'Ocean Building' },
-  { key: 'maritime_building',cx: 0.467, cy: 0.350, name: 'Maritime Building' },
+  { key: 'bank_of_china',    cx: 0.456, cy: 0.377, name: 'Bank of China Building' },
+  { key: 'asia_insurance',   cx: 0.459, cy: 0.374, name: 'Asia Insurance Building' },
+  { key: 'finlayson_house',  cx: 0.453, cy: 0.375, name: 'Finlayson House' },
+  { key: 'ocean_building',   cx: 0.465, cy: 0.375, name: 'Ocean Building' },
+  { key: 'maritime_building',cx: 0.467, cy: 0.372, name: 'Maritime Building' },
   // ---- Port & dockyards lining Keppel Harbour, plus the coastal power stations ----
   { key: 'port',         cx: 0.414, cy: 0.332, name: 'Keppel Harbour' },
   { key: 'diesel',       cx: 0.432, cy: 0.338, name: 'St James Power Station' },
   { key: 'power_station', cx: 0.314, cy: 0.300, name: 'Pasir Panjang Power Station' },
   { key: 'power_station', cx: 0.298, cy: 0.330, name: 'Pasir Panjang ‘B’ Station' },
-  { key: 'sewage',       cx: 0.430, cy: 0.340, name: 'Singapore River sewerage works' },
+  { key: 'sewage',       cx: 0.430, cy: 0.358, name: 'Singapore River sewerage works' },
   // ---- Civic & administrative core, just behind the quays (City Hall / Padang) ----
   { key: 'colonial',     cx: 0.464, cy: 0.380, name: 'Parliament House & City Hall' },
   { key: 'police',       cx: 0.456, cy: 0.382, name: 'Hill Street Police Station' },
@@ -65,11 +65,11 @@ export const SEED_1965 = [
   //      from the build menu (Heritage), so the player can keep or reshape the old
   //      district. Placed at their real sites; they snap to the nearest free cell if a
   //      street or shophouse already sits on the exact spot ----
-  { key: 'fullerton',        cx: 0.457, cy: 0.357, name: 'Fullerton Building' },
-  { key: 'victoria_theatre', cx: 0.461, cy: 0.377, name: 'Victoria Theatre & Concert Hall' },
-  { key: 'raffles_hotel',    cx: 0.470, cy: 0.393, name: 'Raffles Hotel' },
-  { key: 'sri_mariamman',    cx: 0.437, cy: 0.351, name: 'Sri Mariamman Temple' },
-  { key: 'sultan_mosque',    cx: 0.482, cy: 0.405, name: 'Sultan Mosque' },
+  { key: 'fullerton',        cx: 0.457, cy: 0.381, name: 'Fullerton Building' },
+  { key: 'victoria_theatre', cx: 0.461, cy: 0.389, name: 'Victoria Theatre & Concert Hall' },
+  { key: 'raffles_hotel',    cx: 0.470, cy: 0.405, name: 'Raffles Hotel' },
+  { key: 'sri_mariamman',    cx: 0.437, cy: 0.374, name: 'Sri Mariamman Temple' },
+  { key: 'sultan_mosque',    cx: 0.482, cy: 0.417, name: 'Sultan Mosque' },
   // ---- The most crowded part of 1966: from City Hall the built-up town runs
   //      NORTH-EAST and EAST in an almost-unbroken mass of shophouses — Beach Road,
   //      Bugis, Kampong Glam, Rochor, Jalan Besar, Lavender, Kallang, Geylang and

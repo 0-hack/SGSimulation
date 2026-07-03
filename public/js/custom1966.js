@@ -48,6 +48,9 @@ export const SEED_1965 = [
   { key: 'finlayson_house',  cx: 0.453, cy: 0.375, name: 'Finlayson House' },
   { key: 'ocean_building',   cx: 0.465, cy: 0.375, name: 'Ocean Building' },
   { key: 'maritime_building',cx: 0.467, cy: 0.372, name: 'Maritime Building' },
+  // The Malayan Railway's grand southern terminus at Keppel Road, at the end of the KTM
+  // line (it snaps to solid ground right beside the terminal throat, not onto the track).
+  { key: 'tanjong_pagar_station', cx: 0.444, cy: 0.363, name: 'Tanjong Pagar Railway Station' },
   // ---- Port & dockyards lining Keppel Harbour, plus the coastal power stations ----
   { key: 'port',         cx: 0.414, cy: 0.332, name: 'Keppel Harbour' },
   { key: 'diesel',       cx: 0.432, cy: 0.338, name: 'St James Power Station' },

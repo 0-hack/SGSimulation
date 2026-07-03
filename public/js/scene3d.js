@@ -354,6 +354,7 @@ export class Scene3D {
     this._buildTerrain();    // the nature-reserve hills (Bukit Timah massif) around the reservoirs
     this._buildAirport();    // Singapore (Paya Lebar) Airport on the east side
     this._buildTracedRoadMask(); // mark cells the 1966 streets run through (so heritage avoids them)
+    this._buildRailMask(CUSTOM_RAILWAYS); // mark cells the KTM track runs through (so nothing is seeded ON the rails)
     this._buildHeritage1965(SEED_1965); // the city already standing at independence (Aug 1965)
     this._fillUrbanDensity();   // pack the 1966 districts dense with decorative shophouse blocks
     this._placeStructures(CUSTOM_HOUSES, 'houseGroup'); // hand-traced houses (free-placed)
@@ -1112,7 +1113,7 @@ export class Scene3D {
   }
   // Is the cell free for a heritage building: on land, not already taken, not a street.
   _heritageFree(gx, gy) {
-    return this.isLand(gx, gy) && !(this.heritageMask && this.heritageMask[gy][gx]) && !(this._roadMask && this._roadMask[gy][gx]);
+    return this.isLand(gx, gy) && !(this.heritageMask && this.heritageMask[gy][gx]) && !(this._roadMask && this._roadMask[gy][gx]) && !(this._railMask && this._railMask[gy][gx]);
   }
   // Angle so a building's facade (local +Z) turns to FACE the nearest road cell.
   // Returns null if no road is within reach (caller falls back to a default bearing).
@@ -1240,7 +1241,7 @@ export class Scene3D {
     const w2c = (wx, wz) => [Math.round(wx / TILE + N / 2), Math.round(N / 2 - wz / TILE)];
     const okCell = (gx, gy) => gx >= 2 && gy >= 2 && gx < N - 2 && gy < N - 2 &&
       this._solidLand(gx, gy) && !this.heritageMask[gy][gx] && !(this._roadMask && this._roadMask[gy][gx]) &&
-      !this.reserveMask?.[gy]?.[gx] && !this.riverMask?.[gy]?.[gx];
+      !(this._railMask && this._railMask[gy][gx]) && !this.reserveMask?.[gy]?.[gx] && !this.riverMask?.[gy]?.[gx];
     let count = 0;
     const placeTerrace = (wx, wz, faceAng) => {
       const lenx = Math.cos(faceAng), lenz = -Math.sin(faceAng);   // local +X (terrace length) in world
@@ -1300,8 +1301,9 @@ export class Scene3D {
     if (this._heritageRoadFixed || !this.heritagePlacements) return;
     for (const p of this.heritagePlacements) {
       if (p.decor) continue;                       // town terraces handled in the pass below
-      if (!this.isRoadAt(p.gx, p.gy)) continue;
-      const s = this._nearestNonRoad(p.gx, p.gy, SNAP_R); if (!s) continue;
+      const onRail = this._railMask && this._railMask[p.gy] && this._railMask[p.gy][p.gx];
+      if (!this.isRoadAt(p.gx, p.gy) && !onRail) continue;
+      const s = this._nearestFreeLand(p.gx, p.gy, SNAP_R) || this._nearestNonRoad(p.gx, p.gy, SNAP_R); if (!s) continue;
       if (this.heritageMask) { this.heritageMask[p.gy][p.gx] = false; this.heritageMask[s.y][s.x] = true; }
       if (this.heritageInfo) { const nm = this.heritageInfo.get(`${p.gx},${p.gy}`); if (nm) { this.heritageInfo.delete(`${p.gx},${p.gy}`); this.heritageInfo.set(`${s.x},${s.y}`, nm); } }
       p.gx = s.x; p.gy = s.y;
@@ -1314,7 +1316,8 @@ export class Scene3D {
     for (let i = this.heritagePlacements.length - 1; i >= 0; i--) {
       const p = this.heritagePlacements[i];
       if (!p.decor || !p.cells) continue;
-      if (!p.cells.some(([cx, cy]) => this._onCarriageway(cx, cy))) continue;
+      const railAt = (cx, cy) => this._railMask && this._railMask[cy] && this._railMask[cy][cx];
+      if (!p.cells.some(([cx, cy]) => this._onCarriageway(cx, cy) || railAt(cx, cy)) && !railAt(p.gx, p.gy)) continue; // footprint OR the terrace centre straddling the track
       if (p.mesh && this.heritageGroup) this.heritageGroup.remove(p.mesh);
       for (const [cx, cy] of p.cells) { if (this.heritageMask?.[cy]) this.heritageMask[cy][cx] = false; if (this._shopMask?.[cy]) this._shopMask[cy][cx] = 0; }
       this.heritagePlacements.splice(i, 1);
@@ -1444,13 +1447,50 @@ export class Scene3D {
       // historic lines are normalised [nx,ny]; map to world, then render with the
       // SAME terrain-following ballast/sleepers/rails as player-built railways so
       // traced and in-game track look identical.
-      const world = poly.map(([nx, ny]) => ({ x: (nx - 0.5) * WORLD, z: (0.5 - ny) * WORLD }));
-      const dense = this._resamplePoly(world, 1.4);
+      const dense = this._resamplePoly(this._railWorldPath(poly), 1.4);   // Chaikin-smoothed so bends & the terminal throat curve
       const pts = dense.map((q) => new THREE.Vector3(q.x, this._roadY(q.x, q.z), q.z));
       this._railTrack(g, pts);
       tracks.push({ pts, kind: 'train' });
     }
     this._histTrainTracks = tracks;   // the historic KTM lines get steam/diesel trains running on them
+  }
+  // Chaikin corner-cutting (endpoints pinned) turns a faceted traced railway — and
+  // especially the rigid ladder/throat where tracks fan into a terminal — into smooth
+  // sweeping curves, without moving the junctions or the terminus buffer.
+  _smoothRailPath(pts, iters = 2) {
+    let p = pts;
+    for (let it = 0; it < iters && p.length >= 3; it++) {
+      const out = [p[0]];
+      for (let i = 0; i < p.length - 1; i++) {
+        const a = p[i], b = p[i + 1];
+        out.push({ x: a.x * 0.75 + b.x * 0.25, z: a.z * 0.75 + b.z * 0.25 });
+        out.push({ x: a.x * 0.25 + b.x * 0.75, z: a.z * 0.25 + b.z * 0.75 });
+      }
+      out.push(p[p.length - 1]);
+      p = out;
+    }
+    return p;
+  }
+  // Normalised railway polyline -> smoothed world points (shared by the renderer and the
+  // rail mask so the drawn track and the no-build strip agree exactly).
+  _railWorldPath(poly) {
+    return this._smoothRailPath(poly.map(([nx, ny]) => ({ x: (nx - 0.5) * WORLD, z: (0.5 - ny) * WORLD })), 2);
+  }
+  // Flag the cells a railway centre-line runs through (plus a clearance strip) so seeded
+  // buildings are never placed on top of the track.
+  _buildRailMask(list) {
+    if (!this._railMask) this._railMask = Array.from({ length: N }, () => new Array(N).fill(false));
+    const R = 2.2, rc = Math.ceil(R / TILE) + 1;
+    for (const poly of (list || [])) {
+      if (!poly || poly.length < 2) continue;
+      for (const q of this._resamplePoly(this._railWorldPath(poly), 1.2)) {
+        const cgx = Math.round(q.x / TILE + N / 2), cgy = Math.round(N / 2 - q.z / TILE);
+        for (let oy = -rc; oy <= rc; oy++) for (let ox = -rc; ox <= rc; ox++) {
+          const gx = cgx + ox, gy = cgy + oy; if (gx < 0 || gy < 0 || gx >= N || gy >= N) continue;
+          const cw = cellToWorld(gx, gy); if (Math.hypot(cw.x - q.x, cw.z - q.z) < R) this._railMask[gy][gx] = true;
+        }
+      }
+    }
   }
 
   // Mark cells under hand-placed buildings as unbuildable.
@@ -6467,6 +6507,23 @@ export function makeBuilding(key, theme) {
     } else if (key === 'maritime_building') {
       lawn(g, 9, 9, 0x86a6a0);
       officeSlab(g, { w: 5.0, d: 3.6, floors: 8, body: 0xcfc9ba, glass: 0x4e6472 });
+    } else if (key === 'tanjong_pagar_station') {
+      // The 1932 Art Deco southern terminus: a cream stripped-classical frontage of three
+      // tall arches crowned by four allegorical statues, with the platform trainshed behind.
+      lawn(g, 9.6, 9.6, 0x9aa0a2);
+      g.add(partBox(7.6, 3.4, 6.4, mat(0xe7e0cf), 0, 1.7, -1.9));                 // platform trainshed (tracks run in behind)
+      g.add(partBox(8.0, 0.5, 6.7, mat(0x9c5636), 0, 3.55, -1.9));                // low terracotta shed roof
+      g.add(partBox(9.2, 5.0, 1.7, mat(0xefe9da), 0, 2.5, 1.7));                  // cream Art-Deco front block
+      for (const px of [-4.0, 4.0]) g.add(partBox(1.2, 5.7, 1.9, mat(0xe7e1d0), px, 2.85, 1.7)); // taller end pylons
+      for (const ax of [-2.4, 0, 2.4]) {                                          // three tall arched entrances
+        g.add(partBox(1.5, 3.4, 0.32, mat(0x352d24), ax, 1.9, 2.55));            // dark recessed opening
+        g.add(partBox(1.7, 0.4, 0.36, mat(0xe1dac6), ax, 3.75, 2.56));           // pale arch lintel
+      }
+      g.add(partBox(9.2, 0.6, 1.95, mat(0xe1dac6), 0, 5.3, 1.7));                 // parapet across the front
+      for (const sx of [-3.0, -1.0, 1.0, 3.0]) {                                  // four allegorical statues
+        g.add(cyl(0.17, 0.21, 1.0, 0xd6d0c0, sx, 6.05, 1.4));
+        const head = new THREE.Mesh(new THREE.SphereGeometry(0.22, 8, 6), mat(0xd6d0c0)); head.position.set(sx, 6.7, 1.4); head.castShadow = true; g.add(head);
+      }
     } else {
       lawn(g, 9, 9, 0x86a6a0);
       g.add(partBox(7, 4, 6, mat(col), 0, 2, 0));

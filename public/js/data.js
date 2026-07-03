@@ -405,6 +405,11 @@ export const BUILDINGS = {
     cost: 40, upkeep: 1.4, homes: 0, jobs: 170, power: -7, water: -4, pollution: 0, happiness: 5, income: 5,
     desc: 'The old Union Building on Collyer Quay — a prominent waterfront block of shipping and mercantile offices facing the harbour.',
   },
+  tanjong_pagar_station: {
+    name: 'Tanjong Pagar Railway Station', cat: 'heritage', icon: '🚉', color: '#efe9da', year: 1932,
+    cost: 44, upkeep: 1.4, homes: 0, jobs: 150, power: -7, water: -5, pollution: 1, happiness: 8, income: 4,
+    desc: 'The grand Art Deco southern terminus of the Malayan Railway (1932) at Keppel Road — a cream stripped-classical frontage of tall arches crowned by four marble statues of the Malayan economy (agriculture, commerce, transport, industry).',
+  },
 
   mall: {
     name: 'Shopping Mall', cat: 'industry', icon: '🛍️', color: '#d98fc0', customizable: true,
@@ -656,6 +661,7 @@ export const BUILD_MONTHS = {
   // Heritage landmarks — careful restoration-grade builds
   raffles_hotel: 30, fullerton: 30, victoria_theatre: 20, sri_mariamman: 14, sultan_mosque: 16, lau_pa_sat: 14,
   bank_of_china: 34, asia_insurance: 32, finlayson_house: 26, ocean_building: 28, maritime_building: 24,
+  tanjong_pagar_station: 28,
   // Farms
   market_garden: 2, poultry_farm: 2, fish_farm: 3, hydroponic_farm: 6, vertical_farm: 12,
 };

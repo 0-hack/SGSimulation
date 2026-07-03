@@ -39,14 +39,16 @@ try {
     // Sri Mariamman, Sultan Mosque, Lau Pa Sat) stand downtown from day one and are
     // booked into the grid so they FUNCTION (jobs/tourism), not just decorate.
     const HK=['raffles_hotel','fullerton','victoria_theatre','sri_mariamman','sultan_mosque','lau_pa_sat',
-      'bank_of_china','asia_insurance','finlayson_house','ocean_building','maritime_building'];
+      'bank_of_china','asia_insurance','finlayson_house','ocean_building','maritime_building','tanjong_pagar_station'];
     const landmarkKeys=[...new Set(placements.filter(pl=>HK.includes(pl.key)).map(pl=>pl.key))];
     const landmarksInGrid=placements.filter(pl=>HK.includes(pl.key) && v.state.grid[pl.gy][pl.gx]?.k===pl.key).length;
     // a decorative shophouse can be demolished (removeHeritageVisual frees the cell)
     let demolished=false; if(all.find(p=>p.decor)){ const dc=all.find(p=>p.decor); demolished = v.removeHeritageVisual(dc.gx,dc.gy) && !v.heritageMask[dc.gy][dc.gx]; }
     const masked = v.heritageMask ? v.heritageMask.flat().filter(Boolean).length : 0;
+    // nothing seeded on the railway (buildings must not sit on the KTM track)
+    const onRail = (v.heritagePlacements || []).filter(pl => v._railMask && v._railMask[pl.gy] && v._railMask[pl.gy][pl.gx]).length;
     const d = derive(v.state);
-    return { placed, masked, fill, onLand, blocked, inGrid, named, dup, demolished, landmarkKeys, landmarksInGrid,
+    return { placed, masked, fill, onLand, blocked, inGrid, named, dup, demolished, landmarkKeys, landmarksInGrid, onRail,
       homes:d.homes, jobs:Math.round(d.jobs), powerRatio:+d.powerRatio.toFixed(2), waterRatio:+d.waterRatio.toFixed(2),
       pressure:+d.housingPressure.toFixed(2), unemp:+d.unemployment.toFixed(3), pop:v.state.population };
   });
@@ -55,9 +57,10 @@ try {
   ok(r.blocked === r.placed, `heritage cells are unbuildable (${r.blocked}/${r.placed})`);
   ok(r.named >= 18, `landmarks carry names for inspection (${r.named} named)`);
   ok(r.inGrid === r.placed, `every landmark is a real grid cell (${r.inGrid}/${r.placed})`);
-  ok(r.landmarkKeys.length === 11, `all 11 named central-area landmarks (incl. the Raffles Place office towers) stand downtown from the start (${r.landmarkKeys.join(', ')})`);
-  ok(r.landmarksInGrid === 11, `the named landmarks are booked into the economy (${r.landmarksInGrid}/11)`);
+  ok(r.landmarkKeys.length === 12, `all 12 named central-area landmarks (office towers + railway terminus) stand downtown from the start (${r.landmarkKeys.join(', ')})`);
+  ok(r.landmarksInGrid === 12, `the named landmarks are booked into the economy (${r.landmarksInGrid}/12)`);
   ok(r.dup === 0, 'heritage is drawn once — not duplicated by the grid mesh pass');
+  ok(r.onRail === 0, `no seeded building sits on the railway track (${r.onRail} on rail)`);
   ok(r.fill >= 40, `the central districts are lined with real, demolishable shophouse terraces (${r.fill})`);
   ok(r.demolished, 'a town shophouse terrace can be demolished (its cells are freed)');
   ok(r.homes > 0 && r.jobs > 0, `the city functions: houses & employs people (homes ${r.homes}, jobs ${r.jobs})`);

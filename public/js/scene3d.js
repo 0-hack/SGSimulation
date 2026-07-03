@@ -1479,7 +1479,7 @@ export class Scene3D {
       .map((poly) => poly.map(([nx, ny]) => ({ x: (nx - 0.5) * WORLD, z: (0.5 - ny) * WORLD })));
     // cluster all segment endpoints; snap each to its cluster centroid → coincident-ish
     // ends fuse, closing the gaps between the hand-drawn fan segments at the throat.
-    const TOL = 5, clusters = [];
+    const TOL = 7, clusters = [];
     const addEnd = (e) => { let c = clusters.find((cl) => Math.hypot(cl.x - e.x, cl.z - e.z) <= TOL); if (!c) { c = { x: e.x, z: e.z, n: 0, sx: 0, sz: 0 }; clusters.push(c); } c.n++; c.sx += e.x; c.sz += e.z; c.x = c.sx / c.n; c.z = c.sz / c.n; };
     for (const p of paths) { addEnd(p[0]); addEnd(p[p.length - 1]); }
     const snap = (e) => { let best = null, bd = TOL; for (const c of clusters) { const d = Math.hypot(c.x - e.x, c.z - e.z); if (d <= bd) { bd = d; best = c; } } return best ? { x: best.x, z: best.z } : e; };
@@ -1491,7 +1491,7 @@ export class Scene3D {
   // seeded buildings are never placed on top of the track.
   _buildRailMask(list) {
     if (!this._railMask) this._railMask = Array.from({ length: N }, () => new Array(N).fill(false));
-    const R = 1.8, rc = Math.ceil(R / TILE) + 1;   // clearance matched to the slimmer track
+    const R = 1.3, rc = Math.ceil(R / TILE) + 1;   // clearance matched to the road-width track
     for (const path of this._processRailPaths(list)) {
       for (const q of this._resamplePoly(path, 1.2)) {
         const cgx = Math.round(q.x / TILE + N / 2), cgy = Math.round(N / 2 - q.z / TILE);
@@ -2934,7 +2934,7 @@ export class Scene3D {
     if (this._drawArea) {
       if (V.length >= 2) { const loop = V.concat([V[0]]); ribbon(loop, 1.7, 0xffd23a, 0.16); ribbon(loop, 0.5, 0x2bd4c0, 0.2); }
     } else if (V.length >= 2) {
-      const hw = this._drawRail ? 0.75 : this._drawAir ? 4.5 : (ROAD_TYPES[this._drawType]?.renderHW || 0.34);
+      const hw = this._drawRail ? 0.4 : this._drawAir ? 4.5 : (ROAD_TYPES[this._drawType]?.renderHW || 0.34);
       ribbon(V, Math.max(hw + 1.8, 2.2), 0xffd23a, 0.14);   // wide bright glow, hugs the ground — clearly visible at any zoom
       ribbon(V, hw, this._drawRail ? 0x5b5040 : this._drawAir ? 0x35383d : 0x2b2f35, 0.22); // the real (thin) carriageway on top
     }
@@ -4458,7 +4458,7 @@ export class Scene3D {
     for (const dense of viaducts) {          // elevated viaduct: flat deck clearing all below, on pillars
       const n = dense.length, deckY = this._elevatedDeckY(dense, 2);
       const pts = dense.map((q, i) => { const gy = this._roadY(q.x, q.z), t = i / (n - 1), ramp = Math.min(1, Math.min(t, 1 - t) / 0.18); return new THREE.Vector3(q.x, gy + ramp * (deckY - gy), q.z); });
-      this._addRibbon(g, pts, 1.15, 0x6b6f74, -0.18);   // concrete deck under the track (matched to the slim gauge)
+      this._addRibbon(g, pts, 0.7, 0x6b6f74, -0.18);   // concrete deck under the track (matched to the road-width gauge)
       this._railTrack(g, pts);
       this._addPillars(g, pts, 0.55);
       tracks.push({ pts, kind: 'train' });
@@ -4629,7 +4629,7 @@ export class Scene3D {
   // TRESTLE — bents of timber posts under a cross cap — instead of a solid earth
   // embankment, like a 1960s timber rail viaduct. (On the ground / in cuttings: nothing.)
   _railTrestle(g, prof) {
-    const { dense, grade } = prof, wood = 0x6b4a2c, HW = 0.55;
+    const { dense, grade } = prof, wood = 0x6b4a2c, HW = 0.34;
     const nrm = dense.map((p, i) => { const a = dense[Math.max(0, i - 1)], b = dense[Math.min(dense.length - 1, i + 1)]; let tx = b.x - a.x, tz = b.z - a.z; const l = Math.hypot(tx, tz) || 1; return [-tz / l, tx / l]; });
     let acc = 999;
     for (let i = 0; i < dense.length; i++) {
@@ -4637,7 +4637,7 @@ export class Scene3D {
       if (grade[i] - this._roadY(dense[i].x, dense[i].z) < 0.4) continue;   // on the ground here — no trestle
       if (acc < 4) continue; acc = 0;                                       // a bent every ~4 units
       const nx = nrm[i][0], nz = nrm[i][1], rot = Math.atan2(nx, nz);
-      const cap = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.3, 1.3), toon(wood));     // cross cap under the ballast
+      const cap = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.28, 0.8), toon(wood));     // cross cap under the ballast
       cap.position.set(dense[i].x, grade[i] - 0.12, dense[i].z); cap.rotation.y = rot; cap.castShadow = true; g.add(cap);
       for (const sgn of [-1, 1]) {                                          // a timber post each side down to the ground
         const px = dense[i].x + nx * HW * sgn, pz = dense[i].z + nz * HW * sgn, pgy = this._roadY(px, pz), ph = grade[i] - pgy;
@@ -4655,21 +4655,21 @@ export class Scene3D {
     // A slim single-track gauge — thin like the survey-map railway symbol, so a yard of
     // parallel sidings reads clean rather than as a wide chunky ribbon. (Shared by the
     // historic KTM line and player-built railways from the build menu.)
-    this._addRibbon(g, pts, 0.58, 0x6e6457, 0.08);                                // grey gravel ballast bed
+    this._addRibbon(g, pts, 0.35, 0x6e6457, 0.08);                                // grey gravel ballast bed — as wide as a 2-way road (~0.68)
     // wooden cross-ties (sleepers) at even intervals across the track
     let acc = 999;
     for (let i = 0; i < pts.length; i++) {
       acc += (i ? Math.hypot(pts[i].x - pts[i - 1].x, pts[i].z - pts[i - 1].z) : 0);
-      if (acc < 1.7) continue; acc = 0;
-      const slp = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.14, 0.98), toon(0x4a3a2a));
-      slp.position.set(pts[i].x, pts[i].y + 0.12, pts[i].z); slp.rotation.y = Math.atan2(nrm[i][0], nrm[i][1]); slp.castShadow = true; g.add(slp);
+      if (acc < 1.5) continue; acc = 0;
+      const slp = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.12, 0.6), toon(0x4a3a2a));
+      slp.position.set(pts[i].x, pts[i].y + 0.1, pts[i].z); slp.rotation.y = Math.atan2(nrm[i][0], nrm[i][1]); slp.castShadow = true; g.add(slp);
     }
-    // two steel rails on top of the ties (narrower gauge)
+    // two steel rails on top of the ties (narrow gauge to fit the road-width bed)
     for (const sgn of [-1, 1]) {
-      const rail = pts.map((p, i) => new THREE.Vector3(p.x + nrm[i][0] * 0.24 * sgn, p.y + 0.2, p.z + nrm[i][1] * 0.24 * sgn));
-      this._addRibbon(g, rail, 0.07, 0xc7ccd1, 0.0);
+      const rail = pts.map((p, i) => new THREE.Vector3(p.x + nrm[i][0] * 0.17 * sgn, p.y + 0.16, p.z + nrm[i][1] * 0.17 * sgn));
+      this._addRibbon(g, rail, 0.05, 0xc7ccd1, 0.0);
     }
-    this._clearNatureAlong(pts, 0.8);          // clear trees along the track
+    this._clearNatureAlong(pts, 0.6);          // clear trees along the track
   }
   // Grade a railway onto the straight line between its endpoints, and measure the
   // earth that must be moved (hills cut down, dips filled) to that smooth grade.

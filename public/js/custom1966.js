@@ -39,7 +39,7 @@ export const SEED_1965 = [
   { key: 'shophouse',    cx: 0.450, cy: 0.377, n: 5, spread: 0.010, name: 'Raffles Place & Boat Quay' },
   { key: 'shophouse',    cx: 0.462, cy: 0.372, n: 3, spread: 0.009, name: 'Collyer Quay' },
   { key: 'shophouse',    cx: 0.423, cy: 0.367, n: 3, spread: 0.010, name: 'Tanjong Pagar' },
-  { key: 'lau_pa_sat',   cx: 0.444, cy: 0.369, name: 'Lau Pa Sat (Telok Ayer Market)' },
+  { key: 'lau_pa_sat',   cx: 0.456, cy: 0.373, name: 'Lau Pa Sat (Telok Ayer Market)' },
   // The pioneer skyscrapers already standing over Raffles Place / Collyer Quay by 1965 —
   // a handful of tall bank, insurance and shipping offices poking above the low-rise mass
   // (the dense high-rise CBD only rose from the 1970s). Buildable & demolishable (Heritage).

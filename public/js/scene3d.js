@@ -54,6 +54,18 @@ const TILE = WORLD / N;       // size of one grid cell in world units (2.5 at a 
 // Building models are authored for the old ~10-unit cell; scale them to the live
 // cell so a building sits in roughly one cell on whatever grid resolution we use.
 const MODEL_SCALE = TILE / 10;
+// Per-building render scale for the seeded 1965 heritage landmarks, set from their REAL
+// heights relative to a ~2.5-storey shophouse (which renders ~1.36 world tall). The old
+// town was overwhelmingly LOW-RISE: the temples, mosque, market, hotel and station were
+// only 1–4 storeys (kept close to the shophouses); the banks/insurers/shipping offices
+// were 7–10 storeys; and only the Bank of China and Asia Insurance towers were the ~18-
+// storey pioneer skyscrapers that loom above everything.
+const HERITAGE_SCALE = {
+  raffles_hotel: 0.33, sri_mariamman: 0.33, sultan_mosque: 0.33, lau_pa_sat: 0.32,
+  victoria_theatre: 0.32, tanjong_pagar_station: 0.33,          // 1–3 storeys (+ a tower/dome/gopuram)
+  fullerton: 0.42, ocean_building: 0.42, maritime_building: 0.42, finlayson_house: 0.44,  // 7–10-storey offices
+  bank_of_china: 0.5, asia_insurance: 0.5,                      // the 18-storey pioneer skyscrapers
+};
 // Snap/relocate reach in CELLS for a ~110-unit world distance — so heritage seeds
 // that miss land/roads search the same physical area regardless of grid resolution.
 const SNAP_R = Math.max(8, Math.round(110 / TILE));
@@ -1150,7 +1162,7 @@ export class Scene3D {
       const heritageLandmark = BUILDINGS[key] && BUILDINGS[key].cat === 'heritage';
       const sc = key === 'shophouse' ? MODEL_SCALE   // same size as a player-built shophouse (the build-menu size)
         : key === 'kampong' ? 0.42
-        : heritageLandmark ? 0.5                      // named central-area landmarks: kept close to the surrounding low-rise scale of the survey map, only a little above the shophouses
+        : heritageLandmark ? (HERITAGE_SCALE[key] || 0.4)   // named landmarks: sized to their REAL storey height vs a shophouse (see HERITAGE_SCALE)
         : (key === 'port' || key === 'power_station' || key === 'factory' || key === 'processing') ? 0.62
         : 0.5;
       m.scale.setScalar(sc);

@@ -1479,7 +1479,7 @@ export class Scene3D {
       .map((poly) => poly.map(([nx, ny]) => ({ x: (nx - 0.5) * WORLD, z: (0.5 - ny) * WORLD })));
     // cluster all segment endpoints; snap each to its cluster centroid → coincident-ish
     // ends fuse, closing the gaps between the hand-drawn fan segments at the throat.
-    const TOL = 7, clusters = [];
+    const TOL = 5, clusters = [];
     const addEnd = (e) => { let c = clusters.find((cl) => Math.hypot(cl.x - e.x, cl.z - e.z) <= TOL); if (!c) { c = { x: e.x, z: e.z, n: 0, sx: 0, sz: 0 }; clusters.push(c); } c.n++; c.sx += e.x; c.sz += e.z; c.x = c.sx / c.n; c.z = c.sz / c.n; };
     for (const p of paths) { addEnd(p[0]); addEnd(p[p.length - 1]); }
     const snap = (e) => { let best = null, bd = TOL; for (const c of clusters) { const d = Math.hypot(c.x - e.x, c.z - e.z); if (d <= bd) { bd = d; best = c; } } return best ? { x: best.x, z: best.z } : e; };

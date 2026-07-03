@@ -16,6 +16,7 @@
 //   houses     [{...}]        -> custom1966.js             CUSTOM_HOUSES
 //   railway/sands [[...]]     -> custom1966.js             CUSTOM_RAILWAYS / _SANDS
 import { readFileSync, writeFileSync } from 'node:fs';
+import { reconnectGraph } from './reconnect_roads.mjs';
 
 // SIMPLIFY: Douglas-Peucker tolerance in world units (~0.15u ≈ 5.5m) — how far the
 //   kept polyline may stray from the raw trace. Kept SMALL so a freehand curve keeps
@@ -182,7 +183,11 @@ export async function setLandmarks(list) {
 // only fuses genuinely-coincident junctions (so roads drawn apart stay apart and
 // small roads are not snapped onto their neighbours). Used by the live tracer's
 // "Add to game" / Export-and-apply path. Explicit opts still override each field.
-export const FAITHFUL = { exact: true, simplify: 0.06, mergeMid: 0.12, merge: 0.5 };
+// merge (the ENDPOINT weld) is kept generous — hand-traced junctions routinely land a
+// unit or two apart, so a tiny weld left the map shattered into ~1000 disconnected
+// pieces; 1.6 joins those junctions while staying under the ~2.3u parallel-street gap.
+// mergeMid stays tiny so INTERIOR curve points are never snapped (curves stay faithful).
+export const FAITHFUL = { exact: true, simplify: 0.06, mergeMid: 0.12, merge: 1.6 };
 
 export async function applyTrace(t, opts = {}) {
   if (opts.faithful) opts = { ...FAITHFUL, ...opts };
@@ -289,6 +294,12 @@ export async function applyTrace(t, opts = {}) {
     const remap = new Map(), cnodes = [];
     for (const id of used) { remap.set(id, cnodes.length); cnodes.push(nodes[id]); }
     nodes = cnodes; edges = edges.map(e => [remap.get(e[0]), remap.get(e[1]), e[2], e[3], e[4] || 0]);
+    // self-heal: weld every dangling road end back into the graph (endpoints -> nearest
+    // node/junction, else spliced onto the road body it touches). A hand trace leaves
+    // hundreds of junctions a unit or two short; without this the map shatters into ~1000
+    // disconnected islands. Only endpoints move, so the traced curves are untouched.
+    const healed = reconnectGraph(nodes, edges);
+    nodes = healed.nodes; edges = healed.edges;
     outNodes = nodes.map(p => [r1(p[0]), r1(p[1])]); outEdges = edges;
     if (roadsIn.length) did.push(merge ? `roads +${newEdges.length} added -> ${outEdges.length} total` : `roads -> ${outNodes.length} nodes / ${outEdges.length} edges`);
   }

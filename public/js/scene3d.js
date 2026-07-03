@@ -5084,16 +5084,52 @@ export class Scene3D {
       pil.position.set(pts[i].x, gy + h / 2, pts[i].z); pil.castShadow = true; g.add(pil);
     }
   }
+  // AUTO-BRIDGE: a road may never sit ON the KTM tracks or float across open water,
+  // so any span of a ground-level centre-line that overlaps the railway or the sea/
+  // river is lifted onto a deck and the approaches ramp smoothly up to it. Returns
+  // { pts, bridged } — pts keep the input x/z but carry the raised (and ramping) y.
+  // The input y is treated as the ground baseline, so the non-crossing parts stay put.
+  // Applied identically to the historic traced roads and to player-built roads.
+  _bridgeProfile(pts) {
+    const n = pts.length;
+    if (n < 2) return { pts, bridged: false };
+    const RAIL_CLEAR = 2.6, WATER_CLEAR = 1.5, SEA_DECK = SEA_Y + 2.0, SLOPE = 0.16;
+    const ground = new Array(n), target = new Array(n).fill(-Infinity), obs = [];
+    for (let i = 0; i < n; i++) {
+      const p = pts[i]; ground[i] = p.y;
+      const gx = Math.round(p.x / TILE + N / 2), gy = Math.round(N / 2 - p.z / TILE);
+      if (gx < 0 || gy < 0 || gx >= N || gy >= N) continue;
+      const onRail = this._railMask && this._railMask[gy] && this._railMask[gy][gx];
+      const rawLand = (this.land[gy] && this.land[gy][gx]) || (this.reclaimedMask && this.reclaimedMask[gy] && this.reclaimedMask[gy][gx]);
+      const onWater = !rawLand || (this.riverMask && this.riverMask[gy] && this.riverMask[gy][gx]);
+      let t = -Infinity;
+      if (onWater) t = Math.max(t, SEA_DECK, p.y + WATER_CLEAR);   // clear the water surface
+      if (onRail) t = Math.max(t, p.y + RAIL_CLEAR);               // clear a passing train
+      if (t > -Infinity) { target[i] = t; obs.push(i); }
+    }
+    if (!obs.length) return { pts, bridged: false };
+    const s = [0]; for (let i = 1; i < n; i++) s.push(s[i - 1] + Math.hypot(pts[i].x - pts[i - 1].x, pts[i].z - pts[i - 1].z));
+    const out = pts.map((p, i) => {
+      let y = ground[i];
+      for (const j of obs) { const cand = target[j] - SLOPE * Math.abs(s[i] - s[j]); if (cand > y) y = cand; }  // ramp up to the nearest crossing at a gentle grade
+      return { x: p.x, y, z: p.z };
+    });
+    return { pts: out, bridged: true };
+  }
   _sampleEdge(roads, e) {
     const T = ROAD_TYPES[e.type] || ROAD_TYPES.road, hw = (T.renderHW || T.width / 2 + 0.35);
     // a traced or freehand-drawn road carries its own smoothed polyline
     if (e.poly && e.poly.length >= 2) {
-      const n = e.poly.length, deckY = e.elevated ? this._elevatedDeckY(e.poly, hw + 1) : 0;
-      return e.poly.map((p, i) => {
-        const gy = this._roadY(p.x, p.z); let y = gy;
-        if (e.elevated) { const t = i / (n - 1), ramp = Math.min(1, Math.min(t, 1 - t) / 0.18); y = gy + ramp * (deckY - gy); }  // flat flyover, ramps at the ends
-        return { x: p.x, y, z: p.z };
-      });
+      if (e.elevated) {
+        const n = e.poly.length, deckY = this._elevatedDeckY(e.poly, hw + 1);   // manual flyover: flat deck, ramps at the ends
+        return e.poly.map((p, i) => {
+          const gy = this._roadY(p.x, p.z), t = i / (n - 1), ramp = Math.min(1, Math.min(t, 1 - t) / 0.18);
+          return { x: p.x, y: gy + ramp * (deckY - gy), z: p.z };
+        });
+      }
+      // ground road: keep the drawn polyline's own points (already dense), draped on the
+      // terrain, and auto-bridge any span that crosses the rail or the sea/river.
+      return this._bridgeProfile(e.poly.map((p) => ({ x: p.x, y: this._roadY(p.x, p.z), z: p.z }))).pts;
     }
     const a = roads.nodes[e.a], b = roads.nodes[e.b];
     if (!a || !b) return [];
@@ -5103,12 +5139,14 @@ export class Scene3D {
       if (e.ctrl) { const it = 1 - t; base.push({ x: it * it * a.x + 2 * it * t * e.ctrl.x + t * t * b.x, z: it * it * a.z + 2 * it * t * e.ctrl.z + t * t * b.z }); }
       else base.push({ x: a.x + (b.x - a.x) * t, z: a.z + (b.z - a.z) * t });
     }
-    const deckY = e.elevated ? this._elevatedDeckY(base, hw + 1) : 0;
-    return base.map((p, i) => {
-      const gy = this._roadY(p.x, p.z); let y = gy;
-      if (e.elevated) { const t = i / segs, ramp = Math.min(1, Math.min(t, 1 - t) / 0.18); y = gy + ramp * (deckY - gy); }
-      return { x: p.x, y, z: p.z };
-    });
+    if (e.elevated) {
+      const deckY = this._elevatedDeckY(base, hw + 1);
+      return base.map((p, i) => {
+        const gy = this._roadY(p.x, p.z), t = i / segs, ramp = Math.min(1, Math.min(t, 1 - t) / 0.18);
+        return { x: p.x, y: gy + ramp * (deckY - gy), z: p.z };
+      });
+    }
+    return this._bridgeProfile(this._densifyRoad(base, 2.0, 0)).pts;   // ground road: auto-bridge over rail/water, follow the terrain otherwise
   }
 
   // Walk the traced-road graph into maximal polylines: chains run through degree-2
@@ -5169,11 +5207,13 @@ export class Scene3D {
         idx.push(n, n + 1, n + 2, n, n + 2, n + 3);
       }
     };
-    // a CONSTANT-width ribbon that mitres each joint (offset by the averaged
-    // tangent's normal), so a curvy freehand road keeps a uniform width instead
-    // of pinching/bulging at every bend.
+    // a mitred ribbon (offset by the averaged tangent's normal) so a curvy freehand
+    // road keeps a clean width instead of pinching/bulging at every bend. `hw` is the
+    // half-width: a single number for a uniform road, OR a per-vertex array so a bridge
+    // can FLARE at its ends to merge smoothly into a wider/narrower connecting road.
     const ribbonSmooth = (buf, pts, hw, yOff) => {
       const [v, idx] = buf, base = v.length / 3;
+      const hwAt = Array.isArray(hw) ? (i) => hw[i] : () => hw;
       for (let i = 0; i < pts.length; i++) {
         const p = pts[i], a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)];
         // unit directions of the segments meeting at this vertex
@@ -5189,7 +5229,7 @@ export class Scene3D {
         // miter join: offset along the bisector by hw/cos(½angle) so the road keeps
         // a CONSTANT perpendicular width through bends (clamped to avoid spikes)
         let cosv = mx * n2x + mz * n2z; if (cosv < 0.5) cosv = 0.5;
-        const off = hw / cosv;
+        const off = hwAt(i) / cosv;
         v.push(p.x + mx * off, p.y + yOff, p.z + mz * off, p.x - mx * off, p.y + yOff, p.z - mz * off);
       }
       for (let i = 0; i < pts.length - 1; i++) { const a = base + i * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
@@ -5272,46 +5312,78 @@ export class Scene3D {
         // densely-traced curve renders as the exact smooth line the player drew — the
         // trace keeps its own points, we do NOT re-curve or distort it here).
         if (raw.length < 2) continue;
-        const pts = this._densifyRoad(raw, 2.0, 0.10);
+        // auto-bridge: lift any part of the chain that crosses the KTM rail or the sea
+        const bp = this._bridgeProfile(this._densifyRoad(raw, 2.0, 0.10)), pts = bp.pts;
         if (dirt) { dirtRibbon(pts, HWD, pavedNode.has(nodes[0]), pavedNode.has(nodes[nodes.length - 1])); }  // narrow kampong track, feathered into asphalt at junctions
         else {
           ribbonSmooth(road, pts, oneway ? HW1 : HW2, 0.04);     // paved (standard or single lane)
           if (!oneway) markLine(pts, 0, true, 0.05);             // two-way: a dashed centre line down the middle
         }
+        if (bp.bridged) this._addPillars(this.roadGroup, pts, dirt || oneway ? 0.3 : 0.4);   // piers under the crossing span
       }
     }
 
-    if (roads) roads.edges.forEach((e) => {
-      if (e.traced) return;              // already drawn as smooth chains above
-      const T = ROAD_TYPES[e.type] || ROAD_TYPES.road;
-      const pts = this._sampleEdge(roads, e);
-      if (pts.length < 2) return;
-      if (T.renderHW) {
-        // player-drawn Road / Avenue / Expressway: a clean dark carriageway of uniform
-        // width (mitred so bends don't pinch), wider for the bigger roads.
-        ribbonSmooth(road, pts, T.renderHW, 0.04);
-        const L = e.lanes || T.lanes || 2;
-        if (L >= 3) {
-          // multi-lane arterial/expressway: a solid centre line between the directions
-          // (for an even lane count) plus dashed lane dividers within each carriageway.
-          const HW = T.renderHW, lw = (2 * HW) / L;
-          for (let k = 1; k < L; k++) { const off = -HW + k * lw; markLine(pts, off, Math.abs(off) > 0.04, 0.045); }
-        } else if (!e.oneway) {
-          markLine(pts, 0, true, 0.05);                // two-way: dashed centre line; one-way roads stay blank & narrower
+    // Player roads are drawn in two passes so a bridge can MERGE smoothly into the
+    // roads it meets. Pass 1 samples every edge (auto-bridging over rail/water inside
+    // _sampleEdge) and records, per road node, the widest carriageway meeting there and
+    // whether any bridge touches it. Pass 2 renders, flaring a span's ends toward that
+    // width wherever a bridge of a different lane/type joins — no abrupt width step.
+    if (roads) {
+      const infos = [], nodeHW = new Map(), nodeBridge = new Set();
+      roads.edges.forEach((e) => {
+        if (e.traced) return;              // already drawn as smooth chains above
+        const T = ROAD_TYPES[e.type] || ROAD_TYPES.road;
+        const pts = this._sampleEdge(roads, e);
+        if (pts.length < 2) return;
+        const myHW = T.renderHW || T.width / 2;
+        let bridged = !!e.elevated;
+        if (!bridged) for (let i = 0; i < pts.length; i++) { if (pts[i].y - this._roadY(pts[i].x, pts[i].z) > 0.8) { bridged = true; break; } }
+        for (const nd of [e.a, e.b]) if (nd != null) { nodeHW.set(nd, Math.max(nodeHW.get(nd) || 0, myHW)); if (bridged) nodeBridge.add(nd); }
+        infos.push({ e, T, pts, myHW, bridged });
+      });
+      for (const { e, T, pts, myHW, bridged } of infos) {
+        // half-width to render: a per-vertex array that flares each end toward the widest
+        // road at that node when a bridge of a different width is involved, else a plain number.
+        let hw = myHW;
+        const na = roads.nodes && roads.nodes[e.a], nb = roads.nodes && roads.nodes[e.b];
+        if (na && nb && (bridged || nodeBridge.has(e.a) || nodeBridge.has(e.b))) {
+          const near = (p, n) => (p.x - n.x) * (p.x - n.x) + (p.z - n.z) * (p.z - n.z);
+          const startIsA = near(pts[0], na) <= near(pts[0], nb);
+          const wStart = Math.max(myHW, nodeHW.get(startIsA ? e.a : e.b) || myHW);
+          const wEnd = Math.max(myHW, nodeHW.get(startIsA ? e.b : e.a) || myHW);
+          if (wStart !== myHW || wEnd !== myHW) {
+            const s = [0]; for (let i = 1; i < pts.length; i++) s.push(s[i - 1] + Math.hypot(pts[i].x - pts[i - 1].x, pts[i].z - pts[i - 1].z));
+            const total = s[pts.length - 1] || 1, BLEND = Math.min(6, total / 2), sm = (t) => { t = t < 0 ? 0 : t > 1 ? 1 : t; return t * t * (3 - 2 * t); };
+            hw = pts.map((p, i) => Math.max(myHW + (wStart - myHW) * sm(1 - s[i] / BLEND), myHW + (wEnd - myHW) * sm(1 - (total - s[i]) / BLEND)));
+          }
         }
-        if (e.elevated) this._addPillars(this.roadGroup, pts, 0.45);
-        return;
+        if (T.renderHW) {
+          // player-drawn Road / Avenue / Expressway: a clean dark carriageway (mitred so
+          // bends don't pinch), wider for the bigger roads, flaring into merges.
+          ribbonSmooth(road, pts, hw, 0.04);
+          const L = e.lanes || T.lanes || 2;
+          if (L >= 3) {
+            // multi-lane arterial/expressway: a solid centre line between the directions
+            // (for an even lane count) plus dashed lane dividers within each carriageway.
+            const HW = T.renderHW, lw = (2 * HW) / L;
+            for (let k = 1; k < L; k++) { const off = -HW + k * lw; markLine(pts, off, Math.abs(off) > 0.04, 0.045); }
+          } else if (!e.oneway) {
+            markLine(pts, 0, true, 0.05);                // two-way: dashed centre line; one-way roads stay blank & narrower
+          }
+          if (bridged) this._addPillars(this.roadGroup, pts, 0.45);
+          continue;
+        }
+        const w = T.width / 2, L = e.lanes || T.lanes, lw = T.width / L;
+        ribbon(pave, pts, w + 0.35, 0.0);   // slim kerb/shoulder so roads aren't oversized
+        ribbon(road, pts, w, 0.03);
+        for (let k = 1; k < L; k++) {                 // lane dividers
+          const off = -w + k * lw;
+          markLine(pts, off, Math.abs(off) > 0.05);   // solid only on the centre (between directions)
+        }
+        stopLine(pts, w, false); stopLine(pts, w, true);
+        if (bridged) this._addPillars(this.roadGroup, pts, 0.55);
       }
-      const hw = T.width / 2, L = e.lanes || T.lanes, lw = T.width / L;
-      ribbon(pave, pts, hw + 0.35, 0.0);   // slim kerb/shoulder so roads aren't oversized
-      ribbon(road, pts, hw, 0.03);
-      for (let k = 1; k < L; k++) {                 // lane dividers
-        const off = -hw + k * lw;
-        markLine(pts, off, Math.abs(off) > 0.05);   // solid only on the centre (between directions)
-      }
-      stopLine(pts, hw, false); stopLine(pts, hw, true);
-      if (e.elevated) this._addPillars(this.roadGroup, pts, 0.55);
-    });
+    }
 
     (roads?.islands || []).forEach((is) => {
       const disc = new THREE.Mesh(new THREE.CircleGeometry(is.r - 1.4, 22), toon(0x66bd5a));
@@ -5591,10 +5663,13 @@ export class Scene3D {
     const structs = [], heads = [];
     const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0), scl = new THREE.Vector3(1, 1, 1), pos = new THREE.Vector3();
     let count = 0;
-    const addLamp = (cx, cz, perpx, perpz, side, off) => {
+    const addLamp = (cx, cz, cy, perpx, perpz, side, off) => {
       const lx = cx + perpx * off * side, lz = cz + perpz * off * side;
       const ry = Math.atan2(-perpx * side, -perpz * side);          // head reaches IN over the carriageway
-      q.setFromAxisAngle(up, ry); pos.set(lx, this._roadY(lx, lz), lz); m4.compose(pos, q, scl);
+      // on a bridge span the carriageway is lifted, so stand the lamp on the deck; on
+      // the ground follow the terrain under the lamp's own kerbside position.
+      const ly = (cy - this._roadY(cx, cz) > 0.5) ? cy : this._roadY(lx, lz);
+      q.setFromAxisAngle(up, ry); pos.set(lx, ly, lz); m4.compose(pos, q, scl);
       structs.push(this._lampTpl.struct.clone().applyMatrix4(m4));
       heads.push(this._lampTpl.head.clone().applyMatrix4(m4));
       count++;
@@ -5603,7 +5678,7 @@ export class Scene3D {
       const meta = this.edgeMeta[e]; if (!meta || !meta.walk || meta.elevated) continue;   // surface roads only
       const pts = this.edgePts[e]; if (!pts || pts.length < 2) continue;
       const T = ROAD_TYPES[meta.type] || ROAD_TYPES.road;
-      const off = (T.renderHW || T.width / 2 || 0.34) + 0.85;       // sit on the verge, just off the kerb
+      const off = (T.renderHW || T.width / 2 || 0.34) + 0.2;        // stand right beside the road, just off the kerb
       let acc = STEP * 0.5;                                          // first pair a fixed offset in from the end
       for (let i = 0; i < pts.length - 1 && count < MAX; i++) {
         const a = pts[i], b = pts[i + 1];
@@ -5611,11 +5686,11 @@ export class Scene3D {
         dx /= segL; dz /= segL;
         const perpx = -dz, perpz = dx;                              // unit normal to the road
         while (acc <= segL && count < MAX) {
-          const cx = a.x + dx * acc, cz = a.z + dz * acc;
+          const cx = a.x + dx * acc, cz = a.z + dz * acc, cy = a.y + (b.y - a.y) * (acc / segL);
           // base 1966 roads light the town only; player-built roads are always lit
           if (!meta.traced || this._nearShopTown(cx, cz)) {
-            addLamp(cx, cz, perpx, perpz, 1, off);                  // a matched PAIR, one on each kerb,
-            if (count < MAX) addLamp(cx, cz, perpx, perpz, -1, off); // so the spacing reads as a regular ladder
+            addLamp(cx, cz, cy, perpx, perpz, 1, off);                  // a matched PAIR, one on each kerb,
+            if (count < MAX) addLamp(cx, cz, cy, perpx, perpz, -1, off); // so the spacing reads as a regular ladder
           }
           acc += STEP;
         }

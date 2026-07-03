@@ -1442,12 +1442,9 @@ export class Scene3D {
     if (this.railGroup) this.scene.remove(this.railGroup);
     const g = new THREE.Group(); this.scene.add(g); this.railGroup = g;
     const tracks = [];
-    for (const poly of (list || [])) {
-      if (!poly || poly.length < 2) continue;
-      // historic lines are normalised [nx,ny]; map to world, then render with the
-      // SAME terrain-following ballast/sleepers/rails as player-built railways so
-      // traced and in-game track look identical.
-      const dense = this._resamplePoly(this._railWorldPath(poly), 1.4);   // Chaikin-smoothed so bends & the terminal throat curve
+    for (const path of this._processRailPaths(list)) {
+      if (path.length < 2) continue;
+      const dense = this._resamplePoly(path, 1.4);
       const pts = dense.map((q) => new THREE.Vector3(q.x, this._roadY(q.x, q.z), q.z));
       this._railTrack(g, pts);
       tracks.push({ pts, kind: 'train' });
@@ -1471,19 +1468,32 @@ export class Scene3D {
     }
     return p;
   }
-  // Normalised railway polyline -> smoothed world points (shared by the renderer and the
-  // rail mask so the drawn track and the no-build strip agree exactly).
-  _railWorldPath(poly) {
-    return this._smoothRailPath(poly.map(([nx, ny]) => ({ x: (nx - 0.5) * WORLD, z: (0.5 - ny) * WORLD })), 2);
+  // Turn the raw traced KTM polylines into finished world paths: first WELD segment
+  // endpoints that nearly touch so the separately-drawn pieces of the yard throat join
+  // into one continuous network (no gaps), then Chaikin-smooth each so the bends and the
+  // ladder curve. Cached (the historic lines are fixed) and shared by the renderer AND
+  // the rail mask so the drawn track and the no-build strip agree exactly.
+  _processRailPaths(list) {
+    if (this._railPathsCache && this._railPathsList === list) return this._railPathsCache;   // cache keyed on the list identity
+    let paths = (list || []).filter((p) => p && p.length >= 2)
+      .map((poly) => poly.map(([nx, ny]) => ({ x: (nx - 0.5) * WORLD, z: (0.5 - ny) * WORLD })));
+    // cluster all segment endpoints; snap each to its cluster centroid → coincident-ish
+    // ends fuse, closing the gaps between the hand-drawn fan segments at the throat.
+    const TOL = 5, clusters = [];
+    const addEnd = (e) => { let c = clusters.find((cl) => Math.hypot(cl.x - e.x, cl.z - e.z) <= TOL); if (!c) { c = { x: e.x, z: e.z, n: 0, sx: 0, sz: 0 }; clusters.push(c); } c.n++; c.sx += e.x; c.sz += e.z; c.x = c.sx / c.n; c.z = c.sz / c.n; };
+    for (const p of paths) { addEnd(p[0]); addEnd(p[p.length - 1]); }
+    const snap = (e) => { let best = null, bd = TOL; for (const c of clusters) { const d = Math.hypot(c.x - e.x, c.z - e.z); if (d <= bd) { bd = d; best = c; } } return best ? { x: best.x, z: best.z } : e; };
+    paths = paths.map((p) => { const q = p.map((pt) => ({ x: pt.x, z: pt.z })); q[0] = snap(q[0]); q[q.length - 1] = snap(q[q.length - 1]); return this._smoothRailPath(q, 2); });
+    this._railPathsCache = paths; this._railPathsList = list;
+    return paths;
   }
-  // Flag the cells a railway centre-line runs through (plus a clearance strip) so seeded
-  // buildings are never placed on top of the track.
+  // Flag the cells a railway centre-line runs through (plus a slim clearance strip) so
+  // seeded buildings are never placed on top of the track.
   _buildRailMask(list) {
     if (!this._railMask) this._railMask = Array.from({ length: N }, () => new Array(N).fill(false));
-    const R = 2.2, rc = Math.ceil(R / TILE) + 1;
-    for (const poly of (list || [])) {
-      if (!poly || poly.length < 2) continue;
-      for (const q of this._resamplePoly(this._railWorldPath(poly), 1.2)) {
+    const R = 1.8, rc = Math.ceil(R / TILE) + 1;   // clearance matched to the slimmer track
+    for (const path of this._processRailPaths(list)) {
+      for (const q of this._resamplePoly(path, 1.2)) {
         const cgx = Math.round(q.x / TILE + N / 2), cgy = Math.round(N / 2 - q.z / TILE);
         for (let oy = -rc; oy <= rc; oy++) for (let ox = -rc; ox <= rc; ox++) {
           const gx = cgx + ox, gy = cgy + oy; if (gx < 0 || gy < 0 || gx >= N || gy >= N) continue;
@@ -2924,7 +2934,7 @@ export class Scene3D {
     if (this._drawArea) {
       if (V.length >= 2) { const loop = V.concat([V[0]]); ribbon(loop, 1.7, 0xffd23a, 0.16); ribbon(loop, 0.5, 0x2bd4c0, 0.2); }
     } else if (V.length >= 2) {
-      const hw = this._drawRail ? 1.7 : this._drawAir ? 4.5 : (ROAD_TYPES[this._drawType]?.renderHW || 0.34);
+      const hw = this._drawRail ? 0.75 : this._drawAir ? 4.5 : (ROAD_TYPES[this._drawType]?.renderHW || 0.34);
       ribbon(V, Math.max(hw + 1.8, 2.2), 0xffd23a, 0.14);   // wide bright glow, hugs the ground — clearly visible at any zoom
       ribbon(V, hw, this._drawRail ? 0x5b5040 : this._drawAir ? 0x35383d : 0x2b2f35, 0.22); // the real (thin) carriageway on top
     }
@@ -4448,7 +4458,7 @@ export class Scene3D {
     for (const dense of viaducts) {          // elevated viaduct: flat deck clearing all below, on pillars
       const n = dense.length, deckY = this._elevatedDeckY(dense, 2);
       const pts = dense.map((q, i) => { const gy = this._roadY(q.x, q.z), t = i / (n - 1), ramp = Math.min(1, Math.min(t, 1 - t) / 0.18); return new THREE.Vector3(q.x, gy + ramp * (deckY - gy), q.z); });
-      this._addRibbon(g, pts, 1.9, 0x6b6f74, -0.18);   // concrete deck under the track
+      this._addRibbon(g, pts, 1.15, 0x6b6f74, -0.18);   // concrete deck under the track (matched to the slim gauge)
       this._railTrack(g, pts);
       this._addPillars(g, pts, 0.55);
       tracks.push({ pts, kind: 'train' });
@@ -4619,7 +4629,7 @@ export class Scene3D {
   // TRESTLE — bents of timber posts under a cross cap — instead of a solid earth
   // embankment, like a 1960s timber rail viaduct. (On the ground / in cuttings: nothing.)
   _railTrestle(g, prof) {
-    const { dense, grade } = prof, wood = 0x6b4a2c, HW = 0.9;
+    const { dense, grade } = prof, wood = 0x6b4a2c, HW = 0.55;
     const nrm = dense.map((p, i) => { const a = dense[Math.max(0, i - 1)], b = dense[Math.min(dense.length - 1, i + 1)]; let tx = b.x - a.x, tz = b.z - a.z; const l = Math.hypot(tx, tz) || 1; return [-tz / l, tx / l]; });
     let acc = 999;
     for (let i = 0; i < dense.length; i++) {
@@ -4627,7 +4637,7 @@ export class Scene3D {
       if (grade[i] - this._roadY(dense[i].x, dense[i].z) < 0.4) continue;   // on the ground here — no trestle
       if (acc < 4) continue; acc = 0;                                       // a bent every ~4 units
       const nx = nrm[i][0], nz = nrm[i][1], rot = Math.atan2(nx, nz);
-      const cap = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.3, 2.2), toon(wood));     // cross cap under the ballast
+      const cap = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.3, 1.3), toon(wood));     // cross cap under the ballast
       cap.position.set(dense[i].x, grade[i] - 0.12, dense[i].z); cap.rotation.y = rot; cap.castShadow = true; g.add(cap);
       for (const sgn of [-1, 1]) {                                          // a timber post each side down to the ground
         const px = dense[i].x + nx * HW * sgn, pz = dense[i].z + nz * HW * sgn, pgy = this._roadY(px, pz), ph = grade[i] - pgy;
@@ -4642,21 +4652,24 @@ export class Scene3D {
   _railTrack(g, pts) {
     if (!pts || pts.length < 2) return;
     const nrm = pts.map((p, i) => { const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)]; let tx = b.x - a.x, tz = b.z - a.z; const l = Math.hypot(tx, tz) || 1; return [-tz / l, tx / l]; });
-    this._addRibbon(g, pts, 1.03, 0x6e6457, 0.08);                                // grey gravel ballast bed (a third narrower)
+    // A slim single-track gauge — thin like the survey-map railway symbol, so a yard of
+    // parallel sidings reads clean rather than as a wide chunky ribbon. (Shared by the
+    // historic KTM line and player-built railways from the build menu.)
+    this._addRibbon(g, pts, 0.58, 0x6e6457, 0.08);                                // grey gravel ballast bed
     // wooden cross-ties (sleepers) at even intervals across the track
     let acc = 999;
     for (let i = 0; i < pts.length; i++) {
       acc += (i ? Math.hypot(pts[i].x - pts[i - 1].x, pts[i].z - pts[i - 1].z) : 0);
-      if (acc < 2.2) continue; acc = 0;
-      const slp = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.18, 1.66), toon(0x4a3a2a));
-      slp.position.set(pts[i].x, pts[i].y + 0.16, pts[i].z); slp.rotation.y = Math.atan2(nrm[i][0], nrm[i][1]); slp.castShadow = true; g.add(slp);
+      if (acc < 1.7) continue; acc = 0;
+      const slp = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.14, 0.98), toon(0x4a3a2a));
+      slp.position.set(pts[i].x, pts[i].y + 0.12, pts[i].z); slp.rotation.y = Math.atan2(nrm[i][0], nrm[i][1]); slp.castShadow = true; g.add(slp);
     }
-    // two steel rails on top of the ties
+    // two steel rails on top of the ties (narrower gauge)
     for (const sgn of [-1, 1]) {
-      const rail = pts.map((p, i) => new THREE.Vector3(p.x + nrm[i][0] * 0.41 * sgn, p.y + 0.26, p.z + nrm[i][1] * 0.41 * sgn));
-      this._addRibbon(g, rail, 0.09, 0xc7ccd1, 0.0);
+      const rail = pts.map((p, i) => new THREE.Vector3(p.x + nrm[i][0] * 0.24 * sgn, p.y + 0.2, p.z + nrm[i][1] * 0.24 * sgn));
+      this._addRibbon(g, rail, 0.07, 0xc7ccd1, 0.0);
     }
-    this._clearNatureAlong(pts, 1.1);          // clear trees along the track
+    this._clearNatureAlong(pts, 0.8);          // clear trees along the track
   }
   // Grade a railway onto the straight line between its endpoints, and measure the
   // earth that must be moved (hills cut down, dips filled) to that smooth grade.

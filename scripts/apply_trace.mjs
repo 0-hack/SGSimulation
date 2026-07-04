@@ -16,7 +16,7 @@
 //   houses     [{...}]        -> custom1966.js             CUSTOM_HOUSES
 //   railway/sands [[...]]     -> custom1966.js             CUSTOM_RAILWAYS / _SANDS
 import { readFileSync, writeFileSync } from 'node:fs';
-import { reconnectGraph } from './reconnect_roads.mjs';
+import { reconnectGraph, connectCrossings } from './reconnect_roads.mjs';
 
 // SIMPLIFY: Douglas-Peucker tolerance in world units (~0.15u ≈ 5.5m) — how far the
 //   kept polyline may stray from the raw trace. Kept SMALL so a freehand curve keeps
@@ -299,7 +299,10 @@ export async function applyTrace(t, opts = {}) {
     // hundreds of junctions a unit or two short; without this the map shatters into ~1000
     // disconnected islands. Only endpoints move, so the traced curves are untouched.
     const healed = reconnectGraph(nodes, edges);
-    nodes = healed.nodes; edges = healed.edges;
+    // strokes drawn at different times often just CROSS each other with no shared node —
+    // turn every such mid-span crossing into a real junction so the roads connect.
+    const crossed = connectCrossings(healed.nodes, healed.edges);
+    nodes = crossed.nodes; edges = crossed.edges;
     outNodes = nodes.map(p => [r1(p[0]), r1(p[1])]); outEdges = edges;
     if (roadsIn.length) did.push(merge ? `roads +${newEdges.length} added -> ${outEdges.length} total` : `roads -> ${outNodes.length} nodes / ${outEdges.length} edges`);
   }

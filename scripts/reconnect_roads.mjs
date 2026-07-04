@@ -78,6 +78,56 @@ export function reconnectGraph(N0, E0, { weld = 1.8, weldT = 1.6 } = {}) {
   return { nodes: N, edges: E.filter(Boolean) };
 }
 
+// Turn every mid-span CROSSING into a real junction. Strokes drawn at different times
+// often just pass through each other — visually an X, but no shared node, so the two
+// roads are NOT connected in the graph. This finds every pair of edges that
+// geometrically intersect (and don't already share a node), places one junction node
+// at the crossing (reusing a nearby endpoint when one sits within `weldNear`), and
+// splits both edges there. 1966 roads have no grade separation, so a crossing is
+// always a junction. Only the crossing point is added — the traced lines don't move.
+export function connectCrossings(N0, E0, { minT = 0.02, weldNear = 0.5 } = {}) {
+  const N = N0.map((p) => p.slice());
+  let E = E0.map((e) => [e[0], e[1], e[2] || 0, e[3] || 2, e[4] || 0]);
+  const cell = 4, gk = (x, z) => Math.floor(x / cell) + ',' + Math.floor(z / cell), grid = new Map();
+  for (let i = 0; i < E.length; i++) { const A = N[E[i][0]], B = N[E[i][1]], L = dist(A, B), n = Math.max(1, Math.ceil(L / cell)); const put = new Set();
+    for (let s = 0; s <= n; s++) { const t = s / n, k = gk(A[0] + (B[0] - A[0]) * t, A[1] + (B[1] - A[1]) * t); if (!put.has(k)) { put.add(k); (grid.get(k) || grid.set(k, []).get(k)).push(i); } } }
+  const splits = new Map();   // edge index -> [{t, node}]
+  const addSplit = (ei, t, node) => { let a = splits.get(ei); if (!a) splits.set(ei, a = []); a.push({ t, node }); };
+  const tested = new Set(); let found = 0;
+  for (const [, arr] of grid) for (let x = 0; x < arr.length; x++) for (let y = x + 1; y < arr.length; y++) {
+    const i = arr[x], j = arr[y], key = i < j ? i + ':' + j : j + ':' + i;
+    if (tested.has(key)) continue; tested.add(key);
+    const a = E[i], b = E[j];
+    if (a[0] === b[0] || a[0] === b[1] || a[1] === b[0] || a[1] === b[1]) continue;   // already joined
+    const P = N[a[0]], Q = N[a[1]], R = N[b[0]], S = N[b[1]];
+    const d1x = Q[0] - P[0], d1z = Q[1] - P[1], d2x = S[0] - R[0], d2z = S[1] - R[1];
+    const den = d1x * d2z - d1z * d2x; if (Math.abs(den) < 1e-9) continue;            // parallel/collinear: leave overlapping strokes alone
+    const t = ((R[0] - P[0]) * d2z - (R[1] - P[1]) * d2x) / den;
+    const u = ((R[0] - P[0]) * d1z - (R[1] - P[1]) * d1x) / den;
+    if (t < -0.001 || t > 1.001 || u < -0.001 || u > 1.001) continue;
+    const X = [P[0] + t * d1x, P[1] + t * d1z];
+    // the junction node: reuse the closest endpoint of either edge if it's basically AT
+    // the crossing (avoids a sliver segment), otherwise mint a node at the crossing.
+    const cand = [[a[0], dist(X, P)], [a[1], dist(X, Q)], [b[0], dist(X, R)], [b[1], dist(X, S)]].sort((p, q) => p[1] - q[1]);
+    const node = cand[0][1] <= weldNear ? cand[0][0] : (N.push(X), N.length - 1);
+    let did = false;
+    if (t > minT && t < 1 - minT && node !== a[0] && node !== a[1]) { addSplit(i, t, node); did = true; }
+    if (u > minT && u < 1 - minT && node !== b[0] && node !== b[1]) { addSplit(j, u, node); did = true; }
+    if (did) found++;
+  }
+  if (!splits.size) return { nodes: N, edges: E, crossings: 0 };
+  const out = [];
+  for (let ei = 0; ei < E.length; ei++) {
+    const e = E[ei], sp = splits.get(ei);
+    if (!sp || !sp.length) { out.push(e); continue; }
+    sp.sort((p, q) => p.t - q.t);
+    let prev = e[0]; const seen = new Set([e[0], e[1]]);
+    for (const { node } of sp) { if (seen.has(node)) continue; seen.add(node); out.push([prev, node, e[2], e[3], e[4]]); prev = node; }
+    out.push([prev, e[1], e[2], e[3], e[4]]);
+  }
+  return { nodes: N, edges: out.filter((e) => e[0] !== e[1]), crossings: found };
+}
+
 // Gently round SHARP corners (degree-2 chain points only): a light Laplacian nudge
 // toward the neighbour midpoint where the road kinks hard. Junctions and dead-ends are
 // pinned and smooth bends barely move, so the careful curves stay — only jagged kinks soften.
@@ -107,6 +157,8 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const N0 = mod.ROAD_NODES_1966, E0 = mod.ROAD_EDGES_1966;
   const before = { comps: countComponents(N0, E0), nodes: N0.length, edges: E0.length };
   let { nodes, edges } = reconnectGraph(N0, E0);
+  const cx = connectCrossings(nodes, edges); nodes = cx.nodes; edges = cx.edges;
+  console.log('crossings connected:', cx.crossings);
   if (process.argv.includes('--smooth')) nodes = smoothSharp(nodes, edges);
   const r1 = (v) => Math.round(v * 10) / 10; nodes = nodes.map((p) => [r1(p[0]), r1(p[1])]);
   console.log('before:', JSON.stringify(before));

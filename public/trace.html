@@ -541,7 +541,13 @@ $('export').onclick = () => { finishCur();
   const feat = ['mainland', 'reservoirs', 'railway', 'sands'].filter(k => t[k] && t[k].length);
   toast('Exported the FULL map (' + allMapRoads().length + ' roads' + (feat.length ? ' · ' + feat.join(', ') : '') + ')'); };
 $('load').onchange = e => { const f = e.target.files[0]; if (!f) return; const rd = new FileReader();
-  rd.onload = () => { try { applyLoaded(JSON.parse(rd.result)); sel = null; resumable = null; snapshot(); draw(); updateStat(); toast('Loaded'); } catch (err) { toast('Bad file: ' + err.message, true); } }; rd.readAsText(f); };
+  rd.onload = () => { try { applyLoaded(JSON.parse(rd.result));
+    // A loaded file REPLACES the map: drop the default/game overlay so ONLY the imported
+    // trace shows, and a later Export or Save writes exactly the imported map — not the
+    // old default sitting underneath it. (The yellow guide outline still shows for reference.)
+    game = { roads: [], mainland: [], reservoirs: [], railway: [], sands: [], airport: [], _sandsCustom: [] };
+    overlayDirty = {};
+    sel = null; resumable = null; snapshot(); draw(); updateStat(); toast('Loaded — the imported map replaces the default'); } catch (err) { toast('Bad file: ' + err.message, true); } }; rd.readAsText(f); };
 // Start a fresh working session: wipe the in-browser autosave so the previously
 // traced lines stop showing on top of the game overlay. The game's own roads
 // (the faded reference) are untouched; export first if you want a copy.

@@ -65,14 +65,16 @@ async function downloadCommunity(build) {
 const LS_SAVE = 'sg_save_v1';
 const LS_NAME = 'sg_owner';
 
-// Game days per real second for each speed step.
 // Time speed. The player picks a base rate in IN-GAME DAYS PER REAL SECOND
 // (G.dayRate); Play / Fast / Hyper multiply it. Day/night is locked to the
-// calendar (1 in-game day = one sun cycle), so the sun's *visible* advance is
-// capped (SUN_CAP) to avoid strobing when fast-forwarding — the date still races
-// ahead at the full chosen rate.
+// calendar (1 in-game day = one sun cycle) and advances at the SAME rate as the
+// date at every stock speed, so the clock, the weather and the calendar agree.
 const SPEED_MULT = [0, 1, 5, 20];   // pause / play / fast / hyper multipliers
-const SUN_CAP = 0.5;                // max in-game days/sec the day-night cycle visibly advances
+// Max in-game days/sec the day-night cycle VISIBLY advances. Covers every stock
+// speed at the default rate (Hyper = 0.1 × 20 = 2 d/s), so the sun, the weather and
+// the date all run in lockstep on the calendar — the cap only kicks in at extreme
+// custom rates, where a faster cycle would just strobe the lighting.
+const SUN_CAP = 2;
 // Airport runways must be on flat ground. If the chosen strip varies in height by
 // more than FLAT_TOL, the player pays EARTHWORK_RATE per m³ of earth moved to level it.
 // Airport runways AND railways are laid on flat/graded ground: if the strip crosses
@@ -286,6 +288,9 @@ function showGameShell(playing = true) {
     }
   }
   G.view.resize();
+  // start the date accumulator on the same day-fraction as the visible clock, so the
+  // calendar flips at the visible MIDNIGHT (not mid-morning) and stays in phase.
+  G.acc = ((G.view.gameDays % 1) + 1) % 1;
   if (playing) setSpeed(1);
   // surface the camera controls once per session, then fade it out
   if (!sessionStorage.getItem('camHintSeen')) {
@@ -390,9 +395,11 @@ function loop(ts) {
   G.lastFrame = ts;
 
   if (G.state && G.speed > 0 && !G.editPause) {
-    // drive the day/night sun & weather clock in lockstep with the date
+    // drive the day/night sun & weather clock in lockstep with the date: the clock
+    // gets the SAME sim-days the date accumulates (weather stays on the calendar);
+    // only the visible sun is capped at extreme custom rates so it doesn't strobe.
     const rate = currentRate();
-    if (G.view) G.view.advanceClock(dt * Math.min(rate, SUN_CAP)); // cap the sun so fast-forward doesn't strobe
+    if (G.view) G.view.advanceClock(dt * rate, dt * Math.min(rate, SUN_CAP));
     G.acc += dt * rate;
     let ticks = 0;
     const rwBefore = (G.state.roadworks || []).length;
@@ -417,6 +424,10 @@ function loop(ts) {
   renderDecisions();                    // keep the (non-blocking) decisions panel in sync
   if (G.view) { G.view.render(); updateWeatherHud(); }
 }
+// While the tab is hidden, rAF is suspended — the first frame back would otherwise
+// carry the WHOLE away-time as one delta and leap the date forward by hours of game
+// time. Dropping the frame anchor makes the resume frame a clean dt=0 restart.
+document.addEventListener('visibilitychange', () => { if (!document.hidden) G.lastFrame = 0; });
 
 let lastWeather = '';
 function updateWeatherHud() {

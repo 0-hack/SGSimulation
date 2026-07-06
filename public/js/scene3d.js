@@ -4293,7 +4293,12 @@ export class Scene3D {
     return sp;
   }
   // ---- day / night (driven by the in-game clock) ---------------------------
-  advanceClock(days) { this.gameDays += days; this._pendingDays = (this._pendingDays || 0) + days; }
+  // `days` is the SIM time that passed (the same accumulation that advances the
+  // date), so the visible day/night cycle and the weather clock stay in lockstep
+  // with the calendar at every speed. Only at extreme rates is the VISIBLE sun
+  // capped (via `visDays`, computed by the caller from real time) so the lighting
+  // doesn't strobe — the weather clock always runs at the true calendar rate.
+  advanceClock(days, visDays) { this.gameDays += (visDays == null ? days : visDays); this._pendingDays = (this._pendingDays || 0) + days; }
   // Freeze the living world (traffic, people, boats, sea shimmer, weather) while
   // the player is editing. The camera and edit feedback stay fully responsive.
   setFrozen(on) { this.frozen = !!on; }

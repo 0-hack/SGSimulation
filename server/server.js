@@ -67,7 +67,9 @@ api.put('/worlds/:id', (req, res) => {
     name: clampName(name, row.name),
     owner: clampName(owner, row.owner),
     state,
-    isPublic: isPublic !== false,
+    // omitting isPublic PRESERVES the world's current visibility — the old default
+    // silently flipped a private world public on any save that forgot the flag.
+    isPublic: isPublic === undefined ? !!row.is_public : isPublic === true,
   });
   res.json(world);
 });
@@ -103,6 +105,22 @@ const BUILD_FUNCS = ['house', 'economy', 'entertainment', 'power', 'water', 'civ
 function validDesign(d) {
   return d && typeof d === 'object' && Array.isArray(d.parts) && d.parts.length > 0 && d.parts.length <= 400;
 }
+// A shared design's self-declared economy stats flow into every downloader's game,
+// so clamp them to the range legit stock buildings occupy — otherwise one published
+// build with homes:1e12 wrecks the simulation of everyone who downloads it.
+const STAT_BOUNDS = {
+  homes: [0, 12000], jobs: [0, 12000], power: [-600, 600], water: [-600, 600],
+  pollution: [-40, 40], happiness: [-15, 15], income: [-60, 120], upkeep: [0, 120], safety: [-30, 30],
+};
+function sanitizeStats(d) {
+  if (!d || typeof d.stats !== 'object' || !d.stats) return d;
+  const st = {};
+  for (const [k, [lo, hi]] of Object.entries(STAT_BOUNDS)) {
+    const v = d.stats[k];
+    if (typeof v === 'number' && isFinite(v)) st[k] = Math.min(hi, Math.max(lo, v));
+  }
+  return { ...d, stats: st };
+}
 
 // Publish a custom build to the community. Returns its id + a secret token (needed
 // to delete it later). `design` carries the parts, chosen functionality, size etc.
@@ -118,7 +136,7 @@ api.post('/builds', (req, res) => {
     func: BUILD_FUNCS.includes(func) ? func : 'landmark',
     size: Math.min(Math.max(Number(size) || 1, 0.2), 6),
     year: Math.min(Math.max(parseInt(year, 10) || 1965, 1900), 2100),
-    design,
+    design: sanitizeStats(design),
     token: hash(token),
   });
   res.json({ ...build, token });
@@ -180,13 +198,23 @@ app.get('/api/trace/current', async (_req, res) => {
 // scene builds these once at creation, so the game uses it to detect a base-map
 // edit (tracer "Save to map") on New Game and reload to rebuild — roads refresh
 // without a reload, so they're deliberately excluded here. Read-only, always on.
+let _mapsigCache = { key: null, sig: '' };
 app.get('/api/trace/mapsig', async (_req, res) => {
   try {
-    const u = '?u=' + Date.now();
-    const sh = await import('../public/js/shape.js' + u);
-    const cu = await import('../public/js/custom1966.js' + u);
-    const rd = await import('../public/js/roads1966.js' + u);
-    res.json({ sig: hash(JSON.stringify([sh.SG_OUTLINE, sh.SG_ISLANDS, sh.SG_SANDS, cu.CUSTOM_SANDS, cu.CUSTOM_RAILWAYS, rd.RESERVOIRS_1966])) });
+    // Cache-busting imports permanently retain a fresh module copy per call, so key
+    // the cached signature on the files' mtimes and only re-import after a real edit
+    // (the tracer's Save-to-map rewrites these files) — not on every New Game.
+    const { statSync } = await import('node:fs');
+    const files = ['shape.js', 'custom1966.js', 'roads1966.js'].map((f) => new URL('../public/js/' + f, import.meta.url));
+    const key = files.map((f) => { try { return statSync(f).mtimeMs; } catch { return 0; } }).join(':');
+    if (key !== _mapsigCache.key) {
+      const u = '?u=' + Date.now();
+      const sh = await import('../public/js/shape.js' + u);
+      const cu = await import('../public/js/custom1966.js' + u);
+      const rd = await import('../public/js/roads1966.js' + u);
+      _mapsigCache = { key, sig: hash(JSON.stringify([sh.SG_OUTLINE, sh.SG_ISLANDS, sh.SG_SANDS, cu.CUSTOM_SANDS, cu.CUSTOM_RAILWAYS, rd.RESERVOIRS_1966])) };
+    }
+    res.json({ sig: _mapsigCache.sig });
   } catch (e) { res.json({ sig: '' }); }
 });
 
@@ -194,9 +222,11 @@ app.get('/api/trace/mapsig', async (_req, res) => {
 // and inside their saved game) — see public/js/landmarks.js. No server write is
 // involved, so there's nothing to gate and nothing shared between players.
 
-if (process.env.TRACE_EDIT !== '0') {
-  // POST a trace -> write it into the BASE 1966 map (shared by everyone). This is
-  // a creator/dev action, so it stays gated — set TRACE_EDIT=0 on public sites.
+if (process.env.TRACE_EDIT === '1') {
+  // POST a trace -> write it into the BASE 1966 map (shared by everyone). This is a
+  // creator/dev action behind an EXPLICIT opt-in (TRACE_EDIT=1, e.g. in
+  // docker-compose.yml) — the old fail-open default let any anonymous visitor of a
+  // forgetfully-configured deployment rewrite the shared map.
   app.post('/api/trace/apply', async (req, res) => {
     try {
       const { applyTrace } = await import('../scripts/apply_trace.mjs');

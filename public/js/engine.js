@@ -110,6 +110,7 @@ export function newGame({ name = 'New Singapore', owner = 'Anonymous' } = {}) {
   };
 
   seed1965(state);            // historical southern town + scattered kampongs
+  settleFinance(state, derive(state));   // seed the ledger so the daily cash flow starts on day 1 (settled monthly thereafter)
   refreshSummary(state);
   return state;
 }
@@ -1486,42 +1487,16 @@ function logEvent(state, text, detail, scope) {
 // ---------------------------------------------------------------------------
 // Monthly economy + population update
 // ---------------------------------------------------------------------------
-function monthlyUpdate(state, d) {
+// Settle the monthly finance LEDGER into state.lastFinance ($ millions / month).
+// Pure rate computation — it does NOT credit the treasury; the money is applied by
+// tickDay's daily trickle (net/30 each day, summing to exactly one net per month).
+// Called by monthlyUpdate each settlement and once at newGame so cash flows from day 1.
+function settleFinance(state, d) {
   const m = d.mods;
   const perks = state.perks || { jobsBoost: 0, incomeMult: 0 };
-
-  // --- Stocks move toward capacity-driven targets (per 10k pop saturates) ---
-  const denom = Math.max(1, d.homes / 6000);
-  const eduTarget = clamp(20 + (d.eduCap / denom) * m.eduMult, 0, 100);
-  // Health & safety aren't just about how many hospitals/police you build — the
-  // social conditions matter. Overcrowding and dirty air breed illness; joblessness
-  // and slums breed crime. So chronic bad conditions hold these stocks DOWN even
-  // when capacity is there, and lift when the nation is well-run.
-  const overcrowd = Math.max(0, d.housingPressure - 1);
-  const healthTarget = clamp(25 + (d.healthCap / denom) * m.healthMult - state.pollution * 0.18 - overcrowd * 12, 0, 100);
-  const safetyTarget = clamp(25 + (d.safetyCap / denom) + (m.safetyMod || 0) - (d.unemployment * 14 + d.blight * 8), 0, 100);
-  state.education = approach(state.education, eduTarget, 0.15);
-  state.health = approach(state.health, healthTarget, 0.15);
-  state.safety = approach(state.safety, safetyTarget, 0.15);
-
-  // Pollution accumulates from sources, decays naturally + via green/MRT — and now
-  // from traffic: gridlocked, idling cars foul the air.
-  const pollTarget = clamp((d.pollutionSrc + (d.congestion || 0) * 12) * 1.2 * (1 + m.pollutionMult), 0, 100);
-  state.pollution = clamp(approach(state.pollution, pollTarget, 0.2), 0, 100);
-
-  // Domestic unrest cools each month, but joblessness and overcrowding keep it
-  // simmering — so internal crises can brew from the ground conditions the player
-  // lets slide, not just from prior events.
-  const unrestPush = Math.max(0, d.unemployment - 0.08) * 0.5 + Math.max(0, d.housingPressure - 1) * 0.10;
-  // A stable regime (National Service, anti-corruption, a firm press, law & order…)
-  // cools unrest faster — the "stability" the player weighs against liberty.
-  const stabilityCool = clamp((m.stability || 0) * 0.004, 0, 0.12);
-  state.unrest = clamp((state.unrest || 0) * (0.96 - stabilityCool) + unrestPush, 0, 1);
-
-  // --- Finances ($ millions / month) ---
+  const popReal = state.population;
   // Congestion wastes working hours, so it drags productivity (and thus tax revenue).
   const productivity = (1 + m.productivity + (state.education - 20) * 0.004) * (1 - (d.congestion || 0) * 0.16);
-  const popReal = state.population;
   // Income tax scales with employed workforce, productivity & policy multiplier —
   // but rates bite differently by CONDITION. Squeezing a high rate out of a nation
   // with few jobs yields little (a thin, jobless base can't be taxed hard) and, past
@@ -1570,14 +1545,54 @@ function monthlyUpdate(state, d) {
   const interest = (state.debt || 0) * bondRate(state) / 12;
   upkeep += interest;
 
-  // Oil/fuel shock (from events) fades over time.
-  if (state.fuelShock) state.fuelShock *= 0.88;
-
   const net = grossIncome - upkeep;
-  state.treasury += net;
   state.lastFinance = {
     incomeTax, gst, business, grossIncome, upkeep, interest, social, imports, net,
   };
+}
+
+function monthlyUpdate(state, d) {
+  const m = d.mods;
+  const perks = state.perks || { jobsBoost: 0, incomeMult: 0 };
+
+  // --- Stocks move toward capacity-driven targets (per 10k pop saturates) ---
+  const denom = Math.max(1, d.homes / 6000);
+  const eduTarget = clamp(20 + (d.eduCap / denom) * m.eduMult, 0, 100);
+  // Health & safety aren't just about how many hospitals/police you build — the
+  // social conditions matter. Overcrowding and dirty air breed illness; joblessness
+  // and slums breed crime. So chronic bad conditions hold these stocks DOWN even
+  // when capacity is there, and lift when the nation is well-run.
+  const overcrowd = Math.max(0, d.housingPressure - 1);
+  const healthTarget = clamp(25 + (d.healthCap / denom) * m.healthMult - state.pollution * 0.18 - overcrowd * 12, 0, 100);
+  const safetyTarget = clamp(25 + (d.safetyCap / denom) + (m.safetyMod || 0) - (d.unemployment * 14 + d.blight * 8), 0, 100);
+  state.education = approach(state.education, eduTarget, 0.15);
+  state.health = approach(state.health, healthTarget, 0.15);
+  state.safety = approach(state.safety, safetyTarget, 0.15);
+
+  // Pollution accumulates from sources, decays naturally + via green/MRT — and now
+  // from traffic: gridlocked, idling cars foul the air.
+  const pollTarget = clamp((d.pollutionSrc + (d.congestion || 0) * 12) * 1.2 * (1 + m.pollutionMult), 0, 100);
+  state.pollution = clamp(approach(state.pollution, pollTarget, 0.2), 0, 100);
+
+  // Domestic unrest cools each month, but joblessness and overcrowding keep it
+  // simmering — so internal crises can brew from the ground conditions the player
+  // lets slide, not just from prior events.
+  const unrestPush = Math.max(0, d.unemployment - 0.08) * 0.5 + Math.max(0, d.housingPressure - 1) * 0.10;
+  // A stable regime (National Service, anti-corruption, a firm press, law & order…)
+  // cools unrest faster — the "stability" the player weighs against liberty.
+  const stabilityCool = clamp((m.stability || 0) * 0.004, 0, 0.12);
+  state.unrest = clamp((state.unrest || 0) * (0.96 - stabilityCool) + unrestPush, 0, 1);
+
+  // --- Finances ($ millions / month) ---
+  // The ledger is SETTLED here (rates recomputed into state.lastFinance) but the
+  // money itself is applied by the DAILY trickle in tickDay (net/30 each day) —
+  // previously BOTH paths credited the treasury, so the economy ran at exactly
+  // double the rate the dashboard showed.
+  settleFinance(state, d);
+  const popReal = state.population;
+
+  // Oil/fuel shock (from events) fades over time — a monthly decay.
+  if (state.fuelShock) state.fuelShock *= 0.88;
 
   // --- Population dynamics, by AGE COHORT (monthly slices) ------------------
   const co = state.cohorts || (state.cohorts = { young: Math.round(popReal * 0.32), work: Math.round(popReal * 0.62), old: Math.round(popReal * 0.06) });

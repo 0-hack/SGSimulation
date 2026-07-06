@@ -18,8 +18,10 @@ export const api = {
     });
   },
 
-  // Update an existing world (requires the owner's edit token).
-  updateWorld(id, token, { name, owner, state, isPublic = true }) {
+  // Update an existing world (requires the owner's edit token). Omit isPublic to
+  // PRESERVE the world's current visibility (the server keeps what's stored) — a
+  // default of true here used to silently republish private worlds.
+  updateWorld(id, token, { name, owner, state, isPublic }) {
     return req(`/api/worlds/${id}`, {
       method: 'PUT', headers: { ...JSON_HEADERS, 'x-world-token': token },
       body: JSON.stringify({ name, owner, state, isPublic }),

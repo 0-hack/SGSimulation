@@ -3258,7 +3258,9 @@ export class Scene3D {
   }
   _removeSite(id) {
     const s = this.sites.get(id); if (!s) return;
-    this.scene.remove(s.group); if (s.found) this.scene.remove(s.found); this.sites.delete(id);
+    this.scene.remove(s.group); this._disposeGroup(s.group);
+    if (s.found) { this.scene.remove(s.found); this._disposeGroup(s.found); }
+    this.sites.delete(id);
   }
   // A demolition "site" mirrors the construction one in reverse: an orange safety
   // hoarding wraps the building, a wrecking crane stands beside it, and a hazard
@@ -3363,7 +3365,7 @@ export class Scene3D {
   }
   _removeDemoSite(id) {
     const s = this._demoSites && this._demoSites.get(id); if (!s) return;
-    this.scene.remove(s.group); this._demoSites.delete(id);
+    this.scene.remove(s.group); this._disposeGroup(s.group); this._demoSites.delete(id);
   }
 
   _addMesh(x, y, key, animate, theme) {
@@ -3415,7 +3417,7 @@ export class Scene3D {
     const entry = this.buildings.get(id);
     if (!entry) return;
     this.buildings.delete(id);
-    if (entry.found) this.scene.remove(entry.found);   // remove its slope foundation too
+    if (entry.found) { this.scene.remove(entry.found); this._disposeGroup(entry.found); }   // remove its slope foundation too
     this.anims.push({ group: entry.group, t: 0, dur: 0.8, type: 'demolish', baseY: entry.group.position.y });
     const c = cellToWorld(x, y);
     this._spawnDust(c.x, c.z, 0xbfb09a, 26);
@@ -3424,10 +3426,23 @@ export class Scene3D {
     if (entry.key === 'mrt' && this.state) this._buildPlayerRailways(this.state);  // re-level the deck (the removed platform no longer flattens it) + realign + retrain
     else if (entry.key === 'rail_station') { this._alignRailStations(); this._refreshTrainStops(); } // a demolished station is no longer a stop
   }
+  // Free the GPU buffers of everything under `root`. Geometries are unique per mesh
+  // so they always dispose; materials are usually SHARED from the mat()/toon() caches
+  // and must NOT be disposed unless `alsoMaterials` says the group owns them (e.g.
+  // traffic-signal heads, which create fresh materials per post). Without this, every
+  // demolish/rebuild orphaned buffers three.js never frees — a slow VRAM leak that
+  // eventually kills long mobile sessions.
+  _disposeGroup(root, alsoMaterials = false) {
+    if (!root) return;
+    root.traverse((o) => {
+      if (o.geometry) o.geometry.dispose();
+      if (alsoMaterials && o.material) { for (const m of (Array.isArray(o.material) ? o.material : [o.material])) m.dispose(); }
+    });
+  }
   removeBuilding(x, y) {
     const id = `${x},${y}`;
     const e = this.buildings.get(id);
-    if (e) { this.scene.remove(e.group); if (e.found) this.scene.remove(e.found); this.buildings.delete(id); }
+    if (e) { this.scene.remove(e.group); this._disposeGroup(e.group); if (e.found) { this.scene.remove(e.found); this._disposeGroup(e.found); } this.buildings.delete(id); }
   }
 
   // ---- dust particles -------------------------------------------------------
@@ -3603,7 +3618,7 @@ export class Scene3D {
   // ---- vehicles (density scales with population) ----------------------------
   _ensureVehicles(target) {
     while (this.vehicles.length < target) this._addVehicle();
-    while (this.vehicles.length > target) { const v = this.vehicles.pop(); this.scene.remove(v.mesh); }
+    while (this.vehicles.length > target) { const v = this.vehicles.pop(); this.scene.remove(v.mesh); this._disposeGroup(v.mesh); }
   }
   // Pick a road edge to spawn/route traffic on, biased toward the busier south
   // (where the dense 1966 city sits) so most cars run in town rather than out on
@@ -4258,6 +4273,12 @@ export class Scene3D {
   // match the fog to the horizon. Called once per frame after all sky tints.
   _commitSky() {
     if (!this._skyCtx) { this.fog?.color.copy(this.skyBot); return; }
+    // the gradient only changes as the day/night tint drifts — skip the canvas
+    // repaint + GPU texture re-upload when the colours haven't moved (this used
+    // to run EVERY frame, even paused: a constant fillRect + texImage2D for free)
+    const sig = this.skyTop.getHex() * 16777216 + this.skyBot.getHex();
+    if (sig === this._skySig) { this.fog?.color.copy(this.skyBot); return; }
+    this._skySig = sig;
     const ctx = this._skyCtx, h = this._skyCanvas.height;
     const mid = this.skyTop.clone().lerp(this.skyBot, 0.62);
     const g = ctx.createLinearGradient(0, 0, 0, h);     // canvas top = screen top = zenith (flipY)
@@ -4468,7 +4489,7 @@ export class Scene3D {
     return chains;
   }
   _buildPlayerRailways(state) {
-    if (this._pRailGroup) this.scene.remove(this._pRailGroup);
+    if (this._pRailGroup) { this.scene.remove(this._pRailGroup); this._disposeGroup(this._pRailGroup); }
     const g = new THREE.Group(); this.scene.add(g); this._pRailGroup = g;
     this._mrtProfiles = [];   // viaduct deck heightlines, rebuilt each pass (for station alignment)
     // Like a runway, a railway is laid on a SMOOTH graded line (the straight grade
@@ -4787,7 +4808,19 @@ export class Scene3D {
       this._addPillars(g, pts, 0.8);
     }
   }
-  _polyLen(pts) { let L = 0; for (let i = 1; i < pts.length; i++) L += pts[i].distanceTo(pts[i - 1]); return L; }
+  // Cumulative arc-lengths of a polyline, CACHED on the array itself — planes and
+  // every train car walk these several times per frame, and a track's geometry never
+  // changes after it's built (edits create a new array, which starts a fresh cache).
+  _polyCum(pts) {
+    let c = pts._cum;
+    if (!c || c.length !== pts.length) {
+      c = new Float64Array(pts.length);
+      for (let i = 1; i < pts.length; i++) c[i] = c[i - 1] + pts[i].distanceTo(pts[i - 1]);
+      pts._cum = c;
+    }
+    return c;
+  }
+  _polyLen(pts) { const c = this._polyCum(pts); return c[c.length - 1] || 0; }
   // Arc-fraction [0,1] of the point on a polyline closest to (x,z), plus that distance.
   _nearestU(pts, x, z) {
     const total = this._polyLen(pts) || 1; let acc = 0, bestU = 0, bestD = Infinity;
@@ -4800,11 +4833,16 @@ export class Scene3D {
     }
     return { u: bestU, d: Math.sqrt(bestD) };
   }
-  // Point at arc-fraction u in [0,1] along a {Vector3} polyline.
+  // Point at arc-fraction u in [0,1] along a {Vector3} polyline — binary search over
+  // the cached cumulative lengths instead of an O(n) re-walk per call.
   _alongPoly(pts, u) {
-    const total = this._polyLen(pts); let target = Math.max(0, Math.min(1, u)) * total, acc = 0;
-    for (let i = 1; i < pts.length; i++) { const d = pts[i].distanceTo(pts[i - 1]); if (acc + d >= target) { const t = d ? (target - acc) / d : 0; return new THREE.Vector3(pts[i - 1].x + (pts[i].x - pts[i - 1].x) * t, pts[i - 1].y + (pts[i].y - pts[i - 1].y) * t, pts[i - 1].z + (pts[i].z - pts[i - 1].z) * t); } acc += d; }
-    return pts[pts.length - 1].clone();
+    if (pts.length < 2) return pts[0] ? pts[0].clone() : new THREE.Vector3();
+    const cum = this._polyCum(pts), total = cum[cum.length - 1];
+    const target = Math.max(0, Math.min(1, u)) * total;
+    let lo = 1, hi = pts.length - 1;
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (cum[mid] < target) lo = mid + 1; else hi = mid; }
+    const i = lo, d = cum[i] - cum[i - 1], t = d ? (target - cum[i - 1]) / d : 0;
+    return new THREE.Vector3(pts[i - 1].x + (pts[i].x - pts[i - 1].x) * t, pts[i - 1].y + (pts[i].y - pts[i - 1].y) * t, pts[i - 1].z + (pts[i].z - pts[i - 1].z) * t);
   }
   // Taxi an airliner down each runway, lift off near the end, then loop back.
   _updateAirstripPlanes(dt) {
@@ -4827,7 +4865,7 @@ export class Scene3D {
   // they pass on the deck). The kind/vintage follows the year, so the fleet visibly
   // modernises — steam → diesel → modern — as the country develops.
   _buildTrains() {
-    if (this._trainGroup) this.scene.remove(this._trainGroup);
+    if (this._trainGroup) { this.scene.remove(this._trainGroup); this._disposeGroup(this._trainGroup); }
     const g = new THREE.Group(); this.scene.add(g); this._trainGroup = g;
     this._trains = [];
     const tracks = [...(this._histTrainTracks || []), ...(this._playerTrainTracks || [])];
@@ -4928,7 +4966,7 @@ export class Scene3D {
   // Render routes still under construction: the built part grows from the start,
   // with a works marker at the build front. Call each tick to animate.
   syncRoadworks(state) {
-    if (this._roadworksGroup) this.scene.remove(this._roadworksGroup);
+    if (this._roadworksGroup) { this.scene.remove(this._roadworksGroup); this._disposeGroup(this._roadworksGroup); }   // rebuilt EVERY tick during works — must free the old buffers
     const g = new THREE.Group(); this.scene.add(g); this._roadworksGroup = g;
     for (const w of ((state && state.roadworks) || [])) {
       const wp = w.pts; if (!wp || wp.length < 2) continue;
@@ -5460,6 +5498,16 @@ export class Scene3D {
   // ONE navigation network shared by all traffic: the auto street grid PLUS the
   // player's freeform roads, merged where their endpoints meet.
   _buildNavGraph() {
+    // capture where every live agent physically IS before edge indices change,
+    // so _reseatAgents can put them back on the road they were driving on.
+    const stash = new Map();
+    const grab = (a) => {
+      const pts = this.edgePts && this.edgePts[a.edge]; if (!pts || pts.length < 2) return;
+      const segs = pts.length - 1, f = Math.max(0, Math.min(1, a.t || 0)) * segs, i = Math.min(segs - 1, Math.floor(f)), fr = f - i;
+      stash.set(a, { x: pts[i].x + (pts[i + 1].x - pts[i].x) * fr, z: pts[i].z + (pts[i + 1].z - pts[i].z) * fr });
+    };
+    for (const a of (this.vehicles || [])) grab(a);
+    for (const a of (this.people || [])) grab(a);
     this.edgePts = []; this.edgeLen = []; this.edgeMeta = []; this.edgeN1 = []; this.edgeN2 = []; this.edgeMid = [];
     // Only endpoints that genuinely COINCIDE at a junction are merged into one nav
     // node. A loose tolerance used to fuse two SEPARATE nearby roads into one node,
@@ -5496,7 +5544,7 @@ export class Scene3D {
     this._buildLights();
     this._buildStreetLamps();
     this._buildTurnArrows();
-    this._reseatAgents();   // edge indices changed — keep live agents valid
+    this._reseatAgents(stash);   // edge indices changed — put agents back where they physically were
   }
   // A ONE-WAY road only admits a single car at a time. Group the connected one-way
   // edges into "roads" — a maximal run of one-way edges joined through pass-through
@@ -5583,7 +5631,9 @@ export class Scene3D {
   // some 3-way junctions inside the shophouse town. Incident roads are split into two
   // phases that alternate; vehicles stop on red at the stop line.
   _buildLights() {
-    if (this.lightGroup) this.scene.remove(this.lightGroup);
+    // signal posts create their OWN materials (per-post lens colours), so dispose
+    // both geometry and materials — this rebuilds on every road edit.
+    if (this.lightGroup) { this.scene.remove(this.lightGroup); this._disposeGroup(this.lightGroup, true); }
     this.lightGroup = new THREE.Group(); this.scene.add(this.lightGroup);
     this.lights = []; this.lightByNode = new Map();
     this._lightsActive = (this.state?.date?.y || 1965) >= LIGHT_YEAR;
@@ -5804,15 +5854,49 @@ export class Scene3D {
   }
 
   // Re-seat any agent whose edge no longer exists (after a road rebuild/erase).
-  _reseatAgents() {
+  // Re-seat live agents after a nav-graph rebuild. Edge INDICES are not stable across
+  // rebuilds (erasing one road shifts every later index down), so keeping an in-range
+  // stale index silently moved the agent onto a DIFFERENT road — cars across the map
+  // visibly teleported on any road edit. `stash` (Map agent -> {x,z}) carries each
+  // agent's physical spot captured BEFORE the rebuild; everyone re-seats onto the
+  // nearest surviving edge to where they actually were.
+  _reseatAgents(stash) {
     const ne = this.edgePts.length;
-    const fix = (a, walkOnly) => {
-      if (a.edge < ne && this.edgePts[a.edge]) return;
-      if (!ne) { a.edge = 0; return; }
+    if (!ne) { for (const a of this.vehicles) a.edge = 0; for (const a of this.people) a.edge = 0; return; }
+    // coarse buckets over edge midpoints so each agent scans only nearby edges
+    const CELL = 40, grid = new Map(), gk = (x, z) => Math.floor(x / CELL) + ',' + Math.floor(z / CELL);
+    for (let i = 0; i < ne; i++) { const m = this.edgeMid[i]; const k = gk(m.x, m.z); (grid.get(k) || grid.set(k, []).get(k)).push(i); }
+    const scatter = (a, walkOnly) => {
       let e = Math.floor(Math.random() * ne);
       if (walkOnly) { for (let i = 0; i < ne; i++) { if (this.edgeMeta[(e + i) % ne].walk) { e = (e + i) % ne; break; } } }
       else if (this._owGroupOf) { for (let i = 0; i < ne; i++) { const j = (e + i) % ne; if (this._owGroupOf[j] < 0) { e = j; break; } } } // keep reseated cars off one-way roads
       a.edge = e; a.t = Math.random(); a.dir = Math.random() < 0.5 ? 1 : -1; this._assignLane(a);
+    };
+    const fix = (a, walkOnly) => {
+      const old = stash && stash.get(a);
+      if (old) {
+        const cx = Math.floor(old.x / CELL), cz = Math.floor(old.z / CELL);
+        let best = -1, bestD = Infinity;
+        for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) {
+          const arr = grid.get((cx + dx) + ',' + (cz + dz)); if (!arr) continue;
+          for (const i of arr) {
+            const meta = this.edgeMeta[i];
+            if (walkOnly && !meta.walk) continue;
+            if (!walkOnly && this._owGroupOf && this._owGroupOf[i] >= 0) continue;
+            const m = this.edgeMid[i], d = (m.x - old.x) * (m.x - old.x) + (m.z - old.z) * (m.z - old.z);
+            if (d < bestD) { bestD = d; best = i; }
+          }
+        }
+        if (best >= 0) {   // its road (or a close neighbour) survived: stay physically put
+          a.edge = best;
+          const pts = this.edgePts[best]; let bi = 0, bd = Infinity;
+          for (let i = 0; i < pts.length; i++) { const d = (pts[i].x - old.x) ** 2 + (pts[i].z - old.z) ** 2; if (d < bd) { bd = d; bi = i; } }
+          a.t = pts.length > 1 ? bi / (pts.length - 1) : 0;
+          this._assignLane(a);
+          return;
+        }
+      }
+      scatter(a, walkOnly);   // its road vanished (or no stash): join the network elsewhere
     };
     for (const a of this.vehicles) fix(a, false);
     for (const a of this.people) fix(a, true);
@@ -5852,7 +5936,7 @@ export class Scene3D {
         a.group.scale.y = MODEL_SCALE * Math.max(0.001, 1 - k);
         a.group.rotation.z = k * 0.4;
         a.group.position.y = (a.baseY || 0) - k * 2;
-        if (k >= 1) this.scene.remove(a.group);
+        if (k >= 1) { this.scene.remove(a.group); this._disposeGroup(a.group); }
       }
       if (k >= 1) this.anims.splice(i, 1);
     }
@@ -5894,7 +5978,7 @@ export class Scene3D {
       const fe = fleetEra(this.state);
       if (!this._fleet || fe.car !== this._fleet.car) {
         this._fleet = fe;
-        for (const v of this.vehicles) this.scene.remove(v.mesh);
+        for (const v of this.vehicles) { this.scene.remove(v.mesh); this._disposeGroup(v.mesh); }
         this.vehicles.length = 0;                // respawn at the new generation below
       }
       if (fe.train !== this._trainEra) this._buildTrains();

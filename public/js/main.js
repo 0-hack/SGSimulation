@@ -54,6 +54,9 @@ async function downloadCommunity(build) {
     if (!full || full.error || !full.design) { toast('Could not download that build.', true); return; }
     const [key, def] = communityBuildToBuilding(full);
     BUILDINGS[key] = def;
+    // persist the definition INTO the save: without this, reloading orphans every
+    // placed copy (zero output + a crash on inspect) since BUILDINGS is in-memory only.
+    if (G.state) (G.state.communityDefs = G.state.communityDefs || {})[key] = def;
     clearAdjustSilently();
     G.build.selected = key; G.build.bulldoze = false;
     G.view.setPreview(key, null);
@@ -369,11 +372,15 @@ async function continueGame() {
 
 function attachState() {
   ensureGrid(G.state); // migrate older/smaller saves to the current map size + roads
+  _decFxSeen.clear();  // per-state decision uids restart at 0 — forget the last game's
   // Designed landmarks become buildable: the landmarks saved INTO this world
   // (so visitors see them too) plus — when it's your own game — your personal
   // library from this browser. Your library is also snapshotted into the world.
   registerLandmarks(G.state.landmarks || []);
   if (!G.readOnly) { const lib = loadLibrary(); registerLandmarks(lib); G.state.landmarks = lib; }
+  // community-downloaded buildings saved into this world become resolvable again
+  // (their defs live in the save, so placed copies work after reload & for visitors)
+  for (const [k, def] of Object.entries(G.state.communityDefs || {})) BUILDINGS[k] = def;
   refreshSummary(G.state);
   G.view.setState(G.state);
   G.view.centerCamera();
@@ -683,6 +690,16 @@ function commitAdjust() {
     if (G.state.treasury < buildingCost(G.state, a.key)) toast(`Need ${money(buildingCost(G.state, a.key))} to build ${BUILDINGS[a.key].name}.`);
     else toast('Cannot build here.');
     return;
+  }
+  // the slope-foundation surcharge is part of the bill — gate on BOTH up front, so the
+  // charge below can't slip past the affordability check canPlace just made.
+  if (a.fy != null && a.flo != null) {
+    const range = Math.max(0, (a.fhi || 0) - (a.flo || 0));
+    const sur = a.fmode === 'lift' ? Math.round(priced(5 + range * 5, G.state)) : Math.round(priced(3 + range * 6, G.state));
+    if (G.state.treasury < buildingCost(G.state, a.key) + sur) {
+      toast(`Need ${money(buildingCost(G.state, a.key) + sur)} — including ${money(sur)} for the slope foundation.`);
+      return;
+    }
   }
   const theme = BUILDINGS[a.key].customizable ? a.theme : null;
   build(G.state, a.x, a.y, a.key, theme);
@@ -1516,6 +1533,7 @@ function decisionCard(ev) {
   return card;
 }
 function onDecision(ev, i) {
+  if (G.readOnly) { toast('👁️ Visiting — only the owner can decide this.'); return; }
   const opt = resolveEvent(G.state, ev.uid, i);   // sim never paused — just drop this card
   if (G.view) G.view.syncConstruction(G.state);   // show anything the decision built itself (e.g. an emergency hospital)
   G.dirty = true;
@@ -1671,6 +1689,10 @@ async function visitWorld(id) {
   toast('Loading nation…');
   try {
     const world = await api.loadWorld(id);
+    // snapshot the buildable catalogue: the visited world's landmarks/community defs
+    // register into BUILDINGS while visiting, and are rolled back on leave — so a
+    // visit can't pollute (or overwrite entries in) YOUR build menu.
+    if (!G._visitBackup) G._visitBackup = { ...BUILDINGS };
     G.state = world.state;
     G.readOnly = true;
     G.cloud = null;
@@ -1691,6 +1713,7 @@ async function loadMine(id) {
   showGameShell(false);
   try {
     const world = await api.loadWorld(id);
+    restoreCatalogue();                     // if arriving from a visit, drop its defs first
     G.state = world.state;
     G.readOnly = false;
     $('visit-banner').classList.add('hidden');
@@ -1703,9 +1726,19 @@ async function loadMine(id) {
 
 function leaveVisit() {
   $('visit-banner').classList.add('hidden');
-  G.readOnly = false;
-  if (localStorage.getItem(LS_SAVE)) continueGame();
-  else showMenu();
+  restoreCatalogue();                       // drop the visited world's defs from the build menu
+  // Drop the visited state BEFORE clearing read-only: with no local save to restore,
+  // the old order left someone else's nation live with autosave armed — 15s later it
+  // was written into YOUR save slot.
+  if (localStorage.getItem(LS_SAVE)) { G.readOnly = false; continueGame(); }
+  else { G.state = null; G.cloud = null; G.readOnly = false; showMenu(); }
+}
+// Roll BUILDINGS back to the pre-visit snapshot (removes added keys, restores overwritten ones).
+function restoreCatalogue() {
+  if (!G._visitBackup) return;
+  for (const k of Object.keys(BUILDINGS)) if (!(k in G._visitBackup)) delete BUILDINGS[k];
+  Object.assign(BUILDINGS, G._visitBackup);
+  G._visitBackup = null;
 }
 
 // ===========================================================================

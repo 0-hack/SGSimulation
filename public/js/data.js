@@ -592,10 +592,10 @@ export const BUILDINGS = {
     desc: 'Halls of humming servers behind blank façades — the digital backbone of a regional finance and tech hub. Voracious for power and cooling water.',
   },
   desalination: {
-    name: 'Desalination Plant', cat: 'water', icon: '🌊', color: '#2f7fa0',
-    cost: 140, upkeep: 4, year: 2005, homes: 0, jobs: 150,
-    power: -35, water: 140, pollution: 1, happiness: 1, income: 0,
-    desc: 'Reverse-osmosis plant turning seawater into drinking water — the fourth national tap. Drought-proof, but thirsty for electricity.',
+    name: 'Mega Desalination Plant', cat: 'water', icon: '🌊', color: '#2f7fa0',
+    cost: 260, upkeep: 7, year: 2005, homes: 0, jobs: 220,
+    power: -70, water: 420, pollution: 1, happiness: 1, income: 0,
+    desc: 'A large-scale reverse-osmosis works — the fourth national tap at industrial volume. Drought-proof and far bigger than the 1990s plant, but very thirsty for electricity.',
   },
 
   // ---- Defence — the SAF, its bases and the home-grown arms industry. `defence`
@@ -666,6 +666,8 @@ export const BUILD_MONTHS = {
   tanjong_pagar_station: 28,
   // Farms
   market_garden: 2, poultry_farm: 2, fish_farm: 3, hydroponic_farm: 6, vertical_farm: 12,
+  // Defence — camps go up fast; naval/air bases are multi-year infrastructure works
+  military_camp: 8, naval_base: 30, air_base: 36, weapons_factory: 18, defence_lab: 24,
 };
 for (const [k, m] of Object.entries(BUILD_MONTHS)) if (BUILDINGS[k]) BUILDINGS[k].buildMonths = m;
 
@@ -756,7 +758,11 @@ export function communityBuildToBuilding(build) {
   const scale = d.scale || build.size || 1;
   const [, base] = landmarkToBuilding({ name: build.name, parts, scale }, build.id || 'cm');
   const st = d.stats || {};
-  const num = (v, fb) => (typeof v === 'number' ? v : fb);
+  // Defence in depth with the server's sanitizer: a shared design's self-declared
+  // stats are clamped into the range legit stock buildings occupy, so a hostile
+  // build can't inject economy-breaking numbers into a downloader's simulation.
+  const CB_BOUNDS = { homes: [0, 12000], jobs: [0, 12000], power: [-600, 600], water: [-600, 600], pollution: [-40, 40], happiness: [-15, 15], income: [-60, 120], upkeep: [0, 120], safety: [-30, 30] };
+  const num = (k, fb) => { const v = st[k]; if (typeof v !== 'number' || !isFinite(v)) return fb; const b = CB_BOUNDS[k]; return b ? Math.min(b[1], Math.max(b[0], v)) : v; };
   const key = 'cm_' + (build.id || (build.name || 'x').toLowerCase().replace(/[^a-z0-9]+/g, '_'));
   return [key, {
     ...base,
@@ -764,10 +770,10 @@ export function communityBuildToBuilding(build) {
     // available to build ANY year (a player creation, not tech-gated); its price is
     // factored by the PLAYER's current year & condition, and `era` is kept for flavour.
     year: base.year, era: build.year, community: true, func: build.func || 'landmark', author: build.author || 'Anonymous',
-    homes: num(st.homes, 0), jobs: num(st.jobs, base.jobs),
-    power: num(st.power, base.power), water: num(st.water, base.water),
-    pollution: num(st.pollution, 0), happiness: num(st.happiness, base.happiness),
-    income: num(st.income, 0), upkeep: num(st.upkeep, base.upkeep), safety: num(st.safety, 0),
+    homes: num('homes', 0), jobs: num('jobs', base.jobs),
+    power: num('power', base.power), water: num('water', base.water),
+    pollution: num('pollution', 0), happiness: num('happiness', base.happiness),
+    income: num('income', 0), upkeep: num('upkeep', base.upkeep), safety: num('safety', 0),
     desc: `A community design${build.author ? ' by ' + build.author : ''} · ${FUNC_LABEL[build.func] || 'Landmark'} · ${build.downloads || 0} downloads. Priced for its size and the ${build.year || ''} era.`,
     landmarkParts: parts, lmScale: scale,
   }];

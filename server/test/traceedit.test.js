@@ -1,45 +1,49 @@
-// The Map Tracer is creator tooling that edits the SHARED base map, so on servers
-// without TRACE_EDIT=1 it stays invisible to ordinary players: the "Map Tracer" nav
-// link is hidden on the game page, and trace.html hides its "Save to map" button.
-// With TRACE_EDIT=1 both appear. Export/Load inside the tracer work either way.
+// The Map Tracer is creator tooling that edits the SHARED base map. On servers
+// without TRACE_EDIT=1 it is invisible AND unreachable: the "Map Tracer" nav link is
+// hidden on the game page, and the static route itself (trace.html + its data/map
+// assets) redirects back to the game. With TRACE_EDIT=1 everything appears as before.
 import puppeteer from 'puppeteer';
 const origEnv = process.env.TRACE_EDIT;
 let pass = 0, fail = 0; const ok = (c, m) => { c ? (pass++, console.log('  ✓', m)) : (fail++, console.log('  ✗', m)); };
 const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox', '--disable-setuid-sandbox'] });
 
-async function probe(page, base) {
-  await page.goto(base + '/', { waitUntil: 'networkidle0' });
-  await new Promise((r) => setTimeout(r, 400));
-  const navHasTracer = await page.evaluate(() => !![...document.querySelectorAll('#page-nav .pagenav-item')].find((a) => /Map Tracer/.test(a.textContent)));
-  await page.goto(base + '/trace.html', { waitUntil: 'networkidle0' });
-  await new Promise((r) => setTimeout(r, 700));
-  const saveVisible = await page.evaluate(() => {
-    const b = document.getElementById('applygame');
-    return !!(b && b.parentElement && getComputedStyle(b.parentElement).display !== 'none');
-  });
-  const exportVisible = await page.evaluate(() => !!document.getElementById('export'));
-  return { navHasTracer, saveVisible, exportVisible };
-}
-
 try {
-  // --- editing OFF (default): tracer hidden from players ---
+  const p = await browser.newPage();
+
+  // --- editing OFF (default): tracer hidden AND unreachable ---
   delete process.env.TRACE_EDIT;
   const { app } = await import('../server.js?off');
   const s1 = app.listen(0); const base1 = `http://localhost:${s1.address().port}`;
-  const p = await browser.newPage();
-  const off = await probe(p, base1);
-  ok(!off.navHasTracer, 'TRACE_EDIT off: the Map Tracer link is HIDDEN from the game nav');
-  ok(!off.saveVisible, 'TRACE_EDIT off: trace.html hides the "Save to map" button');
-  ok(off.exportVisible, 'TRACE_EDIT off: Export (client-side) still available in the tracer');
+  await p.goto(base1 + '/', { waitUntil: 'networkidle0' });
+  await new Promise((r) => setTimeout(r, 400));
+  const navOff = await p.evaluate(() => !![...document.querySelectorAll('#page-nav .pagenav-item')].find((a) => /Map Tracer/.test(a.textContent)));
+  ok(!navOff, 'TRACE_EDIT off: the Map Tracer link is HIDDEN from the game nav');
+  await p.goto(base1 + '/trace.html', { waitUntil: 'networkidle0' });
+  ok(new URL(p.url()).pathname === '/', `TRACE_EDIT off: /trace.html redirects to the game (${new URL(p.url()).pathname})`);
+  const assets = await p.evaluate(async () => {
+    const out = {};
+    for (const f of ['/trace-data.json', '/trace-map.jpg']) { const r = await fetch(f); out[f] = new URL(r.url).pathname; }
+    return out;
+  });
+  ok(Object.values(assets).every((v) => v === '/'), `TRACE_EDIT off: tracer assets redirect too (${JSON.stringify(assets)})`);
   s1.close();
 
-  // --- editing ON: creator tooling appears ---
+  // --- editing ON: creator tooling appears and the page serves ---
   process.env.TRACE_EDIT = '1';
   const { app: app2 } = await import('../server.js?on');
   const s2 = app2.listen(0); const base2 = `http://localhost:${s2.address().port}`;
-  const on = await probe(p, base2);
-  ok(on.navHasTracer, 'TRACE_EDIT=1: the Map Tracer link shows in the game nav');
-  ok(on.saveVisible, 'TRACE_EDIT=1: trace.html shows the "Save to map" button');
+  await p.goto(base2 + '/', { waitUntil: 'networkidle0' });
+  await new Promise((r) => setTimeout(r, 400));
+  const navOn = await p.evaluate(() => !![...document.querySelectorAll('#page-nav .pagenav-item')].find((a) => /Map Tracer/.test(a.textContent)));
+  ok(navOn, 'TRACE_EDIT=1: the Map Tracer link shows in the game nav');
+  await p.goto(base2 + '/trace.html', { waitUntil: 'networkidle0' });
+  await new Promise((r) => setTimeout(r, 700));
+  const onPage = await p.evaluate(() => ({
+    path: location.pathname,
+    save: !!(document.getElementById('applygame') && getComputedStyle(document.getElementById('applygame').parentElement).display !== 'none'),
+  }));
+  ok(onPage.path === '/trace.html', 'TRACE_EDIT=1: trace.html serves normally');
+  ok(onPage.save, 'TRACE_EDIT=1: the "Save to map" button is visible');
   s2.close();
 } catch (e) { fail++; console.error('  ✗ threw:', e.message, e.stack); }
 finally {

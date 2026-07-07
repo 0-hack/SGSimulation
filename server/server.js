@@ -250,6 +250,14 @@ if (process.env.TRACE_EDIT === '1') {
 // ---- static client ---------------------------------------------------------
 // no-cache on HTML/JS/JSON so players always get the latest after an update
 // (these are small; the browser still revalidates with ETag).
+// The Map Tracer is creator tooling: when this server doesn't accept base-map edits
+// (no TRACE_EDIT=1), the page and its assets aren't served at all — a typed URL
+// lands back on the game instead of a read-only sandbox.
+const TRACER_FILES = new Set(['/trace.html', '/trace-data.json', '/trace-map.jpg']);
+app.use((req, res, next) => {
+  if (process.env.TRACE_EDIT !== '1' && TRACER_FILES.has(req.path)) return res.redirect('/');
+  next();
+});
 app.use(express.static(PUBLIC_DIR, {
   setHeaders: (res, p) => { if (/\.(html|js|json)$/.test(p)) res.setHeader('Cache-Control', 'no-cache'); },
 }));

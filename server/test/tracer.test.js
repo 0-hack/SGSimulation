@@ -4,6 +4,7 @@
 // reservoir, coast and sands alike — so a save never covers only part of the trace.
 import puppeteer from 'puppeteer';
 import { app } from '../server.js';
+process.env.TRACE_EDIT = '1';   // creator-tool test: the tracer route is gated otherwise
 const server = app.listen(0);
 const base = `http://localhost:${server.address().port}`;
 let pass = 0, fail = 0; const ok = (c, m) => { c ? (pass++, console.log('  ✓', m)) : (fail++, console.log('  ✗', m)); };

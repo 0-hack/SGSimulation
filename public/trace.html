@@ -585,6 +585,11 @@ $('help').onclick = () => $('hint').classList.toggle('hidden');
 $('hint').onclick = () => $('hint').classList.add('hidden');
 setInterval(() => autosave(), 5000);
 addEventListener('beforeunload', () => autosave());
+// "Save to map" writes the SHARED base map, so it only shows on servers that accept
+// trace edits (TRACE_EDIT=1). Hidden otherwise — Export/Load/browser-save still work.
+fetch('/api/trace/canedit').then(r => r.json()).then(j => {
+  if (!(j && j.edit)) $('applygame').parentElement.style.display = 'none';
+}).catch(() => { $('applygame').parentElement.style.display = 'none'; });
 
 fetch('/trace-data.json').then(r => r.json()).then(d => {
   DATA = d; bgImg.src = d.bg.img; refreshTypes();

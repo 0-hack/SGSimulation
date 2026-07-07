@@ -4,9 +4,20 @@
 // detects the current page, and marks it active. No page-specific link markup.
 const PAGES = [
   { id: 'game', href: '/', icon: '🎮', label: 'Game' },
-  { id: 'trace', href: '/trace.html', icon: '🗺', label: 'Map Tracer' },
+  // gated: the Map Tracer edits the SHARED base map, so its link only shows on
+  // servers that accept trace edits (TRACE_EDIT=1) — ordinary players never see it.
+  { id: 'trace', href: '/trace.html', icon: '🗺', label: 'Map Tracer', gated: true },
   { id: 'design', href: '/design.html', icon: '🏗', label: '3D Designer' },
 ];
+
+// Does this server accept base-map edits? Cached probe; fails CLOSED (link hidden).
+let _canEdit = null;
+export function canEditMap() {
+  if (_canEdit === null) {
+    _canEdit = fetch('/api/trace/canedit').then((r) => r.json()).then((j) => !!(j && j.edit)).catch(() => false);
+  }
+  return _canEdit;
+}
 
 function currentPage() {
   const p = location.pathname;
@@ -17,6 +28,9 @@ function currentPage() {
 
 // Render the switcher into `target` (an element or a selector). `fixed` pins it
 // as a top-centre bar (for the full-screen tool pages); otherwise it flows inline.
+// Gated pages start hidden and appear only once the server confirms editing is on
+// (no flash of a creator link for ordinary players). The page you're ALREADY on
+// always shows its own marker, so the tracer's bar still reads correctly there.
 export function mountPageNav(target, { fixed = false } = {}) {
   const el = typeof target === 'string' ? document.querySelector(target) : target;
   if (!el) return null;
@@ -25,12 +39,16 @@ export function mountPageNav(target, { fixed = false } = {}) {
   if (fixed) el.classList.add('pagenav-fixed');
   el.setAttribute('role', 'navigation');
   el.setAttribute('aria-label', 'Switch between the game and creator tools');
-  el.innerHTML = PAGES.map((pg) => {
-    const inner = `<span class="pagenav-ico" aria-hidden="true">${pg.icon}</span><span class="pagenav-lbl">${pg.label}</span>`;
-    return pg.id === cur
-      ? `<span class="pagenav-item is-active" aria-current="page">${inner}</span>`
-      : `<a class="pagenav-item" href="${pg.href}">${inner}</a>`;
-  }).join('');
+  const render = (showGated) => {
+    el.innerHTML = PAGES.filter((pg) => !pg.gated || showGated || pg.id === cur).map((pg) => {
+      const inner = `<span class="pagenav-ico" aria-hidden="true">${pg.icon}</span><span class="pagenav-lbl">${pg.label}</span>`;
+      return pg.id === cur
+        ? `<span class="pagenav-item is-active" aria-current="page">${inner}</span>`
+        : `<a class="pagenav-item" href="${pg.href}">${inner}</a>`;
+    }).join('');
+  };
+  render(false);
+  canEditMap().then((ok) => { if (ok) render(true); });
   return el;
 }
 

@@ -198,6 +198,11 @@ app.get('/api/trace/current', async (_req, res) => {
 // scene builds these once at creation, so the game uses it to detect a base-map
 // edit (tracer "Save to map") on New Game and reload to rebuild — roads refresh
 // without a reload, so they're deliberately excluded here. Read-only, always on.
+// Whether this server accepts base-map edits (TRACE_EDIT=1). The client uses this to
+// HIDE the creator tooling — the Map Tracer nav link and the tracer's "Save to map"
+// button — from ordinary players on servers where editing is off. Read-only, always on.
+app.get('/api/trace/canedit', (_req, res) => res.json({ edit: process.env.TRACE_EDIT === '1' }));
+
 let _mapsigCache = { key: null, sig: '' };
 app.get('/api/trace/mapsig', async (_req, res) => {
   try {

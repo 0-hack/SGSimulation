@@ -1581,7 +1581,7 @@ function renderCloud() {
     share.append(input, copy);
     wrap.append(share);
   } else {
-    info.innerHTML = 'Save your nation to <b>the cloud server</b> to keep it forever and let other players visit. Local progress is auto-saved on this device.';
+    info.innerHTML = 'Save your nation to <b>the cloud server</b> — the game\'s save of record. After the first save it <b>auto-syncs</b> as you play, and other players can visit it.';
     wrap.append(info);
   }
 
@@ -1594,9 +1594,9 @@ function renderCloud() {
   saveBtn.onclick = () => cloudSave($('cl-public')?.checked !== false);
   wrap.append(saveBtn);
 
-  const localBtn = el('button', 'btn big', 'Save Locally Now');
-  localBtn.onclick = () => { saveLocal(); toast('Saved on this device.'); };
-  wrap.append(localBtn);
+  // no "Save Locally Now": the cloud server is the save of record. Once a nation is
+  // on the cloud it auto-syncs there; the browser copy is just silent crash recovery.
+  if (G.cloud) wrap.append(el('div', 'cloud-info', '☁️ Auto-sync is on — your nation saves itself to the cloud as you play.'));
 
   const browseBtn = el('button', 'btn big', 'Visit Other Nations');
   browseBtn.onclick = () => { closeSheet(); openBrowser(); };
@@ -1638,6 +1638,24 @@ function saveLocal() {
     localStorage.setItem(LS_SAVE, JSON.stringify({ state: packState(G.state), cloud: G.cloud }));
   } catch { /* quota */ }
 }
+
+// Quietly push the running nation to the cloud — the save of record. Runs on a timer
+// once the nation has a cloud world (id + token). Omits isPublic so the world KEEPS
+// its chosen visibility; no toasts (failures just retry on the next cycle). The
+// browser copy (saveLocal) stays only as silent crash recovery between syncs.
+let _cloudSyncBusy = false;
+async function cloudSync() {
+  if (!G.state || G.readOnly || !G.cloud || _cloudSyncBusy) return;
+  _cloudSyncBusy = true;
+  try {
+    G.state.landmarks = loadLibrary();
+    refreshSummary(G.state);
+    await api.updateWorld(G.cloud.id, G.cloud.token, { name: G.state.name, owner: G.state.owner, state: packState(G.state) });
+    G.dirty = false;
+  } catch { /* transient network hiccup — the next cycle retries */ }
+  finally { _cloudSyncBusy = false; }
+}
+setInterval(cloudSync, 90000);
 
 // ===========================================================================
 // World browser / visiting

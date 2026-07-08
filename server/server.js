@@ -5,6 +5,7 @@ import express from 'express';
 import { randomUUID, randomBytes, createHash } from 'crypto';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import { writeFileSync } from 'fs';
 import { dbApi, buildsApi } from './db.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -244,6 +245,23 @@ if (process.env.TRACE_EDIT === '1') {
       const did = await applyTrace(body, opts);
       res.json({ ok: true, did });
     } catch (e) { res.status(400).json({ ok: false, error: e.message }); }
+  });
+
+  // Admin: replace the reference map image the tracer shows under the drawing
+  // (served as /trace-map.jpg). Lets a future admin trace against a different or
+  // updated scan. Gated with the rest of the trace-edit tooling.
+  app.post('/api/trace/mapimg', express.raw({ type: ['image/jpeg', 'image/png', 'image/webp'], limit: '20mb' }), (req, res) => {
+    try {
+      if (!req.body || !req.body.length) return res.status(400).json({ ok: false, error: 'No image received (send the file as the request body with an image content-type).' });
+      // sanity: the payload must actually look like an image (magic bytes), not JSON/script
+      const b = req.body;
+      const isJpg = b[0] === 0xff && b[1] === 0xd8;
+      const isPng = b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47;
+      const isWebp = b.length > 11 && b.toString('ascii', 0, 4) === 'RIFF' && b.toString('ascii', 8, 12) === 'WEBP';
+      if (!isJpg && !isPng && !isWebp) return res.status(400).json({ ok: false, error: 'Not a JPEG/PNG/WebP image.' });
+      writeFileSync(join(PUBLIC_DIR, 'trace-map.jpg'), b);   // same path the tracer loads (browsers read content, not the extension)
+      res.json({ ok: true, bytes: b.length });
+    } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
   });
 }
 

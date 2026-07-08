@@ -74,9 +74,10 @@
     <button id="applygame" style="background:#1f5a35;border-color:#2ecc71;color:#fff">💾 Save to map</button>
   </div>
   <div class="grp">
-    <button id="save" title="Save the working state in this browser (also autosaves)">💾 Save</button>
+    <!-- No local Save / Load-file controls: a JSON file could be tampered with and
+         imported to overwrite the map, so files only flow OUT (Export). The working
+         session still autosaves in this browser and restores on return. -->
     <button id="export" title="Download the WHOLE map (existing roads + your edits) as a JSON file to send back">⬇ Export full map</button>
-    <label class="btn">📂 Load<input id="load" type="file" accept="application/json" hidden></label>
     <button id="newsession" title="Start fresh: clear the working session saved in this browser. Use this after your traces have been added to the game, so the old blue lines stop showing ON TOP of the game's roads." style="background:#5a2a2a;border-color:#7a3a3a">🆕 New</button>
     <button id="help" title="Show / hide the instructions">ⓘ</button>
   </div>
@@ -497,7 +498,7 @@ $('au').onclick = () => { bg.offY += NUDGE; draw(); }; $('ad').onclick = () => {
 $('sxp').onclick = () => { bg.scaleX *= SCL; draw(); }; $('sxm').onclick = () => { bg.scaleX /= SCL; draw(); };
 $('syp').onclick = () => { bg.scaleY *= SCL; draw(); }; $('sym').onclick = () => { bg.scaleY /= SCL; draw(); };
 $('areset').onclick = () => { bg = { offX: 0, offY: 0, scaleX: 1, scaleY: 1 }; draw(); };
-$('save').onclick = () => { finishCur(); autosave(true); draw(); updateStat(); };
+// (the explicit 💾 Save button is gone — the session autosaves in this browser)
 // The WHOLE map's roads = the game's existing network overlay (game.roads, which
 // already reflects whatever was erased this session) PLUS the roads drawn here.
 // So an Export / direct-Save is the COMPLETE map and re-applying it reproduces the
@@ -540,14 +541,9 @@ $('export').onclick = () => { finishCur();
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'sg1966-trace.json'; a.click(); draw(); updateStat();
   const feat = ['mainland', 'reservoirs', 'railway', 'sands'].filter(k => t[k] && t[k].length);
   toast('Exported the FULL map (' + allMapRoads().length + ' roads' + (feat.length ? ' · ' + feat.join(', ') : '') + ')'); };
-$('load').onchange = e => { const f = e.target.files[0]; if (!f) return; const rd = new FileReader();
-  rd.onload = () => { try { applyLoaded(JSON.parse(rd.result));
-    // A loaded file REPLACES the map: drop the default/game overlay so ONLY the imported
-    // trace shows, and a later Export or Save writes exactly the imported map — not the
-    // old default sitting underneath it. (The yellow guide outline still shows for reference.)
-    game = { roads: [], mainland: [], reservoirs: [], railway: [], sands: [], airport: [], _sandsCustom: [] };
-    overlayDirty = {};
-    sel = null; resumable = null; snapshot(); draw(); updateStat(); toast('Loaded — the imported map replaces the default'); } catch (err) { toast('Bad file: ' + err.message, true); } }; rd.readAsText(f); };
+// (the 📂 Load file-import is gone — a tampered JSON could otherwise be imported and
+// written over the shared map. Files flow OUT only: Export, then apply server-side
+// via node scripts/apply_trace.mjs, which heals junctions and validates the layers.)
 // Start a fresh working session: wipe the in-browser autosave so the previously
 // traced lines stop showing on top of the game overlay. The game's own roads
 // (the faded reference) are untouched; export first if you want a copy.
@@ -606,7 +602,7 @@ fetch('/trace-data.json').then(r => r.json()).then(d => {
     '<b>Pause anytime</b> with <b>Esc</b> — your trace is kept &amp; autosaved; click near a line\'s end to continue. <b>Undo</b>/<b>Redo</b> (Ctrl+Z / Ctrl+Y). <b>Erase</b> clears anything inside the brush across all <b>visible</b> layers (hide a layer to protect it; the <b>brush</b> slider sets the size). <b>Coast</b> traces mainland AND islands.<br>' +
     '<b>Road type</b> (the drop-down, for new roads): <b>Road · 2-way</b> = standard two-lane road; <b><span style="color:' + SINGLE_COLOR + '">Single lane</span></b> = a narrow lane drawn thinner (one car at a time, both directions — no arrows); <b><span style="color:' + DIRT_COLOR + '">Dirt track</span></b> = a brown off-track / unpaved road.<br>' +
     '<b>What\'s already in the game</b> shows for every <b>show</b> filter (roads, coast, reservoirs, railway, sands, airport) as a faded line in that layer\'s colour — trace/edit on top. <b>Delete a game road:</b> show <span style="color:#37d0ff">Roads</span>, switch to <b>Erase</b>, scrub over it, then <b>🎮 Add to game</b>. <b>Airport ✈</b> = runway centre-line (plane take-off/landing, not a car road).<br>' +
-    '<b>Save</b> = keep state in this browser · <b>Export</b> = download JSON · <b>🆕 New</b> = clear the saved session (use it once your roads are in the game, so your old blue lines don\'t double up over the game\'s roads; or open <b>trace.html?fresh</b>). Dashed <span style="color:#ffd23f">yellow</span> = current game coast (trace the real one in <span style="color:#7CFC8A">green</span>).'; };
+    'Your session <b>autosaves in this browser</b> and restores when you return · <b>Export</b> = download the full map as JSON (files flow out only — there is no import) · <b>🆕 New</b> = clear the saved session (use it once your roads are in the game, so your old blue lines don\'t double up over the game\'s roads; or open <b>trace.html?fresh</b>). Dashed <span style="color:#ffd23f">yellow</span> = current game coast (trace the real one in <span style="color:#7CFC8A">green</span>).'; };
   bgImg.onload = boot; bgImg.onerror = () => { $('hint').textContent = 'Could not load /trace-map.jpg'; boot(); };
 }).catch(err => { $('hint').textContent = 'Could not load /trace-data.json — ' + err.message; });
 </script>

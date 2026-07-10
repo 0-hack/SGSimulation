@@ -108,10 +108,15 @@ function chainLoops(polys, tol = 0.06) {
   return loops;
 }
 function decimateN(pts, minD) {
-  if (pts.length < 3) return pts.map(([x, y]) => [r3(x), r3(y)]);
+  // emit at FOUR decimals: three quantised every point onto a 1.6-world-unit grid,
+  // which read as a wobble/offset against the drawn trace (railway, coast). 0.0001
+  // normalised ≈ 0.16u — visually exact. Also always keep the true last point, so
+  // an open line is never shortened by the spacing filter.
+  if (pts.length < 3) return pts.map(([x, y]) => [r4(x), r4(y)]);
   const out = [pts[0]]; let last = pts[0];
   for (let i = 1; i < pts.length; i++) if (dist(pts[i], last) >= minD) { out.push(pts[i]); last = pts[i]; }
-  return out.map(([x, y]) => [r3(x), r3(y)]);
+  if (last !== pts[pts.length - 1]) out.push(pts[pts.length - 1]);
+  return out.map(([x, y]) => [r4(x), r4(y)]);
 }
 
 // Convert the current ROAD_NODES/EDGES graph into tracer polylines (chains of
@@ -183,11 +188,12 @@ export async function setLandmarks(list) {
 // only fuses genuinely-coincident junctions (so roads drawn apart stay apart and
 // small roads are not snapped onto their neighbours). Used by the live tracer's
 // "Add to game" / Export-and-apply path. Explicit opts still override each field.
-// merge (the ENDPOINT weld) is kept generous — hand-traced junctions routinely land a
-// unit or two apart, so a tiny weld left the map shattered into ~1000 disconnected
-// pieces; 1.6 joins those junctions while staying under the ~2.3u parallel-street gap.
+// merge (the ENDPOINT weld) only fuses ends that are visually the SAME point (0.35u —
+// under a road's own width), so a drawn line's last segment is never bent toward a
+// neighbour. Junctions that land a unit or two short are connected by reconnectGraph
+// with short CONNECTOR edges instead, which adds a stub but moves no drawn geometry.
 // mergeMid stays tiny so INTERIOR curve points are never snapped (curves stay faithful).
-export const FAITHFUL = { exact: true, simplify: 0.06, mergeMid: 0.12, merge: 1.6 };
+export const FAITHFUL = { exact: true, simplify: 0.06, mergeMid: 0.12, merge: 0.35 };
 
 export async function applyTrace(t, opts = {}) {
   if (opts.faithful) opts = { ...FAITHFUL, ...opts };
@@ -332,8 +338,11 @@ export const RESERVOIRS_1966 = ${JSON.stringify(reservoirs)};
       // re-traced coastline becomes the island even if drawn with few points, and a
       // small detailed island never usurps the mainland.
       const polyArea = (p) => { let a = 0; for (let i = 0, j = p.length - 1; i < p.length; j = i++) a += (p[j][0] + p[i][0]) * (p[j][1] - p[i][1]); return Math.abs(a) / 2; };
-      // stitch edited-coast arcs back into loops, then the largest by AREA is the mainland
-      const loops = chainLoops(mainlandIn, 0.12).map(p => decimateN(p, 0.0015)).filter(p => p.length >= 3).sort((a, b) => polyArea(b) - polyArea(a));
+      // stitch edited-coast arcs back into loops. The join radius is TIGHT (0.02 ≈ 32u):
+      // the old 0.12 (≈190u!) could chain an arc to the wrong neighbour and bridge the
+      // gap with a long straight chord — the "abrupt join" that rewrote a drawn coastline.
+      // Decimation is ~1.3u so the traced shoreline detail survives.
+      const loops = chainLoops(mainlandIn, 0.02).map(p => decimateN(p, 0.0008)).filter(p => p.length >= 3).sort((a, b) => polyArea(b) - polyArea(a));
       s = replExport(s, 'SG_OUTLINE', '[' + loops[0].map(([x, y]) => `[${x}, ${y}]`).join(', ') + ']');
       did.push(`coast -> SG_OUTLINE (${loops[0].length} pts)`);
       const isles = loops.slice(1).concat(islandsIn.map(p => decimateN(p, 0.0015)));
@@ -364,7 +373,9 @@ export const RESERVOIRS_1966 = ${JSON.stringify(reservoirs)};
   if (housesIn.length || railwayIn.length || sandsIn.length) {
     let cs = readFileSync(customURL, 'utf8');
     const replC = (name, value) => { const re = new RegExp(`export const ${name} = \\[[\\s\\S]*?\\];`); if (!re.test(cs)) throw new Error(`could not find ${name} in custom1966.js`); cs = cs.replace(re, () => `export const ${name} = ${value};`); };
-    const polyN = p => '[' + decimateN(p, 0.003).map(([x, y]) => `[${x},${y}]`).join(',') + ']';
+    // keep near-full point density (~1u spacing): the old 0.003 (≈4.8u) decimation
+    // visibly flattened the hand-traced railway curves.
+    const polyN = p => '[' + decimateN(p, 0.0006).map(([x, y]) => `[${x},${y}]`).join(',') + ']';
     if (housesIn.length) { const hstr = housesIn.map(b => `{ type: '${b.type}', cx: ${r3(b.cx)}, cy: ${r3(b.cy)}, w: ${r4(b.w)}, h: ${r4(b.h)}, rot: ${r3((b.rot || 0) * Math.PI / 180)}, hgt: ${r2(b.hgt || 1)} }`).join(', '); replC('CUSTOM_HOUSES', `[${hstr}]`); did.push(`houses -> ${housesIn.length}`); }
     if (railwayIn.length) { replC('CUSTOM_RAILWAYS', '[' + railwayIn.map(polyN).join(', ') + ']'); did.push(`railway -> ${railwayIn.length}`); }
     if (sandsIn.length) { const sandLoops = chainLoops(sandsIn, 0.05).filter(p => p.length >= 3); replC('CUSTOM_SANDS', '[' + sandLoops.map(polyN).join(', ') + ']'); did.push(`sands -> ${sandLoops.length}`); }

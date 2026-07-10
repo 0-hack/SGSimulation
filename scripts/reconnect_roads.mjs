@@ -35,15 +35,24 @@ export function reconnectGraph(N0, E0, { weld = 1.8, weldT = 1.6 } = {}) {
   const nearNodes = (p) => { const cx = Math.floor(p[0] / cell), cz = Math.floor(p[1] / cell), out = []; for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) { const arr = grid.get((cx + dx) + ',' + (cz + dz)); if (arr) out.push(...arr); } return out; };
   buildGrid(); let adj = buildAdj();
 
-  // Phase A: weld each dangling end to the nearest unrelated node (union-find).
+  // Phase A: join each dangling end to the nearest unrelated node. Ends that sit at
+  // the SAME point (within `snap` — under a road's own width, so invisible) are merged;
+  // ends a unit or two short get a short CONNECTOR edge instead, so the drawn line is
+  // NEVER moved or bent — the junction just gains a stub the width of the gap.
+  const snap = Math.min(0.3, weld);
   const uf = new Array(N.length); for (let i = 0; i < N.length; i++) uf[i] = i;
   const find = (x) => { while (uf[x] !== x) { uf[x] = uf[uf[x]]; x = uf[x]; } return x; };
+  const connectors = [];
   for (let i = 0; i < N.length; i++) {
     if (adj[i].size !== 1) continue;
     let best = weld, bj = -1;
     for (const j of nearNodes(N[i])) { if (j === i || adj[i].has(j) || find(j) === find(i)) continue; const d = dist(N[i], N[j]); if (d > 1e-9 && d < best) { best = d; bj = j; } }
-    if (bj >= 0) uf[find(i)] = find(bj);
+    if (bj < 0) continue;
+    const myEdge = E.find((e) => e && (e[0] === i || e[1] === i));
+    if (best <= snap) uf[find(i)] = find(bj);                                   // coincident: true weld
+    else connectors.push([i, bj, myEdge ? myEdge[2] : 0, myEdge ? myEdge[3] : 2, myEdge ? myEdge[4] : 0]);   // short gap: bridge it, keep the drawing intact
   }
+  E.push(...connectors);
   { const rep = new Map(), nn = []; const idOf = (r) => { r = find(r); if (!rep.has(r)) { rep.set(r, nn.length); nn.push(N[r]); } return rep.get(r); };
     const seen = new Set(), ne = []; for (const e of E) { if (!e) continue; const a = idOf(e[0]), b = idOf(e[1]); if (a === b) continue; const k = a < b ? a + ':' + b : b + ':' + a; if (seen.has(k)) continue; seen.add(k); ne.push([a, b, e[2], e[3], e[4]]); } N = nn; E = ne; }
   buildGrid(); adj = buildAdj();
@@ -85,7 +94,7 @@ export function reconnectGraph(N0, E0, { weld = 1.8, weldT = 1.6 } = {}) {
 // at the crossing (reusing a nearby endpoint when one sits within `weldNear`), and
 // splits both edges there. 1966 roads have no grade separation, so a crossing is
 // always a junction. Only the crossing point is added — the traced lines don't move.
-export function connectCrossings(N0, E0, { minT = 0.02, weldNear = 0.5 } = {}) {
+export function connectCrossings(N0, E0, { minT = 0.02, weldNear = 0.2 } = {}) {
   const N = N0.map((p) => p.slice());
   let E = E0.map((e) => [e[0], e[1], e[2] || 0, e[3] || 2, e[4] || 0]);
   const cell = 4, gk = (x, z) => Math.floor(x / cell) + ',' + Math.floor(z / cell), grid = new Map();

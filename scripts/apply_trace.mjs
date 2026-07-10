@@ -193,7 +193,10 @@ export async function setLandmarks(list) {
 // neighbour. Junctions that land a unit or two short are connected by reconnectGraph
 // with short CONNECTOR edges instead, which adds a stub but moves no drawn geometry.
 // mergeMid stays tiny so INTERIOR curve points are never snapped (curves stay faithful).
-export const FAITHFUL = { exact: true, simplify: 0.06, mergeMid: 0.12, merge: 0.35 };
+// simplify 0.3: DP within ±0.3u — under HALF the carriageway (renderHW 0.34), so the
+// drawn route is untouched visually, while freehand pen shake (which otherwise bakes
+// as zigzag headings and phantom self-crossings) is flattened out.
+export const FAITHFUL = { exact: true, simplify: 0.3, mergeMid: 0.12, merge: 0.35 };
 
 export async function applyTrace(t, opts = {}) {
   if (opts.faithful) opts = { ...FAITHFUL, ...opts };
@@ -222,6 +225,7 @@ export async function applyTrace(t, opts = {}) {
   // trace than the defaults, without changing the defaults for other callers.
   const SIMP = opts.simplify ?? SIMPLIFY, MMID = opts.mergeMid ?? MERGE_MID, MRG = opts.merge ?? MERGE;
   let outNodes = cur.ROAD_NODES_1966, outEdges = cur.ROAD_EDGES_1966.map(e => [e[0], e[1], e[2] ? 1 : 0, e[3] || 2, e[4] ? 1 : 0]);
+  let roundabouts = (cur.ROUNDABOUTS_1966 || []).map(r => r.slice());   // [x,z,r] world — carried across applies
   if (roadsIn.length || (opts.mergeRoads && bulldozeIn.length)) {
     const merge = !!opts.mergeRoads;
     // when merging, seed the graph with the existing network so new roads snap to it
@@ -263,19 +267,153 @@ export async function applyTrace(t, opts = {}) {
     // way a FULL-map export reproduces the existing roads exactly while freshly
     // DRAWN roads still weld their junctions at the generous endpoint radius.
     const BASE_WELD = 0.02;
+    // ---- fold DUPLICATE strokes: a road traced twice must bake as ONE road ----
+    // Freehand passes over the same road land ~1–2u apart — 2–3 carriageway widths —
+    // so both twins bake, cross each other constantly, and every crossing becomes a
+    // fake junction: the road renders as a patchwork of fragments and each junction
+    // near town sprouts traffic lights. Keep the FIRST drawing of any stretch and
+    // drop later strokes' runs that hug already-accepted geometry (within DUP).
+    // A SHORT hug (< CROSS_KEEP along the stroke) is a genuine crossing or a moment
+    // of riding along another road — kept, so X- and T-junctions are untouched.
+    const DUP = 1.6, CROSS_KEEP = 5, NOVEL_MIN = 3.5, JIT = 0.4;
+    const cellW = 2, gkW = (x, z) => Math.floor(x / cellW) + ',' + Math.floor(z / cellW);
+    const accSegs = [], accGrid = new Map();
+    const accAdd = (a, b) => {
+      const i = accSegs.length; accSegs.push([a, b]);
+      const n = Math.max(1, Math.ceil(dist(a, b) / cellW)); const put = new Set();
+      for (let s = 0; s <= n; s++) { const t = s / n, k = gkW(a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t); if (!put.has(k)) { put.add(k); (accGrid.get(k) || accGrid.set(k, []).get(k)).push(i); } }
+    };
+    const dToAcc = (p) => {
+      const cx = Math.floor(p[0] / cellW), cz = Math.floor(p[1] / cellW); let best = Infinity;
+      for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) {
+        const arr = accGrid.get((cx + dx) + ',' + (cz + dz)); if (!arr) continue;
+        for (const i of arr) { const [a, b] = accSegs[i], ddx = b[0] - a[0], ddz = b[1] - a[1], l2 = ddx * ddx + ddz * ddz || 1e-9;
+          let t = ((p[0] - a[0]) * ddx + (p[1] - a[1]) * ddz) / l2; t = t < 0 ? 0 : t > 1 ? 1 : t;
+          const d = Math.hypot(p[0] - (a[0] + ddx * t), p[1] - (a[1] + ddz * t)); if (d < best) best = d; }
+      }
+      return best;
+    };
+    const strokes = []; let dupDropped = 0;
+    // base strokes are the existing network — accept them first, verbatim
+    for (const road of roadsIn) if (road.base) { const w = road.pts.map(toWorld); strokes.push({ w, oneway: road.oneway, dirt: road.dirt, base: true }); for (let i = 1; i < w.length; i++) accAdd(w[i - 1], w[i]); }
+    // dwell-strip every freehand stroke up front: sub-JIT steps are hand tremor while
+    // paused, not road shape — they zigzag the heading and self-cross into phantom junctions
+    const free = [];
     for (const road of roadsIn) {
+      if (road.base) continue;
+      let w = road.pts.map(toWorld);
+      if (w.length > 2) { const sp = [w[0]]; for (let i = 1; i < w.length; i++) if (dist(w[i], sp[sp.length - 1]) >= JIT || i === w.length - 1) sp.push(w[i]); w = sp; }
+      if (w.length >= 2) free.push({ w, oneway: road.oneway, dirt: road.dirt });
+    }
+    // ---- roundabouts: a small scribbled LOOP means "roundabout here" ----
+    // A hand-drawn roundabout is a compact knot 1–3u across — the size of the road
+    // itself — that can never bake as sensible geometry. Treat it as an annotation:
+    // drop the scribble and synthesize a CLEAN ring road of the same size in its
+    // place (the approaches self-heal onto the ring), persist [x,z,r] so the game
+    // renders the centre island and skips traffic lights there.
+    const knotOf = (w) => {
+      if (w.length < 4) return null;
+      let cx = 0, cz = 0; for (const p of w) { cx += p[0]; cz += p[1]; } cx /= w.length; cz /= w.length;
+      const rs = w.map((p) => Math.hypot(p[0] - cx, p[1] - cz));
+      const maxR = Math.max(...rs), R = rs.reduce((a, b) => a + b, 0) / rs.length;
+      let len = 0; for (let i = 1; i < w.length; i++) len += dist(w[i - 1], w[i]);
+      if (maxR > 6 || len < 3.5) return null;            // a whole compact stroke, deliberately drawn
+      let cov = 0;                                       // it must actually LOOP (≥150° swept)
+      for (let i = 1; i < w.length; i++) {
+        const a0 = Math.atan2(w[i - 1][1] - cz, w[i - 1][0] - cx), a1 = Math.atan2(w[i][1] - cz, w[i][0] - cx);
+        let d = a1 - a0; while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI; cov += d;
+      }
+      if (Math.abs(cov) < Math.PI * 5 / 6) return null;
+      let v = 0; for (const r of rs) v += (r - R) * (r - R);
+      return { c: [cx, cz], R: Math.max(1.6, Math.min(4.2, R + Math.sqrt(v / rs.length))) };
+    };
+    const knots = []; const rest = [];
+    for (const f of free) { const k = knotOf(f.w); if (k) knots.push(k); else rest.push(f); }
+    let newRounds = 0;
+    for (const k of knots) {   // cluster re-scribbled knots; two rings that would touch are ONE roundabout
+      const hit = roundabouts.find((o) => Math.hypot(o[0] - k.c[0], o[1] - k.c[1]) < o[2] + k.R + 1.5);
+      if (hit) continue;
+      roundabouts.push([r1(k.c[0]), r1(k.c[1]), r1(k.R)]); newRounds++;
+    }
+    if (newRounds) did.push(`roundabouts -> ${newRounds} new (${roundabouts.length} total)`);
+    // synthesize the new rings as clean closed circles and accept them as geometry
+    for (let ri = roundabouts.length - newRounds; ri < roundabouts.length; ri++) {
+      const [cx, cz, R] = roundabouts[ri], ring = [];
+      for (let i = 0; i <= 24; i++) { const a = (i % 24) / 24 * 2 * Math.PI; ring.push([cx + R * Math.cos(a), cz + R * Math.sin(a)]); }
+      strokes.push({ w: ring, oneway: false, dirt: false, ringIdx: ri });
+      for (let i = 1; i < ring.length; i++) accAdd(ring[i - 1], ring[i]);
+    }
+    // ---- fold duplicates & keep the novel spans of every remaining stroke ----
+    for (const road of rest) {
+      const w = road.w;
+      // arc length + duplicate flag per point
+      const s = [0]; for (let i = 1; i < w.length; i++) s.push(s[i - 1] + dist(w[i - 1], w[i]));
+      const dup = w.map((p) => dToAcc(p) <= DUP);
+      // runs of same flag; short duplicate runs are crossings — keep them
+      const runs = []; let st = 0;
+      for (let i = 1; i <= w.length; i++) if (i === w.length || dup[i] !== dup[st]) { runs.push({ st, en: i - 1, dup: dup[st] }); st = i; }
+      for (const r of runs) if (r.dup && s[r.en] - s[r.st] < CROSS_KEEP) r.dup = false;
+      // short novel wander BETWEEN dropped runs is re-trace noise, not a new road
+      for (let i = 0; i < runs.length; i++) { const r = runs[i];
+        if (!r.dup && s[r.en] - s[r.st] < NOVEL_MIN && (runs[i - 1]?.dup || runs[i + 1]?.dup)) r.dup = true; }
+      // emit each kept span, padded ONE point into the dropped side so its end lies
+      // within DUP of the kept twin — the self-heal then welds/joins it there
+      const spans = []; let i = 0;
+      while (i < runs.length) {
+        if (runs[i].dup) { i++; continue; }
+        let j = i; while (j + 1 < runs.length && !runs[j + 1].dup) j++;
+        const a = Math.max(0, runs[i].st - 1), b = Math.min(w.length - 1, runs[j].en + 1);
+        if (b > a && s[b] - s[a] >= 1.0) spans.push(w.slice(a, b + 1));
+        i = j + 1;
+      }
+      if (runs.some((r) => r.dup)) dupDropped++;
+      for (const sp of spans) { strokes.push({ w: sp, oneway: road.oneway, dirt: road.dirt }); for (let x = 1; x < sp.length; x++) accAdd(sp[x - 1], sp[x]); }
+    }
+    if (dupDropped) did.push(`folded ${dupDropped} re-traced stroke(s) into the roads they duplicate`);
+    const ringNodes = new Map();   // roundabout index -> node ids of its synthesized ring
+    for (const road of strokes) {
       // simplify each stroke (keep corners/curves, drop oversampling), then weld it
       // into the shared graph: ENDPOINTS weld at MERGE (so junctions/T-junctions join),
       // INTERIOR points weld at the tiny MERGE_MID (so the curve keeps its shape and is
       // NOT snapped onto a coarse grid). No decimation, no smoothing — the road follows
-      // the trace exactly. opts.exact skips the de-jitter pass so the line maps 1:1.
+      // the trace exactly. deSpike drops only >150° near-reversals (hand jitter, never
+      // a real road), so it runs even in exact mode; base strokes stay verbatim.
+      // Synthesized rings bypass BOTH passes: they are already clean, and DP with a
+      // closed loop's identical endpoints would collapse the circle to a point.
       const ew = road.base ? BASE_WELD : MRG, iw = road.base ? BASE_WELD : MMID;
-      const simp = simplify(road.pts.map(toWorld), road.base ? 0 : SIMP);
-      const kept = opts.exact || road.base ? simp : deSpike(simp, 150);   // drop near-reversal jitter spikes (unless exact/base)
+      const kept = road.ringIdx != null ? road.w : road.base ? simplify(road.w, 0) : deSpike(simplify(road.w, SIMP), 150);
       let prev = nodeAt(kept[0], ew);
+      const ids = [prev];
       for (let i = 1; i < kept.length; i++) {
         const id = nodeAt(kept[i], i === kept.length - 1 ? ew : iw);
-        addEdge(prev, id, road.oneway, road.dirt); prev = id;
+        addEdge(prev, id, road.oneway, road.dirt); prev = id; ids.push(id);
+      }
+      if (road.ringIdx != null) ringNodes.set(road.ringIdx, new Set(ids));
+    }
+    // ---- roundabout cleanup ----
+    // The knot the user scribbled may ALREADY be baked into the base network from an
+    // earlier apply — a blob of short edges sitting where the clean ring now stands.
+    // Clear every non-ring edge that lies wholly inside a new ring, then hook each
+    // dangling end near a ring onto its nearest ring node so all approaches join it.
+    if (ringNodes.size) {
+      const ringSet = new Set(); for (const s of ringNodes.values()) for (const id of s) ringSet.add(id);
+      const inR = (id, cx, cz, R) => Math.hypot(nodes[id][0] - cx, nodes[id][1] - cz) <= R + 0.5;
+      edges = edges.filter((e) => {
+        if (ringSet.has(e[0]) || ringSet.has(e[1])) return true;
+        for (const ri of ringNodes.keys()) { const [cx, cz, R] = roundabouts[ri]; if (inR(e[0], cx, cz, R) && inR(e[1], cx, cz, R)) return false; }
+        return true;
+      });
+      const degc = new Map(); for (const e of edges) { degc.set(e[0], (degc.get(e[0]) || 0) + 1); degc.set(e[1], (degc.get(e[1]) || 0) + 1); }
+      for (let ni = 0; ni < nodes.length; ni++) {
+        if ((degc.get(ni) || 0) !== 1 || ringSet.has(ni)) continue;
+        for (const [ri, ids] of ringNodes) {
+          const [cx, cz, R] = roundabouts[ri];
+          if (Math.hypot(nodes[ni][0] - cx, nodes[ni][1] - cz) > R + 3.5) continue;
+          let best = Infinity, bj = -1;
+          for (const id of ids) { const d = dist(nodes[ni], nodes[id]); if (d < best) { best = d; bj = id; } }
+          if (bj >= 0 && best > 1e-9) edges.push([ni, bj, 0, 2, 0]);
+          break;
+        }
       }
     }
     // drop degenerate TINY self-loops: a chain of degree-2 nodes that returns to its
@@ -320,11 +458,14 @@ export async function applyTrace(t, opts = {}) {
     const body = `// 1966 Singapore road network + reservoirs. NODES: [x,z] world.
 // EDGES: [a,b,oneway,class,dirt?].  oneway=1 -> single lane.  dirt=1 -> brown
 // off-track road (5th field omitted when 0).  RESERVOIRS: normalised polygons.
+// ROUNDABOUTS: [x,z,r] world — small traced circles that render a centre island.
 export const ROAD_NODES_1966 = [${outNodes.map(p => `[${p[0]},${p[1]}]`).join(', ')}];
 
 export const ROAD_EDGES_1966 = [${outEdges.map(e => e[4] ? `[${e[0]},${e[1]},${e[2] ? 1 : 0},${e[3] || 2},1]` : `[${e[0]},${e[1]},${e[2] ? 1 : 0},${e[3] || 2}]`).join(',')}];
 
 export const RESERVOIRS_1966 = ${JSON.stringify(reservoirs)};
+
+export const ROUNDABOUTS_1966 = ${JSON.stringify(roundabouts)};
 `;
     writeFileSync(roadsURL, body);
   }

@@ -5467,6 +5467,15 @@ export class Scene3D {
       disc.rotation.x = -Math.PI / 2; disc.position.set(is.x, 0.17, is.z); this.roadGroup.add(disc);
       treeAt(this.roadGroup, is.x, is.z, 1.4); this.roadGroup.children[this.roadGroup.children.length - 1].position.set(is.x, 0, is.z);
     });
+    // TRACED roundabouts (small circles drawn on the map): the ring itself bakes as
+    // road, but at these sizes it reads as a knot unless the green centre island is
+    // drawn over it — same treatment as a player-built roundabout, sized to the ring.
+    for (const [rx, rz, rr] of (ROADS_LIVE.rounds || [])) {
+      const ir = Math.max(0.5, rr - 0.62);              // ring centre-line r minus carriageway + kerb
+      const disc = new THREE.Mesh(new THREE.CircleGeometry(ir, 20), toon(0x66bd5a));
+      disc.rotation.x = -Math.PI / 2; disc.position.set(rx, this._roadY(rx, rz) + 0.12, rz); this.roadGroup.add(disc);
+      if (ir >= 1.2) { treeAt(this.roadGroup, rx, rz, 0.9); this.roadGroup.children[this.roadGroup.children.length - 1].position.set(rx, 0, rz); }
+    }
 
     const mk = (buf, material) => {
       if (!buf[0].length) return;
@@ -5640,10 +5649,31 @@ export class Scene3D {
     this.lights = []; this.lightByNode = new Map();
     this._lightsActive = (this.state?.date?.y || 1965) >= LIGHT_YEAR;
     if (!this._lightsActive) return;   // none at independence — they modernise in later
+    // walk a junction approach through pass-through (degree-2) nodes and measure how
+    // much actual road runs back from the junction. Connector stubs, weld slivers and
+    // jitter fragments measure under a couple of units — they are NOT real approaches,
+    // so they must not make a node look like a signalised crossroads.
+    const APPR = 8;
+    const apprLen = (l) => {
+      let len = this.edgeLen[l.edge] || 0, cur = l.to; const seen = new Set([l.edge]);
+      while (len < APPR && (this.navAdj[cur]?.length === 2)) {
+        const nb = this.navAdj[cur].find((x) => !seen.has(x.edge)); if (!nb) break;
+        seen.add(nb.edge); len += this.edgeLen[nb.edge] || 0; cur = nb.to;
+      }
+      return len;
+    };
+    const rounds = ROADS_LIVE.rounds || [];
     for (let n = 0; n < this.navAdj.length; n++) {
       const links = this.navAdj[n];
       if (links.length < 3) continue;
       const node = this.navNodes[n];
+      // roundabouts are priority-controlled, not signalised — and the drawn ring is a
+      // string of small nodes that would otherwise sprout a post at every arc joint
+      if (rounds.some(([rx, rz, rr]) => (node.x - rx) * (node.x - rx) + (node.z - rz) * (node.z - rz) <= (rr + 2.5) * (rr + 2.5))) continue;
+      // a REAL junction: at least 3 approaches that each run a road's length back —
+      // not the fake degree-3s left by connector stubs or a re-traced stroke's slivers
+      let real = 0; for (const l of links) { if (apprLen(l) >= APPR && ++real >= 3) break; }
+      if (real < 3) continue;
       // cross junctions everywhere; T-junctions only where they front the shophouses
       const ngx = Math.round(node.x / TILE + N / 2), ngy = Math.round(N / 2 - node.z / TILE);
       let nearShops = false;

@@ -10,9 +10,9 @@
 // Consumers (engine.injectTracedRoads, scene3d road mask + heritage) read through
 // ROADS_LIVE, whose initial value is the page-load network — so behaviour is
 // identical until a refresh actually pulls a newer file.
-import { ROAD_NODES_1966, ROAD_EDGES_1966 } from './roads1966.js';
+import * as R66 from './roads1966.js';
 
-export const ROADS_LIVE = { nodes: ROAD_NODES_1966, edges: ROAD_EDGES_1966 };
+export const ROADS_LIVE = { nodes: R66.ROAD_NODES_1966, edges: R66.ROAD_EDGES_1966, rounds: R66.ROUNDABOUTS_1966 || [] };
 
 export async function refreshRoadsLive() {
   try {
@@ -20,6 +20,7 @@ export async function refreshRoadsLive() {
     if (Array.isArray(m.ROAD_NODES_1966) && Array.isArray(m.ROAD_EDGES_1966)) {
       ROADS_LIVE.nodes = m.ROAD_NODES_1966;
       ROADS_LIVE.edges = m.ROAD_EDGES_1966;
+      ROADS_LIVE.rounds = m.ROUNDABOUTS_1966 || [];
     }
   } catch (e) { /* offline / fetch failed — keep the last-known network */ }
   return ROADS_LIVE;

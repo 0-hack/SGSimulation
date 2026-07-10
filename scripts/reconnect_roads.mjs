@@ -179,7 +179,7 @@ export function mergeComponents(N, E, { maxGap = 3 } = {}) {
 // hand tremor or by folding a braided double road, never a drawn corner (single
 // kink, long legs) or a smooth curve (consistent turn direction). Junctions and
 // chain ends are pinned, so connectivity and junction positions are untouched.
-export function relaxZigzag(N, E, { legMax = 3, minTurn = 0.22, pull = 0.55, iters = 3 } = {}) {
+export function relaxZigzag(N, E, { legMax = 6.5, minTurn = 0.22, pull = 0.55, iters = 4 } = {}) {
   const adj = Array.from({ length: N.length }, () => []);
   E.forEach((e, i) => { if (!e) return; adj[e[0]].push({ n: e[1], e: i }); adj[e[1]].push({ n: e[0], e: i }); });
   const deg = (n) => adj[n].length;
@@ -196,6 +196,31 @@ export function relaxZigzag(N, E, { legMax = 3, minTurn = 0.22, pull = 0.55, ite
   for (let n = 0; n < N.length; n++) { if (deg(n) !== 2) continue; for (const nb of adj[n]) if (!used.has(nb.e)) chains.push(walk(n, nb)); }   // pure loops
   for (const ids of chains) {
     if (ids.length < 4) continue;
+    // DENSE freehand wobble first: vertices packed closer than ~1.2u carry hand
+    // tremor, not road geometry (real road features live at 2.5u+). Tremor rides at
+    // wavelengths up to ~5u, so each dense vertex is pulled to the MEAN of the chain
+    // within ±WIN of arc — a low-pass wide enough to flatten the wobble. Deliberate
+    // sparse vertices are untouched; a smooth curve of radius R sags only ~WIN²/6R.
+    {
+      const WIN = 2.2;
+      for (let pass = 0; pass < 2; pass++) {
+        const arc = [0];
+        for (let k = 1; k < ids.length; k++) arc.push(arc[k - 1] + Math.hypot(N[ids[k]][0] - N[ids[k - 1]][0], N[ids[k]][1] - N[ids[k - 1]][1]));
+        const nx = ids.map((id) => N[id]);
+        let moved = false;
+        for (let k = 1; k < ids.length - 1; k++) {
+          if (deg(ids[k]) !== 2) continue;
+          if (arc[k] - arc[k - 1] >= 1.2 || arc[k + 1] - arc[k] >= 1.2) continue;   // sparse: deliberate geometry
+          let sx = 0, sz = 0, n = 0;
+          for (let j = k; j >= 0 && arc[k] - arc[j] <= WIN; j--) { sx += N[ids[j]][0]; sz += N[ids[j]][1]; n++; }
+          for (let j = k + 1; j < ids.length && arc[j] - arc[k] <= WIN; j++) { sx += N[ids[j]][0]; sz += N[ids[j]][1]; n++; }
+          if (n < 3) continue;
+          nx[k] = [sx / n, sz / n]; moved = true;
+        }
+        for (let k = 1; k < ids.length - 1; k++) N[ids[k]] = nx[k];
+        if (!moved) break;
+      }
+    }
     for (let it = 0; it < iters; it++) {
       // signed turn (sin) at each interior vertex, 0 when legs are long or turn gentle
       const turn = ids.map((id, k) => {
@@ -207,11 +232,22 @@ export function relaxZigzag(N, E, { legMax = 3, minTurn = 0.22, pull = 0.55, ite
         const s = (ux * vz - uz * vx) / (la * lb);
         return Math.abs(s) < minTurn ? 0 : s;
       });
+      // A zigzag alternates against the nearest SIGNIFICANT turns along the chain —
+      // the kinks are often separated by a few near-straight vertices, so comparing
+      // only immediate neighbours misses the stitch entirely. Corners keep their
+      // shape: a single kink (no counter-turn within GAP) is never touched.
+      const sig = []; const arc = [0];
+      for (let k = 1; k < ids.length; k++) arc.push(arc[k - 1] + Math.hypot(N[ids[k]][0] - N[ids[k - 1]][0], N[ids[k]][1] - N[ids[k - 1]][1]));
+      for (let k = 1; k < ids.length - 1; k++) if (turn[k]) sig.push(k);
+      const GAP = 2 * legMax;
       let any = false;
       const next = ids.map((id) => N[id]);
-      for (let k = 1; k < ids.length - 1; k++) {
-        const t = turn[k]; if (!t) continue;
-        if (!(turn[k - 1] * t < 0 || turn[k + 1] * t < 0)) continue;   // not alternating — a real bend
+      for (let si = 0; si < sig.length; si++) {
+        const k = sig[si], t = turn[k];
+        const pv = si > 0 ? sig[si - 1] : -1, nx = si < sig.length - 1 ? sig[si + 1] : -1;
+        const altPrev = pv >= 0 && turn[pv] * t < 0 && arc[k] - arc[pv] <= GAP;
+        const altNext = nx >= 0 && turn[nx] * t < 0 && arc[nx] - arc[k] <= GAP;
+        if (!altPrev && !altNext) continue;   // a lone bend — real geometry
         const P = N[ids[k - 1]], Q = N[ids[k]], S = N[ids[k + 1]];
         next[k] = [Q[0] * (1 - pull) + (P[0] + S[0]) / 2 * pull, Q[1] * (1 - pull) + (P[1] + S[1]) / 2 * pull];
         any = true;

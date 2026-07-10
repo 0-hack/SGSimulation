@@ -5,7 +5,7 @@ import { app } from '../server.js';
 const server = app.listen(0);
 const base = `http://localhost:${server.address().port}`;
 const OUT = process.env.OUT || '/tmp/shot.png';
-const X = parseFloat(process.env.X || '0'), Z = parseFloat(process.env.Z || '0'), R = parseFloat(process.env.R || '55');
+const X = parseFloat(process.env.X || '0'), Z = parseFloat(process.env.Z || '0'), R = parseFloat(process.env.R || '55'), PHI = parseFloat(process.env.PHI || '0.5');
 const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox','--disable-setuid-sandbox','--use-gl=angle','--use-angle=swiftshader','--enable-webgl','--ignore-gpu-blocklist','--enable-unsafe-swiftshader'] });
 try {
   const p = await browser.newPage();
@@ -14,13 +14,13 @@ try {
   await p.goto(base, { waitUntil: 'networkidle0' });
   await p.click('#btn-new'); await p.waitForSelector('#game:not(.hidden)');
   await new Promise(r => setTimeout(r, 2500));                     // let the scene build
-  await p.evaluate(({ X, Z, R }) => {
+  await p.evaluate(({ X, Z, R, PHI }) => {
     const v = window.__sgview;
     v.target.x = X; v.target.z = Z;
-    v.cam.radius = R; v.cam.phi = 0.5;                             // fairly top-down, like a player screenshot
+    v.cam.radius = R; v.cam.phi = PHI;
     v.gameDays = Math.floor(v.gameDays) + 0.5;                     // noon, so the shot is readable
     if (v.state?.weather) { v.state.weather.rain = 0; v.state.weather.cloud = 0.1; }
-  }, { X, Z, R });
+  }, { X, Z, R, PHI });
   await new Promise(r => setTimeout(r, 1200));
   const tod = await p.evaluate(() => { const v = window.__sgview;
     setInterval(() => { v.gameDays = Math.floor(v.gameDays) + 0.5;                    // pin noon

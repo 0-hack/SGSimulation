@@ -698,6 +698,10 @@ export async function applyTrace(t, opts = {}) {
     const remap = new Map(), cnodes = [];
     for (const id of used) { remap.set(id, cnodes.length); cnodes.push(nodes[id]); }
     nodes = cnodes; edges = edges.map(e => [remap.get(e[0]), remap.get(e[1]), e[2], e[3], e[4] || 0]);
+    // melt zigzag BEFORE healing: at this point every road is still a clean
+    // degree-2 chain, so the left-right stitching of an old bake can relax freely —
+    // after the heal/crossing passes the same vertices may be pinned as junctions
+    relaxZigzag(nodes, edges);
     // self-heal: weld every dangling road end back into the graph (endpoints -> nearest
     // node/junction, else spliced onto the road body it touches). A hand trace leaves
     // hundreds of junctions a unit or two short; without this the map shatters into ~1000
@@ -785,22 +789,7 @@ export const ROUNDABOUTS_1966 = ${JSON.stringify(roundabouts)};
     // visibly flattened the hand-traced railway curves.
     const polyN = p => '[' + decimateN(p, 0.0006).map(([x, y]) => `[${x},${y}]`).join(',') + ']';
     if (housesIn.length) { const hstr = housesIn.map(b => `{ type: '${b.type}', cx: ${r3(b.cx)}, cy: ${r3(b.cy)}, w: ${r4(b.w)}, h: ${r4(b.h)}, rot: ${r3((b.rot || 0) * Math.PI / 180)}, hgt: ${r2(b.hgt || 1)} }`).join(', '); replC('CUSTOM_HOUSES', `[${hstr}]`); did.push(`houses -> ${housesIn.length}`); }
-    // Gentle rail smoothing: freehand tremor bakes as kinked track (a train can't
-    // wiggle) — two light neighbour-average passes kill the sub-unit wobble while
-    // the drawn route moves under ~0.2u. Sparse click-placed points barely change.
-    const railSmooth = (p) => {
-      let w = p.map((q) => q.slice());
-      for (let pass = 0; pass < 2; pass++) {
-        const nx = w.map((q) => q.slice());
-        for (let i = 1; i < w.length - 1; i++) {
-          nx[i][0] = w[i][0] * 0.5 + (w[i - 1][0] + w[i + 1][0]) * 0.25;
-          nx[i][1] = w[i][1] * 0.5 + (w[i - 1][1] + w[i + 1][1]) * 0.25;
-        }
-        w = nx;
-      }
-      return w;
-    };
-    if (railwayIn.length) { replC('CUSTOM_RAILWAYS', '[' + railwayIn.map((p) => polyN(railSmooth(p))).join(', ') + ']'); did.push(`railway -> ${railwayIn.length}`); }
+    if (railwayIn.length) { replC('CUSTOM_RAILWAYS', '[' + railwayIn.map(polyN).join(', ') + ']'); did.push(`railway -> ${railwayIn.length}`); }
     if (sandsIn.length) { const sandLoops = chainLoops(sandsIn, 0.05).filter(p => p.length >= 3); replC('CUSTOM_SANDS', '[' + sandLoops.map(polyN).join(', ') + ']'); did.push(`sands -> ${sandLoops.length}`); }
     writeFileSync(customURL, cs);
   }

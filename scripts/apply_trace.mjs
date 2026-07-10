@@ -16,7 +16,7 @@
 //   houses     [{...}]        -> custom1966.js             CUSTOM_HOUSES
 //   railway/sands [[...]]     -> custom1966.js             CUSTOM_RAILWAYS / _SANDS
 import { readFileSync, writeFileSync } from 'node:fs';
-import { reconnectGraph, connectCrossings } from './reconnect_roads.mjs';
+import { reconnectGraph, connectCrossings, relaxZigzag } from './reconnect_roads.mjs';
 
 // SIMPLIFY: Douglas-Peucker tolerance in world units (~0.15u ≈ 5.5m) — how far the
 //   kept polyline may stray from the raw trace. Kept SMALL so a freehand curve keeps
@@ -293,9 +293,126 @@ export async function applyTrace(t, opts = {}) {
       }
       return best;
     };
-    const strokes = []; let dupDropped = 0;
-    // base strokes are the existing network — accept them first, verbatim
-    for (const road of roadsIn) if (road.base) { const w = road.pts.map(toWorld); strokes.push({ w, oneway: road.oneway, dirt: road.dirt, base: true }); for (let i = 1; i < w.length; i++) accAdd(w[i - 1], w[i]); }
+    // A point DUPLICATES accepted geometry only when a nearby segment also runs the
+    // SAME WAY (|cos| ≥ 0.7 ≈ within 45°). Nearness alone must not count: in a dense
+    // grid a short cross-street sits within DUP of the parallels it connects — that
+    // is a junction, not a re-trace, and eating it shatters the network.
+    const dupNear = (p, dirx, dirz) => {
+      const cx = Math.floor(p[0] / cellW), cz = Math.floor(p[1] / cellW);
+      for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) {
+        const arr = accGrid.get((cx + dx) + ',' + (cz + dz)); if (!arr) continue;
+        for (const i of arr) {
+          const [a, b] = accSegs[i], ddx = b[0] - a[0], ddz = b[1] - a[1], l2 = ddx * ddx + ddz * ddz || 1e-9;
+          const t = ((p[0] - a[0]) * ddx + (p[1] - a[1]) * ddz) / l2;
+          if (t < 0 || t > 1) continue;   // projects past the segment's tip — a road CONTINUING beyond another's end is not a re-trace
+          if (Math.hypot(p[0] - (a[0] + ddx * t), p[1] - (a[1] + ddz * t)) > DUP) continue;
+          const sl = Math.sqrt(l2);
+          if (Math.abs((ddx * dirx + ddz * dirz) / sl) >= 0.7) return true;
+        }
+      }
+      return false;
+    };
+    const strokes = [], spliceEnds = []; let dupDropped = 0, baseFolded = 0;
+    // Classify a polyline against everything accepted so far — AND against its own
+    // earlier body (a stroke drawn out-and-back must fold onto itself) — and return
+    // the spans worth keeping. A chain that hugs other geometry for most of its
+    // length with no real novel stretch is a duplicate twin: dropped whole.
+    const foldSpans = (w, wholeDrop = true) => {
+      const s = [0]; for (let i = 1; i < w.length; i++) s.push(s[i - 1] + dist(w[i - 1], w[i]));
+      // local direction at each point, for the parallel test
+      const dirAt = (i) => {
+        const a = w[Math.max(0, i - 1)], b = w[Math.min(w.length - 1, i + 1)];
+        const dx = b[0] - a[0], dz = b[1] - a[1], l = Math.hypot(dx, dz) || 1;
+        return [dx / l, dz / l];
+      };
+      const selfDup = (i, dirx, dirz) => {   // hugs a much EARLIER, same-way part of this stroke
+        for (let j = 1; j < w.length && s[i] - s[j] > 6; j++) {
+          const a = w[j - 1], b = w[j], dx = b[0] - a[0], dz = b[1] - a[1], l2 = dx * dx + dz * dz || 1e-9;
+          const t = ((w[i][0] - a[0]) * dx + (w[i][1] - a[1]) * dz) / l2;
+          if (t < 0 || t > 1) continue;
+          if (Math.hypot(w[i][0] - (a[0] + dx * t), w[i][1] - (a[1] + dz * t)) > DUP) continue;
+          if (Math.abs((dx * dirx + dz * dirz) / Math.sqrt(l2)) >= 0.7) return true;
+        }
+        return false;
+      };
+      const dup = w.map((p, i) => { const [dx, dz] = dirAt(i); return dupNear(p, dx, dz) || selfDup(i, dx, dz); });
+      const runs = []; let st = 0;
+      for (let i = 1; i <= w.length; i++) if (i === w.length || dup[i] !== dup[st]) { runs.push({ st, en: i - 1, dup: dup[st] }); st = i; }
+      const total = s[w.length - 1] || 1e-9;
+      const dupLen = runs.reduce((a, r) => a + (r.dup ? s[r.en] - s[r.st] : 0), 0);
+      const maxNovel = Math.max(0, ...runs.filter((r) => !r.dup).map((r) => s[r.en] - s[r.st]));
+      // Whole-drop is reserved for BRAID pieces: a chain that (a) hugs its twin for
+      // most of a VISIBLE length (>=8u — junction-scale slivers are connective
+      // tissue, dropping them severs paths) and (b) starts and ends ON the twin
+      // (crossing junctions), so everything it carried survives via the twin.
+      if (wholeDrop && dupLen / total > 0.6 && maxNovel < 4 && total >= 8
+          && dToAcc(w[0]) <= 0.45 && dToAcc(w[w.length - 1]) <= 0.45) {
+        // A twin fragment — nothing new here. Its ENDPOINTS may be junctions the
+        // network routes through, so hand them back for splicing: after the bake,
+        // each is joined into the road it duplicated (no path it carried is lost).
+        return { spans: [], folded: true, ends: [w[0], w[w.length - 1]] };
+      }
+      // short duplicate runs are crossings — keep them
+      for (const r of runs) if (r.dup && s[r.en] - s[r.st] < CROSS_KEEP) r.dup = false;
+      // short novel wander BETWEEN dropped runs is re-trace noise, not a new road
+      for (let i = 0; i < runs.length; i++) { const r = runs[i];
+        if (!r.dup && s[r.en] - s[r.st] < NOVEL_MIN && (runs[i - 1]?.dup || runs[i + 1]?.dup)) r.dup = true; }
+      // emit each kept span, padded ONE point into the dropped side so its end lies
+      // within DUP of the kept twin — the self-heal then welds/joins it there
+      const spans = []; let i = 0;
+      while (i < runs.length) {
+        if (runs[i].dup) { i++; continue; }
+        let j = i; while (j + 1 < runs.length && !runs[j + 1].dup) j++;
+        const a = Math.max(0, runs[i].st - 1), b = Math.min(w.length - 1, runs[j].en + 1);
+        if (b > a && s[b] - s[a] >= 1.0) spans.push(w.slice(a, b + 1));
+        i = j + 1;
+      }
+      return { spans, folded: runs.some((r) => r.dup) };
+    };
+    // Base strokes are the existing network, one 2-pt segment per edge. Rebuild the
+    // POLYLINES first (chains through degree-2 joints, same road flags) so the fold
+    // can also clean twins an OLDER apply baked into the base map itself — re-traced
+    // roads from before the fold existed render as braided double roads. Longest
+    // chains are accepted first: the principal drawing wins, its twin folds away.
+    {
+      const bnode = new Map(), bpts = [], badj = [], bsegs = [];
+      for (const road of roadsIn) {
+        if (!road.base) continue;
+        const idOf = (q) => { const k = q[0] + ',' + q[1]; let id = bnode.get(k); if (id == null) { id = bpts.length; bnode.set(k, id); bpts.push(toWorld(q)); badj.push([]); } return id; };
+        for (let i = 1; i < road.pts.length; i++) {
+          const a = idOf(road.pts[i - 1]), b = idOf(road.pts[i]); if (a === b) continue;
+          const si = bsegs.length; bsegs.push({ a, b, ow: !!road.oneway, dirt: !!road.dirt });
+          badj[a].push(si); badj[b].push(si);
+        }
+      }
+      const busd = new Array(bsegs.length).fill(false);
+      const bwalk = (start, si) => {
+        const flags = { ow: bsegs[si].ow, dirt: bsegs[si].dirt };
+        let cur = start, seg = si; const ids = [start];
+        while (true) {
+          busd[seg] = true;
+          const e = bsegs[seg], nxt = e.a === cur ? e.b : e.a;
+          ids.push(nxt); cur = nxt;
+          if (badj[cur].length !== 2) break;
+          const nb = badj[cur].find((x) => !busd[x]); if (nb == null) break;
+          if (bsegs[nb].ow !== flags.ow || bsegs[nb].dirt !== flags.dirt) break;
+          seg = nb;
+        }
+        return { ids, ...flags };
+      };
+      const bchains = [];
+      for (let n = 0; n < bpts.length; n++) { if (badj[n].length === 2) continue; for (const si of badj[n]) if (!busd[si]) bchains.push(bwalk(n, si)); }
+      for (let si = 0; si < bsegs.length; si++) if (!busd[si]) bchains.push(bwalk(bsegs[si].a, si));   // pure loops
+      const blen = (c) => { let l = 0; for (let i = 1; i < c.ids.length; i++) l += dist(bpts[c.ids[i - 1]], bpts[c.ids[i]]); return l; };
+      bchains.sort((p, q) => blen(q) - blen(p));
+      for (const c of bchains) {
+        const { spans, folded, ends } = foldSpans(c.ids.map((id) => bpts[id]));
+        if (folded) baseFolded++;
+        for (const sp of spans) { strokes.push({ w: sp, oneway: c.ow, dirt: c.dirt, base: true }); for (let x = 1; x < sp.length; x++) accAdd(sp[x - 1], sp[x]); }
+        if (ends) spliceEnds.push(...ends);
+      }
+      if (baseFolded) did.push(`folded ${baseFolded} braided/duplicate base chain(s)`);
+    }
     // dwell-strip every freehand stroke up front: sub-JIT steps are hand tremor while
     // paused, not road shape — they zigzag the heading and self-cross into phantom junctions
     const free = [];
@@ -336,38 +453,27 @@ export async function applyTrace(t, opts = {}) {
       roundabouts.push([r1(k.c[0]), r1(k.c[1]), r1(k.R)]); newRounds++;
     }
     if (newRounds) did.push(`roundabouts -> ${newRounds} new (${roundabouts.length} total)`);
-    // synthesize the new rings as clean closed circles and accept them as geometry
-    for (let ri = roundabouts.length - newRounds; ri < roundabouts.length; ri++) {
+    // Synthesize a clean closed ring for EVERY roundabout the map doesn't already
+    // carry as clean geometry. Carried-over entries need re-synthesizing after a
+    // fresh apply (the trace's base still holds the old scribble); a future base
+    // export that already contains the ring itself is detected and left alone —
+    // a clean ring has road ON the circle and nothing near the centre island.
+    let ringsMade = 0;
+    for (let ri = 0; ri < roundabouts.length; ri++) {
       const [cx, cz, R] = roundabouts[ri], ring = [];
       for (let i = 0; i <= 24; i++) { const a = (i % 24) / 24 * 2 * Math.PI; ring.push([cx + R * Math.cos(a), cz + R * Math.sin(a)]); }
-      strokes.push({ w: ring, oneway: false, dirt: false, ringIdx: ri });
+      let onCircle = 0; for (const p of ring) if (dToAcc(p) <= 0.5) onCircle++;
+      if (onCircle / ring.length > 0.8 && dToAcc([cx, cz]) > 0.6) continue;   // ring already baked clean
+      strokes.push({ w: ring, oneway: false, dirt: false, ringIdx: ri }); ringsMade++;
       for (let i = 1; i < ring.length; i++) accAdd(ring[i - 1], ring[i]);
     }
+    if (ringsMade) did.push(`roundabouts -> ${ringsMade} ring(s) built (${roundabouts.length} on map)`);
     // ---- fold duplicates & keep the novel spans of every remaining stroke ----
     for (const road of rest) {
-      const w = road.w;
-      // arc length + duplicate flag per point
-      const s = [0]; for (let i = 1; i < w.length; i++) s.push(s[i - 1] + dist(w[i - 1], w[i]));
-      const dup = w.map((p) => dToAcc(p) <= DUP);
-      // runs of same flag; short duplicate runs are crossings — keep them
-      const runs = []; let st = 0;
-      for (let i = 1; i <= w.length; i++) if (i === w.length || dup[i] !== dup[st]) { runs.push({ st, en: i - 1, dup: dup[st] }); st = i; }
-      for (const r of runs) if (r.dup && s[r.en] - s[r.st] < CROSS_KEEP) r.dup = false;
-      // short novel wander BETWEEN dropped runs is re-trace noise, not a new road
-      for (let i = 0; i < runs.length; i++) { const r = runs[i];
-        if (!r.dup && s[r.en] - s[r.st] < NOVEL_MIN && (runs[i - 1]?.dup || runs[i + 1]?.dup)) r.dup = true; }
-      // emit each kept span, padded ONE point into the dropped side so its end lies
-      // within DUP of the kept twin — the self-heal then welds/joins it there
-      const spans = []; let i = 0;
-      while (i < runs.length) {
-        if (runs[i].dup) { i++; continue; }
-        let j = i; while (j + 1 < runs.length && !runs[j + 1].dup) j++;
-        const a = Math.max(0, runs[i].st - 1), b = Math.min(w.length - 1, runs[j].en + 1);
-        if (b > a && s[b] - s[a] >= 1.0) spans.push(w.slice(a, b + 1));
-        i = j + 1;
-      }
-      if (runs.some((r) => r.dup)) dupDropped++;
+      const { spans, folded, ends } = foldSpans(road.w);
+      if (folded) dupDropped++;
       for (const sp of spans) { strokes.push({ w: sp, oneway: road.oneway, dirt: road.dirt }); for (let x = 1; x < sp.length; x++) accAdd(sp[x - 1], sp[x]); }
+      if (ends) spliceEnds.push(...ends);
     }
     if (dupDropped) did.push(`folded ${dupDropped} re-traced stroke(s) into the roads they duplicate`);
     const ringNodes = new Map();   // roundabout index -> node ids of its synthesized ring
@@ -390,6 +496,69 @@ export async function applyTrace(t, opts = {}) {
       }
       if (road.ringIdx != null) ringNodes.set(road.ringIdx, new Set(ids));
     }
+    // Re-attach the junctions of folded twins. Each endpoint of a whole-dropped
+    // chain was a junction other roads route through; the fold removed its edges
+    // but the twin road runs right beside it. Splice the junction node INTO the
+    // twin (split the edge at the projection, connect through), so the network
+    // keeps every path the dropped fragment carried. Purely additive — no drawn
+    // geometry moves.
+    if (spliceEnds.length) {
+      const findNode = (p, r) => {
+        const cx = Math.floor(p[0] / MERGE), cz = Math.floor(p[1] / MERGE); let best = r, id = -1;
+        for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) {
+          const arr = grid.get((cx + dx) + ',' + (cz + dz)); if (!arr) continue;
+          for (const i of arr) { const d = dist(nodes[i], p); if (d < best) { best = d; id = i; } }
+        }
+        return id;
+      };
+      const ecell = 2, egk = (x, z) => Math.floor(x / ecell) + ',' + Math.floor(z / ecell), eGrid = new Map();
+      const addE = (ei) => { const e = edges[ei]; if (!e) return; const A = nodes[e[0]], B = nodes[e[1]];
+        const n = Math.max(1, Math.ceil(dist(A, B) / ecell)); const put = new Set();
+        for (let s2 = 0; s2 <= n; s2++) { const t = s2 / n, k = egk(A[0] + (B[0] - A[0]) * t, A[1] + (B[1] - A[1]) * t); if (!put.has(k)) { put.add(k); (eGrid.get(k) || eGrid.set(k, []).get(k)).push(ei); } } };
+      for (let i = 0; i < edges.length; i++) addE(i);
+      const adjAll = new Map();
+      const link = (a, b) => { (adjAll.get(a) || adjAll.set(a, new Set()).get(a)).add(b); (adjAll.get(b) || adjAll.set(b, new Set()).get(b)).add(a); };
+      for (const e of edges) link(e[0], e[1]);
+      const doneSplice = new Set();
+      for (const p of spliceEnds) {
+        const dk = Math.round(p[0] * 5) + ':' + Math.round(p[1] * 5);
+        if (doneSplice.has(dk)) continue; doneSplice.add(dk);
+        const X = findNode(p, 0.35); if (X < 0) continue;
+        const nbrs = adjAll.get(X) || new Set();
+        // nearest foreign EDGE BODY within the fold's own hug radius…
+        const cx = Math.floor(p[0] / ecell), cz = Math.floor(p[1] / ecell);
+        let be = -1, bt = 0, bd = DUP + 0.2; const seenE = new Set();
+        for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) {
+          const arr = eGrid.get((cx + dx) + ',' + (cz + dz)); if (!arr) continue;
+          for (const ei of arr) {
+            if (seenE.has(ei)) continue; seenE.add(ei);
+            const e = edges[ei]; if (!e || e[0] === X || e[1] === X || nbrs.has(e[0]) || nbrs.has(e[1])) continue;
+            const A = nodes[e[0]], B = nodes[e[1]], ddx = B[0] - A[0], ddz = B[1] - A[1], l2 = ddx * ddx + ddz * ddz || 1e-9;
+            const t = ((p[0] - A[0]) * ddx + (p[1] - A[1]) * ddz) / l2;
+            if (t < 0.05 || t > 0.95) continue;
+            const d = Math.hypot(p[0] - (A[0] + ddx * t), p[1] - (A[1] + ddz * t));
+            if (d < bd) { bd = d; be = ei; bt = t; }
+          }
+        }
+        // …or the nearest foreign NODE (a dropped sliver often ends level with the
+        // other chain's vertex, where no edge body projects)
+        let bn = -1, bnd = DUP + 0.2;
+        { const gx = Math.floor(p[0] / MERGE), gz = Math.floor(p[1] / MERGE);
+          for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) {
+            const arr = grid.get((gx + dx) + ',' + (gz + dz)); if (!arr) continue;
+            for (const i of arr) { if (i === X || nbrs.has(i)) continue;
+              const d = dist(nodes[i], p); if (d > 1e-9 && d < bnd) { bnd = d; bn = i; } } } }
+        if (bn >= 0 && (be < 0 || bnd <= bd)) {
+          edges.push([X, bn, 0, 2, 0]); addE(edges.length - 1); link(X, bn);
+        } else if (be >= 0) {
+          const e = edges[be], A = nodes[e[0]], B = nodes[e[1]];
+          const M = nodes.length; nodes.push([A[0] + (B[0] - A[0]) * bt, A[1] + (B[1] - A[1]) * bt]);
+          edges[be] = [e[0], M, e[2], e[3], e[4]]; edges.push([M, e[1], e[2], e[3], e[4]]);
+          addE(be); addE(edges.length - 1);
+          edges.push([X, M, 0, 2, 0]); addE(edges.length - 1); link(X, M);
+        }
+      }
+    }
     // ---- roundabout cleanup ----
     // The knot the user scribbled may ALREADY be baked into the base network from an
     // earlier apply — a blob of short edges sitting where the clean ring now stands.
@@ -403,6 +572,41 @@ export async function applyTrace(t, opts = {}) {
         for (const ri of ringNodes.keys()) { const [cx, cz, R] = roundabouts[ri]; if (inR(e[0], cx, cz, R) && inR(e[1], cx, cz, R)) return false; }
         return true;
       });
+      // Trim edges that INVADE a ring: a road may not overlap the circle. One that
+      // stabs inside is re-ended on the nearest ring node; one that runs straight
+      // through (a chord) becomes two approaches, one hooked on each side. This is
+      // what clears the overlapping stubs where approaches used to cross the island.
+      const rings = [...ringNodes.entries()].map(([ri, ids]) => ({ ids: [...ids], c: roundabouts[ri] }));
+      const nearestRing = (ids, p) => { let best = Infinity, bj = -1; for (const id of ids) { const d = dist(p, nodes[id]); if (d < best) { best = d; bj = id; } } return bj; };
+      const trimmed = [];
+      for (const e0 of edges) {
+        let e = e0, drop = false;
+        for (const { ids, c: [cx, cz, R] } of rings) {
+          if (ringSet.has(e[0]) && ringSet.has(e[1])) break;
+          const A = nodes[e[0]], B = nodes[e[1]];
+          const dx = B[0] - A[0], dz = B[1] - A[1], l2 = dx * dx + dz * dz || 1e-9;
+          const tp = ((cx - A[0]) * dx + (cz - A[1]) * dz) / l2, tc = tp < 0 ? 0 : tp > 1 ? 1 : tp;
+          if (Math.hypot(cx - (A[0] + dx * tc), cz - (A[1] + dz * tc)) > R - 0.2) continue;   // stays outside the circle
+          const da = Math.hypot(A[0] - cx, A[1] - cz), db = Math.hypot(B[0] - cx, B[1] - cz);
+          if (da <= R + 0.3 && db <= R + 0.3) { drop = true; break; }
+          if (da < R - 0.2 || db < R - 0.2) {                       // stabs in: end on the ring instead
+            const inIdx = da < db ? 0 : 1, nr = nearestRing(ids, nodes[e[inIdx]]);
+            if (nr === e[1 - inIdx]) { drop = true; break; }
+            e = inIdx === 0 ? [nr, e[1], e[2], e[3], e[4]] : [e[0], nr, e[2], e[3], e[4]];
+            continue;
+          }
+          // both ends outside, chord through the middle: split into two approaches
+          const disc = Math.sqrt(Math.max(0, (R - 0.2) * (R - 0.2) - Math.pow(Math.hypot(cx - (A[0] + dx * tp), cz - (A[1] + dz * tp)), 2)) / l2);
+          const t1 = tp - disc, t2 = tp + disc;
+          const P1 = [A[0] + dx * t1, A[1] + dz * t1], P2 = [A[0] + dx * t2, A[1] + dz * t2];
+          const n1 = nearestRing(ids, P1), n2 = nearestRing(ids, P2);
+          if (n2 !== e[1]) trimmed.push([n2, e[1], e[2], e[3], e[4]]);
+          if (n1 === e[0]) { drop = true; break; }
+          e = [e[0], n1, e[2], e[3], e[4]];
+        }
+        if (!drop && e[0] !== e[1]) trimmed.push(e);
+      }
+      edges = trimmed;
       const degc = new Map(); for (const e of edges) { degc.set(e[0], (degc.get(e[0]) || 0) + 1); degc.set(e[1], (degc.get(e[1]) || 0) + 1); }
       for (let ni = 0; ni < nodes.length; ni++) {
         if ((degc.get(ni) || 0) !== 1 || ringSet.has(ni)) continue;
@@ -447,6 +651,9 @@ export async function applyTrace(t, opts = {}) {
     // turn every such mid-span crossing into a real junction so the roads connect.
     const crossed = connectCrossings(healed.nodes, healed.edges);
     nodes = crossed.nodes; edges = crossed.edges;
+    // final polish: melt the left-right-left stitching that twin-folding (or a shaky
+    // hand) leaves behind — junctions stay pinned, smooth curves and corners untouched
+    relaxZigzag(nodes, edges);
     outNodes = nodes.map(p => [r1(p[0]), r1(p[1])]); outEdges = edges;
     if (roadsIn.length) did.push(merge ? `roads +${newEdges.length} added -> ${outEdges.length} total` : `roads -> ${outNodes.length} nodes / ${outEdges.length} edges`);
   }

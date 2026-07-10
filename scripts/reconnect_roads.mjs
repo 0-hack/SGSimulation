@@ -137,6 +137,56 @@ export function connectCrossings(N0, E0, { minT = 0.02, weldNear = 0.2 } = {}) {
   return { nodes: N, edges: out.filter((e) => e[0] !== e[1]), crossings: found };
 }
 
+// Relax ZIGZAG noise: walk every degree-2 chain and pull a vertex toward its
+// neighbours' midpoint when its turn is sharp-ish, its legs are SHORT, and the turn
+// direction FLIPS against an adjacent vertex's — the left-right-left stitch left by
+// hand tremor or by folding a braided double road, never a drawn corner (single
+// kink, long legs) or a smooth curve (consistent turn direction). Junctions and
+// chain ends are pinned, so connectivity and junction positions are untouched.
+export function relaxZigzag(N, E, { legMax = 3, minTurn = 0.22, pull = 0.55, iters = 3 } = {}) {
+  const adj = Array.from({ length: N.length }, () => []);
+  E.forEach((e, i) => { if (!e) return; adj[e[0]].push({ n: e[1], e: i }); adj[e[1]].push({ n: e[0], e: i }); });
+  const deg = (n) => adj[n].length;
+  const used = new Set(), chains = [];
+  const walk = (start, entry) => {
+    const ids = [start]; let cur = entry.n, prev = start; used.add(entry.e); ids.push(cur);
+    while (deg(cur) === 2) {
+      const nb = adj[cur].find((x) => x.n !== prev && !used.has(x.e)) || adj[cur].find((x) => !used.has(x.e));
+      if (!nb) break; used.add(nb.e); prev = cur; cur = nb.n; ids.push(cur);
+    }
+    return ids;
+  };
+  for (let n = 0; n < N.length; n++) { if (deg(n) === 2) continue; for (const nb of adj[n]) if (!used.has(nb.e)) chains.push(walk(n, nb)); }
+  for (let n = 0; n < N.length; n++) { if (deg(n) !== 2) continue; for (const nb of adj[n]) if (!used.has(nb.e)) chains.push(walk(n, nb)); }   // pure loops
+  for (const ids of chains) {
+    if (ids.length < 4) continue;
+    for (let it = 0; it < iters; it++) {
+      // signed turn (sin) at each interior vertex, 0 when legs are long or turn gentle
+      const turn = ids.map((id, k) => {
+        if (k === 0 || k === ids.length - 1 || deg(id) !== 2) return 0;
+        const P = N[ids[k - 1]], Q = N[id], S = N[ids[k + 1]];
+        const ux = Q[0] - P[0], uz = Q[1] - P[1], vx = S[0] - Q[0], vz = S[1] - Q[1];
+        const la = Math.hypot(ux, uz), lb = Math.hypot(vx, vz);
+        if (!la || !lb || la > legMax || lb > legMax) return 0;
+        const s = (ux * vz - uz * vx) / (la * lb);
+        return Math.abs(s) < minTurn ? 0 : s;
+      });
+      let any = false;
+      const next = ids.map((id) => N[id]);
+      for (let k = 1; k < ids.length - 1; k++) {
+        const t = turn[k]; if (!t) continue;
+        if (!(turn[k - 1] * t < 0 || turn[k + 1] * t < 0)) continue;   // not alternating — a real bend
+        const P = N[ids[k - 1]], Q = N[ids[k]], S = N[ids[k + 1]];
+        next[k] = [Q[0] * (1 - pull) + (P[0] + S[0]) / 2 * pull, Q[1] * (1 - pull) + (P[1] + S[1]) / 2 * pull];
+        any = true;
+      }
+      for (let k = 1; k < ids.length - 1; k++) N[ids[k]] = next[k];
+      if (!any) break;
+    }
+  }
+  return N;
+}
+
 // Gently round SHARP corners (degree-2 chain points only): a light Laplacian nudge
 // toward the neighbour midpoint where the road kinks hard. Junctions and dead-ends are
 // pinned and smooth bends barely move, so the careful curves stay — only jagged kinks soften.

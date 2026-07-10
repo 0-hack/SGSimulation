@@ -137,6 +137,42 @@ export function connectCrossings(N0, E0, { minT = 0.02, weldNear = 0.2 } = {}) {
   return { nodes: N, edges: out.filter((e) => e[0] !== e[1]), crossings: found };
 }
 
+// Merge disconnected components that sit within touching distance: for every pair
+// of components whose closest nodes are within `maxGap`, add a connector edge at
+// that closest pair (smallest gaps first — a minimum spanning forest over the gap
+// links). The duplicate fold, ring cleanup and plain hand-tracing can each leave a
+// region hanging a unit or two from the network it obviously belongs to; this makes
+// the repair a guarantee instead of a set of special cases. Geometry never moves.
+export function mergeComponents(N, E, { maxGap = 3 } = {}) {
+  const uf = new Array(N.length); for (let i = 0; i < uf.length; i++) uf[i] = i;
+  const find = (x) => { while (uf[x] !== x) { uf[x] = uf[uf[x]]; x = uf[x]; } return x; };
+  const deg = new Array(N.length).fill(0);
+  for (const e of E) { if (!e) continue; uf[find(e[0])] = find(e[1]); deg[e[0]]++; deg[e[1]]++; }
+  const cell = maxGap, gk = (x, z) => Math.floor(x / cell) + ',' + Math.floor(z / cell), grid = new Map();
+  for (let i = 0; i < N.length; i++) { if (!deg[i]) continue; const k = gk(N[i][0], N[i][1]); (grid.get(k) || grid.set(k, []).get(k)).push(i); }
+  const links = [];
+  for (let i = 0; i < N.length; i++) {
+    if (!deg[i]) continue;
+    const cx = Math.floor(N[i][0] / cell), cz = Math.floor(N[i][1] / cell);
+    for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) {
+      const arr = grid.get((cx + dx) + ',' + (cz + dz)); if (!arr) continue;
+      for (const j of arr) {
+        if (j <= i || find(i) === find(j)) continue;
+        const d = Math.hypot(N[i][0] - N[j][0], N[i][1] - N[j][1]);
+        if (d <= maxGap) links.push([d, i, j]);
+      }
+    }
+  }
+  links.sort((a, b) => a[0] - b[0]);
+  let added = 0;
+  for (const [, a, b] of links) {
+    if (find(a) === find(b)) continue;
+    uf[find(a)] = find(b);
+    E.push([a, b, 0, 2, 0]); added++;
+  }
+  return added;
+}
+
 // Relax ZIGZAG noise: walk every degree-2 chain and pull a vertex toward its
 // neighbours' midpoint when its turn is sharp-ish, its legs are SHORT, and the turn
 // direction FLIPS against an adjacent vertex's — the left-right-left stitch left by

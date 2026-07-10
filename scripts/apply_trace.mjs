@@ -16,7 +16,7 @@
 //   houses     [{...}]        -> custom1966.js             CUSTOM_HOUSES
 //   railway/sands [[...]]     -> custom1966.js             CUSTOM_RAILWAYS / _SANDS
 import { readFileSync, writeFileSync } from 'node:fs';
-import { reconnectGraph, connectCrossings, relaxZigzag } from './reconnect_roads.mjs';
+import { reconnectGraph, connectCrossings, relaxZigzag, mergeComponents } from './reconnect_roads.mjs';
 
 // SIMPLIFY: Douglas-Peucker tolerance in world units (~0.15u ≈ 5.5m) — how far the
 //   kept polyline may stray from the raw trace. Kept SMALL so a freehand curve keeps
@@ -341,12 +341,12 @@ export async function applyTrace(t, opts = {}) {
       const total = s[w.length - 1] || 1e-9;
       const dupLen = runs.reduce((a, r) => a + (r.dup ? s[r.en] - s[r.st] : 0), 0);
       const maxNovel = Math.max(0, ...runs.filter((r) => !r.dup).map((r) => s[r.en] - s[r.st]));
-      // Whole-drop is reserved for BRAID pieces: a chain that (a) hugs its twin for
-      // most of a VISIBLE length (>=8u — junction-scale slivers are connective
-      // tissue, dropping them severs paths) and (b) starts and ends ON the twin
-      // (crossing junctions), so everything it carried survives via the twin.
-      if (wholeDrop && dupLen / total > 0.6 && maxNovel < 4 && total >= 8
-          && dToAcc(w[0]) <= 0.45 && dToAcc(w[w.length - 1]) <= 0.45) {
+      // Whole-drop: the chain hugs its twin for most of its length with no real
+      // novel stretch, and both ends sit within the hug radius of the twin — a
+      // braid fragment or a doubled dead-end spur. Its endpoints are spliced back
+      // into the twin below, and mergeComponents guarantees nothing is severed.
+      if (wholeDrop && dupLen / total > 0.6 && maxNovel < 4
+          && dToAcc(w[0]) <= 1.7 && dToAcc(w[w.length - 1]) <= 1.7) {
         // A twin fragment — nothing new here. Its ENDPOINTS may be junctions the
         // network routes through, so hand them back for splicing: after the bake,
         // each is joined into the road it duplicated (no path it carried is lost).
@@ -369,6 +369,8 @@ export async function applyTrace(t, opts = {}) {
       }
       return { spans, folded: runs.some((r) => r.dup) };
     };
+    const knots = [];              // roundabout scribbles found this run: {c:[x,z], R, maxR}
+    const ringClear = new Map();   // roundabout index -> clear radius (covers the source scribble)
     // Base strokes are the existing network, one 2-pt segment per edge. Rebuild the
     // POLYLINES first (chains through degree-2 joints, same road flags) so the fold
     // can also clean twins an OLDER apply baked into the base map itself — re-traced
@@ -405,7 +407,58 @@ export async function applyTrace(t, opts = {}) {
       for (let si = 0; si < bsegs.length; si++) if (!busd[si]) bchains.push(bwalk(bsegs[si].a, si));   // pure loops
       const blen = (c) => { let l = 0; for (let i = 1; i < c.ids.length; i++) l += dist(bpts[c.ids[i - 1]], bpts[c.ids[i]]); return l; };
       bchains.sort((p, q) => blen(q) - blen(p));
+      // ---- base LOOPS are roundabouts too ----
+      // A small closed circuit in the old bake — one junction-free loop chain, or
+      // the 2–3 arcs a loop splits into between its approach junctions — is a
+      // scribbled roundabout from an earlier trace, baked as an angular blob.
+      // Convert it to a knot: the arcs are removed here, a clean ring replaces it.
+      const knotFromChains = (list) => {
+        const pts = []; let len = 0;
+        for (const c of list) { for (const id of c.ids) pts.push(bpts[id]); len += blen(c); }
+        if (len < 6 || len > 48 || pts.length < 5) return null;
+        // A TINY loop (maxR <= 3.6 — barely wider than the carriageway) is always a
+        // drawn-roundabout scribble. Larger loops must also be ANGULAR (chunky baked
+        // segments) — a deliberately traced loop road is densely sampled and stays.
+        const tiny = (() => { let cx = 0, cz = 0; for (const p of pts) { cx += p[0]; cz += p[1]; } cx /= pts.length; cz /= pts.length;
+          return Math.max(...pts.map((p) => Math.hypot(p[0] - cx, p[1] - cz))) <= 3.6; })();
+        if (!tiny && len / Math.max(1, pts.length - list.length) < 1.8) return null;
+        let cx = 0, cz = 0; for (const p of pts) { cx += p[0]; cz += p[1]; } cx /= pts.length; cz /= pts.length;
+        const rs = pts.map((p) => Math.hypot(p[0] - cx, p[1] - cz));
+        const maxR = Math.max(...rs), R = rs.reduce((a, b) => a + b, 0) / rs.length;
+        if (maxR > 6.5 || maxR < 1.2 || Math.min(...rs) < 0.25 * maxR) return null;   // not ring-shaped
+        let v = 0; for (const r of rs) v += (r - R) * (r - R);
+        return { c: [cx, cz], R: Math.max(1.6, Math.min(4.2, R + Math.sqrt(v / rs.length))), maxR };
+      };
+      const isLoopable = (c) => !c.dirt && !c._knot && c.ids.length >= 3 && blen(c) <= 34;
+      for (const c of bchains) {   // single junction-free loops
+        if (!isLoopable(c) || dist(bpts[c.ids[0]], bpts[c.ids[c.ids.length - 1]]) > 3) continue;
+        const k = knotFromChains([c]); if (k) { c._knot = true; knots.push(k); }
+      }
+      const ekey = (c) => { const a = c.ids[0], b = c.ids[c.ids.length - 1]; return a < b ? a + ':' + b : b + ':' + a; };
+      const groups = new Map();   // 2-arc loops: two chains joining the same junction pair
+      bchains.forEach((c) => { if (!isLoopable(c)) return; const k = ekey(c); (groups.get(k) || groups.set(k, []).get(k)).push(c); });
+      for (const [, g] of groups) {
+        for (let i = 0; i < g.length - 1; i++) { if (g[i]._knot) continue;
+          for (let j = i + 1; j < g.length; j++) { if (g[j]._knot) continue;
+            const k = knotFromChains([g[i], g[j]]); if (!k) continue;
+            g[i]._knot = g[j]._knot = true; knots.push(k); break; } }
+      }
+      const jadj = new Map();   // 3-arc loops: chains ab, bc, ca between three junctions
+      bchains.forEach((c) => { if (!isLoopable(c)) return; const a = c.ids[0], b = c.ids[c.ids.length - 1]; if (a === b) return;
+        (jadj.get(a) || jadj.set(a, []).get(a)).push({ to: b, c }); (jadj.get(b) || jadj.set(b, []).get(b)).push({ to: a, c }); });
+      for (const [a, la] of jadj) for (const e1 of la) {
+        const b = e1.to; if (b <= a || e1.c._knot) continue;
+        for (const e2 of (jadj.get(b) || [])) {
+          const c2 = e2.to; if (c2 <= b || c2 === a || e2.c._knot || e2.c === e1.c) continue;
+          const e3 = (jadj.get(c2) || []).find((x) => x.to === a && !x.c._knot && x.c !== e1.c && x.c !== e2.c);
+          if (!e3) continue;
+          const k = knotFromChains([e1.c, e2.c, e3.c]); if (!k) continue;
+          e1.c._knot = e2.c._knot = e3.c._knot = true; knots.push(k); break;
+        }
+      }
+      if (knots.length) did.push(`${knots.length} baked loop blob(s) read as roundabouts`);
       for (const c of bchains) {
+        if (c._knot) continue;
         const { spans, folded, ends } = foldSpans(c.ids.map((id) => bpts[id]));
         if (folded) baseFolded++;
         for (const sp of spans) { strokes.push({ w: sp, oneway: c.ow, dirt: c.dirt, base: true }); for (let x = 1; x < sp.length; x++) accAdd(sp[x - 1], sp[x]); }
@@ -444,13 +497,15 @@ export async function applyTrace(t, opts = {}) {
       let v = 0; for (const r of rs) v += (r - R) * (r - R);
       return { c: [cx, cz], R: Math.max(1.6, Math.min(4.2, R + Math.sqrt(v / rs.length))) };
     };
-    const knots = []; const rest = [];
+    const rest = [];
     for (const f of free) { const k = knotOf(f.w); if (k) knots.push(k); else rest.push(f); }
     let newRounds = 0;
     for (const k of knots) {   // cluster re-scribbled knots; two rings that would touch are ONE roundabout
-      const hit = roundabouts.find((o) => Math.hypot(o[0] - k.c[0], o[1] - k.c[1]) < o[2] + k.R + 1.5);
-      if (hit) continue;
+      const hit = roundabouts.findIndex((o) => Math.hypot(o[0] - k.c[0], o[1] - k.c[1]) < o[2] + k.R + 1.5);
+      const clear = Math.max(k.R + 0.5, (k.maxR || 0) + 0.4);
+      if (hit >= 0) { ringClear.set(hit, Math.max(ringClear.get(hit) || 0, clear)); continue; }
       roundabouts.push([r1(k.c[0]), r1(k.c[1]), r1(k.R)]); newRounds++;
+      ringClear.set(roundabouts.length - 1, clear);
     }
     if (newRounds) did.push(`roundabouts -> ${newRounds} new (${roundabouts.length} total)`);
     // Synthesize a clean closed ring for EVERY roundabout the map doesn't already
@@ -566,10 +621,11 @@ export async function applyTrace(t, opts = {}) {
     // dangling end near a ring onto its nearest ring node so all approaches join it.
     if (ringNodes.size) {
       const ringSet = new Set(); for (const s of ringNodes.values()) for (const id of s) ringSet.add(id);
-      const inR = (id, cx, cz, R) => Math.hypot(nodes[id][0] - cx, nodes[id][1] - cz) <= R + 0.5;
+      const clearOf = (ri) => Math.max(ringClear.get(ri) || 0, roundabouts[ri][2] + 0.5);
+      const inR = (id, cx, cz, CLR) => Math.hypot(nodes[id][0] - cx, nodes[id][1] - cz) <= CLR;
       edges = edges.filter((e) => {
         if (ringSet.has(e[0]) || ringSet.has(e[1])) return true;
-        for (const ri of ringNodes.keys()) { const [cx, cz, R] = roundabouts[ri]; if (inR(e[0], cx, cz, R) && inR(e[1], cx, cz, R)) return false; }
+        for (const ri of ringNodes.keys()) { const [cx, cz] = roundabouts[ri], CLR = clearOf(ri); if (inR(e[0], cx, cz, CLR) && inR(e[1], cx, cz, CLR)) return false; }
         return true;
       });
       // Trim edges that INVADE a ring: a road may not overlap the circle. One that
@@ -612,7 +668,7 @@ export async function applyTrace(t, opts = {}) {
         if ((degc.get(ni) || 0) !== 1 || ringSet.has(ni)) continue;
         for (const [ri, ids] of ringNodes) {
           const [cx, cz, R] = roundabouts[ri];
-          if (Math.hypot(nodes[ni][0] - cx, nodes[ni][1] - cz) > R + 3.5) continue;
+          if (Math.hypot(nodes[ni][0] - cx, nodes[ni][1] - cz) > Math.max(R + 3.5, clearOf(ri) + 2)) continue;
           let best = Infinity, bj = -1;
           for (const id of ids) { const d = dist(nodes[ni], nodes[id]); if (d < best) { best = d; bj = id; } }
           if (bj >= 0 && best > 1e-9) edges.push([ni, bj, 0, 2, 0]);
@@ -651,6 +707,10 @@ export async function applyTrace(t, opts = {}) {
     // turn every such mid-span crossing into a real junction so the roads connect.
     const crossed = connectCrossings(healed.nodes, healed.edges);
     nodes = crossed.nodes; edges = crossed.edges;
+    // guarantee: nothing the fold/cleanup touched may leave a region hanging — any
+    // component within touching distance of another gets a connector at the gap
+    const rejoined = mergeComponents(nodes, edges);
+    if (rejoined) did.push(`rejoined ${rejoined} hanging fragment(s)`);
     // final polish: melt the left-right-left stitching that twin-folding (or a shaky
     // hand) leaves behind — junctions stay pinned, smooth curves and corners untouched
     relaxZigzag(nodes, edges);
@@ -725,7 +785,22 @@ export const ROUNDABOUTS_1966 = ${JSON.stringify(roundabouts)};
     // visibly flattened the hand-traced railway curves.
     const polyN = p => '[' + decimateN(p, 0.0006).map(([x, y]) => `[${x},${y}]`).join(',') + ']';
     if (housesIn.length) { const hstr = housesIn.map(b => `{ type: '${b.type}', cx: ${r3(b.cx)}, cy: ${r3(b.cy)}, w: ${r4(b.w)}, h: ${r4(b.h)}, rot: ${r3((b.rot || 0) * Math.PI / 180)}, hgt: ${r2(b.hgt || 1)} }`).join(', '); replC('CUSTOM_HOUSES', `[${hstr}]`); did.push(`houses -> ${housesIn.length}`); }
-    if (railwayIn.length) { replC('CUSTOM_RAILWAYS', '[' + railwayIn.map(polyN).join(', ') + ']'); did.push(`railway -> ${railwayIn.length}`); }
+    // Gentle rail smoothing: freehand tremor bakes as kinked track (a train can't
+    // wiggle) — two light neighbour-average passes kill the sub-unit wobble while
+    // the drawn route moves under ~0.2u. Sparse click-placed points barely change.
+    const railSmooth = (p) => {
+      let w = p.map((q) => q.slice());
+      for (let pass = 0; pass < 2; pass++) {
+        const nx = w.map((q) => q.slice());
+        for (let i = 1; i < w.length - 1; i++) {
+          nx[i][0] = w[i][0] * 0.5 + (w[i - 1][0] + w[i + 1][0]) * 0.25;
+          nx[i][1] = w[i][1] * 0.5 + (w[i - 1][1] + w[i + 1][1]) * 0.25;
+        }
+        w = nx;
+      }
+      return w;
+    };
+    if (railwayIn.length) { replC('CUSTOM_RAILWAYS', '[' + railwayIn.map((p) => polyN(railSmooth(p))).join(', ') + ']'); did.push(`railway -> ${railwayIn.length}`); }
     if (sandsIn.length) { const sandLoops = chainLoops(sandsIn, 0.05).filter(p => p.length >= 3); replC('CUSTOM_SANDS', '[' + sandLoops.map(polyN).join(', ') + ']'); did.push(`sands -> ${sandLoops.length}`); }
     writeFileSync(customURL, cs);
   }

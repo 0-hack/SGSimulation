@@ -211,10 +211,19 @@ export function relaxZigzag(N, E, { legMax = 6.5, minTurn = 0.22, pull = 0.55, i
         for (let k = 1; k < ids.length - 1; k++) {
           if (deg(ids[k]) !== 2) continue;
           if (arc[k] - arc[k - 1] >= 1.2 || arc[k + 1] - arc[k] >= 1.2) continue;   // sparse: deliberate geometry
+          let j0 = k, j1 = k;
+          while (j0 > 0 && arc[k] - arc[j0 - 1] <= WIN) j0--;
+          while (j1 < ids.length - 1 && arc[j1 + 1] - arc[k] <= WIN) j1++;
+          if (j1 - j0 < 2) continue;
+          // a deliberate ARC turns consistently across the window (roundabout rings,
+          // tight drawn curves) — averaging would shrink it inward. Tremor has ~zero
+          // NET turn; only flatten when the window is not really curving anywhere.
+          const h0 = Math.atan2(N[ids[j0 + 1]][1] - N[ids[j0]][1], N[ids[j0 + 1]][0] - N[ids[j0]][0]);
+          const h1 = Math.atan2(N[ids[j1]][1] - N[ids[j1 - 1]][1], N[ids[j1]][0] - N[ids[j1 - 1]][0]);
+          let net = h1 - h0; while (net > Math.PI) net -= 2 * Math.PI; while (net < -Math.PI) net += 2 * Math.PI;
+          if (Math.abs(net) > 0.6) continue;
           let sx = 0, sz = 0, n = 0;
-          for (let j = k; j >= 0 && arc[k] - arc[j] <= WIN; j--) { sx += N[ids[j]][0]; sz += N[ids[j]][1]; n++; }
-          for (let j = k + 1; j < ids.length && arc[j] - arc[k] <= WIN; j++) { sx += N[ids[j]][0]; sz += N[ids[j]][1]; n++; }
-          if (n < 3) continue;
+          for (let j = j0; j <= j1; j++) { sx += N[ids[j]][0]; sz += N[ids[j]][1]; n++; }
           nx[k] = [sx / n, sz / n]; moved = true;
         }
         for (let k = 1; k < ids.length - 1; k++) N[ids[k]] = nx[k];

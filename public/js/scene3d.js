@@ -5383,6 +5383,7 @@ export class Scene3D {
       // the asphalt at those ends so there is no hard seam where the two surfaces meet.
       const pavedNode = new Set();
       for (const e of roads.edges) { if (!e.dirt) { pavedNode.add(e.a); pavedNode.add(e.b); } }
+      const capAt = new Map();   // node id -> {x,y,z,hw}: junction cap position + widest paved road there
       for (const { nodes, oneway, dirt } of this._tracedChains(roads)) {
         const raw = nodes.map((ni) => { const nd = roads.nodes[ni]; return nd && { x: nd.x, z: nd.z }; }).filter(Boolean);
         // resample to sub-cell spacing so the ribbon hugs the hillsides (and so a
@@ -5394,9 +5395,25 @@ export class Scene3D {
         const pts = this._densifyRoad(raw, 2.0, 0.10);
         if (dirt) { dirtRibbon(pts, HWD, pavedNode.has(nodes[0]), pavedNode.has(nodes[nodes.length - 1])); }  // narrow kampong track, feathered into asphalt at junctions
         else {
-          ribbonSmooth(road, pts, oneway ? HW1 : HW2, 0.04);     // paved (standard or single lane)
+          const hw = oneway ? HW1 : HW2;
+          ribbonSmooth(road, pts, hw, 0.04);                     // paved (standard or single lane)
           if (!oneway) markLine(pts, 0, true, 0.05);             // two-way: a dashed centre line down the middle
+          // remember where this chain ENDS and how wide it is — every chain end is a
+          // junction (or a dead end / type change), and two ribbons butting there at
+          // an angle leave a V-shaped notch. A cap disc below fills the wedge.
+          for (const [ni, p] of [[nodes[0], pts[0]], [nodes[nodes.length - 1], pts[pts.length - 1]]]) {
+            const c = capAt.get(ni);
+            if (!c || c.hw < hw) capAt.set(ni, { x: p.x, y: p.y, z: p.z, hw });
+          }
         }
+      }
+      // JUNCTION CAPS: separately-drawn roads that touch must read as ONE piece of
+      // road — a filled disc at each meeting point covers the seam between ribbons.
+      for (const c of capAt.values()) {
+        const [v, idx] = road, n = 12, base = v.length / 3, r = c.hw + 0.02, y = c.y + 0.04;
+        v.push(c.x, y, c.z);
+        for (let k = 0; k < n; k++) { const a = k / n * 2 * Math.PI; v.push(c.x + Math.cos(a) * r, y, c.z + Math.sin(a) * r); }
+        for (let k = 0; k < n; k++) idx.push(base, base + 1 + k, base + 1 + (k + 1) % n);
       }
     }
 

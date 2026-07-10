@@ -415,17 +415,14 @@ export async function applyTrace(t, opts = {}) {
       const knotFromChains = (list) => {
         const pts = []; let len = 0;
         for (const c of list) { for (const id of c.ids) pts.push(bpts[id]); len += blen(c); }
-        if (len < 6 || len > 48 || pts.length < 5) return null;
-        // A TINY loop (maxR <= 3.6 — barely wider than the carriageway) is always a
-        // drawn-roundabout scribble. Larger loops must also be ANGULAR (chunky baked
-        // segments) — a deliberately traced loop road is densely sampled and stays.
-        const tiny = (() => { let cx = 0, cz = 0; for (const p of pts) { cx += p[0]; cz += p[1]; } cx /= pts.length; cz /= pts.length;
-          return Math.max(...pts.map((p) => Math.hypot(p[0] - cx, p[1] - cz))) <= 3.6; })();
-        if (!tiny && len / Math.max(1, pts.length - list.length) < 1.8) return null;
+        if (len < 6 || len > 30 || pts.length < 5) return null;
         let cx = 0, cz = 0; for (const p of pts) { cx += p[0]; cz += p[1]; } cx /= pts.length; cz /= pts.length;
         const rs = pts.map((p) => Math.hypot(p[0] - cx, p[1] - cz));
         const maxR = Math.max(...rs), R = rs.reduce((a, b) => a + b, 0) / rs.length;
-        if (maxR > 6.5 || maxR < 1.2 || Math.min(...rs) < 0.25 * maxR) return null;   // not ring-shaped
+        // ONLY unambiguously roundabout-sized loops convert (<=2.2u radius ≈ 135m
+        // across — 1965 Singapore had no big roundabouts). A larger drawn circuit
+        // is a real loop ROAD (a circus, a block, a service loop): kept as drawn.
+        if (maxR > 2.2 || maxR < 1.2 || Math.min(...rs) < 0.25 * maxR) return null;   // not roundabout-shaped
         let v = 0; for (const r of rs) v += (r - R) * (r - R);
         return { c: [cx, cz], R: Math.max(1.6, Math.min(4.2, R + Math.sqrt(v / rs.length))), maxR };
       };

@@ -25,7 +25,7 @@ export function countComponents(N, E) {
 
 // Weld dangling road ends back into the graph. Returns { nodes, edges } with the same
 // [a,b,ow,cls,dirt] edge shape. Pure — does not mutate the inputs.
-export function reconnectGraph(N0, E0, { weld = 1.8, weldT = 1.6 } = {}) {
+export function reconnectGraph(N0, E0, { weld = 0.9, weldT = 0.9 } = {}) {
   let N = N0.map((p) => p.slice());
   let E = E0.map((e) => [e[0], e[1], e[2] || 0, e[3] || 2, e[4] || 0]);
   const cell = Math.max(weld, weldT) + 0.01, gk = (x, z) => Math.floor(x / cell) + ',' + Math.floor(z / cell);
@@ -143,7 +143,7 @@ export function connectCrossings(N0, E0, { minT = 0.02, weldNear = 0.2 } = {}) {
 // links). The duplicate fold, ring cleanup and plain hand-tracing can each leave a
 // region hanging a unit or two from the network it obviously belongs to; this makes
 // the repair a guarantee instead of a set of special cases. Geometry never moves.
-export function mergeComponents(N, E, { maxGap = 3 } = {}) {
+export function mergeComponents(N, E, { maxGap = 1.2 } = {}) {
   const uf = new Array(N.length); for (let i = 0; i < uf.length; i++) uf[i] = i;
   const find = (x) => { while (uf[x] !== x) { uf[x] = uf[uf[x]]; x = uf[x]; } return x; };
   const deg = new Array(N.length).fill(0);

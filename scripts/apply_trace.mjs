@@ -456,8 +456,8 @@ export async function applyTrace(t, opts = {}) {
       let v = 0; for (const r of rs) v += (r - R) * (r - R);
       return { c: [cx, cz], R: Math.max(1.6, Math.min(4.2, R + Math.sqrt(v / rs.length))) };
     };
-    const rest = [];
-    for (const f of free) { const k = knotOf(f.w); if (k) knots.push(k); else rest.push(f); }
+    const rest = free;   // NO knot interpretation — the survey map shows these little
+                         // loops are real loop tracks, not roundabouts; they bake as drawn
     let newRounds = 0;
     for (const k of knots) {   // cluster re-scribbled knots; two rings that would touch are ONE roundabout
       const hit = roundabouts.findIndex((o) => Math.hypot(o[0] - k.c[0], o[1] - k.c[1]) < o[2] + k.R + 1.5);

@@ -312,7 +312,14 @@ export async function applyTrace(t, opts = {}) {
       }
       return false;
     };
-    const strokes = [], spliceEnds = []; let dupDropped = 0, baseFolded = 0;
+    const strokes = [], spliceEnds = []; let dupDropped = 0;
+    const DBG = process.env.DBG_X ? [parseFloat(process.env.DBG_X), parseFloat(process.env.DBG_Z)] : null;
+    const dbgStrokes = (tag) => { if (!DBG) return; let n = 0;
+      for (const st of strokes) for (const q of st.w) if (Math.hypot(q[0] - DBG[0], q[1] - DBG[1]) < 8) { n++; }
+      console.log('[dbg]', tag, 'stroke pts near', n); };
+    const dbgNodes = (tag) => { if (!DBG) return; let n = 0;
+      for (const e of edges) for (const id of [e[0], e[1]]) if (Math.hypot(nodes[id][0] - DBG[0], nodes[id][1] - DBG[1]) < 8) n++;
+      console.log('[dbg]', tag, 'edge-endpoints near', n); };
     // Classify a polyline against everything accepted so far — AND against its own
     // earlier body (a stroke drawn out-and-back must fold onto itself) — and return
     // the spans worth keeping. A chain that hugs other geometry for most of its
@@ -454,14 +461,17 @@ export async function applyTrace(t, opts = {}) {
         }
       }
       if (knots.length) did.push(`${knots.length} baked loop blob(s) read as roundabouts`);
+      // Base chains bake VERBATIM — the duplicate fold must NEVER run on the base
+      // network. What reads as a "braided twin" is often real: a dual carriageway
+      // drawn as two one-way lines, or two close parallel streets. Folding deletes
+      // or displaces drawn roads. How they LOOK is handled without touching the
+      // drawing: tremor smoothing, junction caps and width blending.
       for (const c of bchains) {
         if (c._knot) continue;
-        const { spans, folded, ends } = foldSpans(c.ids.map((id) => bpts[id]));
-        if (folded) baseFolded++;
-        for (const sp of spans) { strokes.push({ w: sp, oneway: c.ow, dirt: c.dirt, base: true }); for (let x = 1; x < sp.length; x++) accAdd(sp[x - 1], sp[x]); }
-        if (ends) spliceEnds.push(...ends);
+        const w = c.ids.map((id) => bpts[id]);
+        strokes.push({ w, oneway: c.ow, dirt: c.dirt, base: true });
+        for (let x = 1; x < w.length; x++) accAdd(w[x - 1], w[x]);
       }
-      if (baseFolded) did.push(`folded ${baseFolded} braided/duplicate base chain(s)`);
     }
     // dwell-strip every freehand stroke up front: sub-JIT steps are hand tremor while
     // paused, not road shape — they zigzag the heading and self-cross into phantom junctions
@@ -520,6 +530,7 @@ export async function applyTrace(t, opts = {}) {
       for (let i = 1; i < ring.length; i++) accAdd(ring[i - 1], ring[i]);
     }
     if (ringsMade) did.push(`roundabouts -> ${ringsMade} ring(s) built (${roundabouts.length} on map)`);
+    dbgStrokes('after base+rings');
     // ---- fold duplicates & keep the novel spans of every remaining stroke ----
     for (const road of rest) {
       const { spans, folded, ends } = foldSpans(road.w);
@@ -539,7 +550,10 @@ export async function applyTrace(t, opts = {}) {
       // Synthesized rings bypass BOTH passes: they are already clean, and DP with a
       // closed loop's identical endpoints would collapse the circle to a point.
       const ew = road.base ? BASE_WELD : MRG, iw = road.base ? BASE_WELD : MMID;
-      const kept = road.ringIdx != null ? road.w : road.base ? simplify(road.w, 0) : deSpike(simplify(road.w, SIMP), 150);
+      // base chains and rings bake VERBATIM — no simplify: a closed loop chain has
+      // identical first/last points, and DP against that zero-length anchor chord
+      // measures every interior point at 0 — the whole loop collapses and vanishes.
+      const kept = road.ringIdx != null || road.base ? road.w : deSpike(simplify(road.w, SIMP), 150);
       let prev = nodeAt(kept[0], ew);
       const ids = [prev];
       for (let i = 1; i < kept.length; i++) {
@@ -548,6 +562,7 @@ export async function applyTrace(t, opts = {}) {
       }
       if (road.ringIdx != null) ringNodes.set(road.ringIdx, new Set(ids));
     }
+    dbgNodes('after bake');
     // Re-attach the junctions of folded twins. Each endpoint of a whole-dropped
     // chain was a junction other roads route through; the fold removed its edges
     // but the twin road runs right beside it. Splice the junction node INTO the
@@ -673,6 +688,7 @@ export async function applyTrace(t, opts = {}) {
         }
       }
     }
+    dbgNodes('after ring cleanup');
     // drop degenerate TINY self-loops: a chain of degree-2 nodes that returns to its
     // own start within a few world units is a freehand stroke that crossed itself, not
     // a real loop — it renders as a sharp spur, so remove its edges. (skipped in exact mode)
@@ -715,6 +731,7 @@ export async function applyTrace(t, opts = {}) {
     // final polish: melt the left-right-left stitching that twin-folding (or a shaky
     // hand) leaves behind — junctions stay pinned, smooth curves and corners untouched
     relaxZigzag(nodes, edges);
+    dbgNodes('final');
     outNodes = nodes.map(p => [r1(p[0]), r1(p[1])]); outEdges = edges;
     if (roadsIn.length) did.push(merge ? `roads +${newEdges.length} added -> ${outEdges.length} total` : `roads -> ${outNodes.length} nodes / ${outEdges.length} edges`);
   }

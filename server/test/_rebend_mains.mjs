@@ -27,10 +27,11 @@ let N = rd.ROAD_NODES_1966.map((p) => p.slice()), E = rd.ROAD_EDGES_1966.map((e)
 const refSegs = [];
 {
   const root = new URL('../..', import.meta.url).pathname;
-  for (const sha of ['749b42b', '2ca7c47', '02076db', '5e15bbf']) {
+  for (const sha of ['749b42b', '2ca7c47', 'ee235b9', '02076db', '5e15bbf']) {
     const src = execSync(`git show ${sha}:public/js/roads1966.js`, { cwd: root, maxBuffer: 1e8 }).toString();
     const m = await import('data:text/javascript;base64,' + Buffer.from(src).toString('base64'));
-    for (const e of m.ROAD_EDGES_1966) if (!e[2]) refSegs.push([m.ROAD_NODES_1966[e[0]], m.ROAD_NODES_1966[e[1]]]);
+    // every flavour: the machine era embedded 1-way and dirt sketches too
+    for (const e of m.ROAD_EDGES_1966) refSegs.push([m.ROAD_NODES_1966[e[0]], m.ROAD_NODES_1966[e[1]]]);
   }
 }
 const refCell = 2, refGrid = new Map(), rgk = (x, y) => (x / refCell | 0) + ':' + (y / refCell | 0);
@@ -71,16 +72,20 @@ for (let i = 0; i < E.length; i++) if (!used.has(i)) chains.push(walk(E[i][0], {
 const ghosts = [];
 for (const ch of chains) {
   const e0 = E[ch.segs[0]];
-  if (e0[2] || e0[4]) continue;
   let len = 0; const samples = [];
   for (const i of ch.segs) { const e = E[i], A = N[e[0]], B = N[e[1]], L = Math.hypot(A[0] - B[0], A[1] - B[1]); len += L;
     const n = Math.max(1, Math.ceil(L / 1.5));
     for (let k = 0; k <= n; k++) samples.push([A[0] + (B[0] - A[0]) * k / n, A[1] + (B[1] - A[1]) * k / n]); }
   const meanSeg = len / ch.segs.length;
   const hit = samples.filter(([x, y]) => dRef(x, y) < 1.2).length / samples.length;
-  if (len >= 8 && meanSeg > 2.0 && hit >= 0.6) ghosts.push(ch);
+  if (len >= 8 && meanSeg > 2.0 && hit >= 0.6) ghosts.push({ ...ch, flags: [e0[2], e0[3], e0[4]] });
 }
-console.log('ghost chains to re-bend:', ghosts.length, '(edges', ghosts.reduce((a, c) => a + c.segs.length, 0) + ')');
+const kindOf = (g) => g.flags[2] ? 'dirt' : g.flags[0] ? 'oneway' : '2way';
+{
+  const byKind = {};
+  for (const g of ghosts) byKind[kindOf(g)] = (byKind[kindOf(g)] || 0) + 1;
+  console.log('ghost chains to re-bend:', ghosts.length, JSON.stringify(byKind));
+}
 
 // nodes owned by anything non-ghost must not move
 const ghostEdgeSet = new Set(); for (const g of ghosts) for (const i of g.segs) ghostEdgeSet.add(i);
@@ -345,25 +350,40 @@ if (process.argv.includes('--write')) {
   for (const g of ghosts) for (const i of g.segs) dropEdge.add(i);
   E = E.filter((_, i) => !dropEdge.has(i));
   const addChain = (ci) => {
-    const g = ghosts[ci], path = res.chains[ci].pts;
+    const g = ghosts[ci], path = res.chains[ci].pts, [ow, cls, dirt] = g.flags;
     const n0 = g.nodes[0], n1 = g.nodes[g.nodes.length - 1];
     if (!pinned.has(n0)) N[n0] = path[0].slice();
     if (!pinned.has(n1)) N[n1] = path[path.length - 1].slice();
     let prev = n0;
     for (let k = 1; k < path.length - 1; k++) {
       const id = N.length; N.push(path[k].slice());
-      E.push([prev, id, 0, 2, 0]); prev = id;
+      E.push([prev, id, ow, cls, dirt]); prev = id;
     }
-    E.push([prev, n1, 0, 2, 0]);
+    E.push([prev, n1, ow, cls, dirt]);
+  };
+  // put a chain back exactly as it was (its old nodes still exist)
+  const addOriginal = (ci) => {
+    const g = ghosts[ci], [ow, cls, dirt] = g.flags;
+    for (let k = 1; k < g.nodes.length; k++) E.push([g.nodes[k - 1], g.nodes[k], ow, cls, dirt]);
   };
   const candidates = [];
+  let bentOD = 0, keptOD = 0;
   for (let ci = 0; ci < ghosts.length; ci++) {
+    const kind = kindOf(ghosts[ci]);
+    if (kind !== '2way') {
+      // 1-way/dirt sketches follow real roads (badly) — re-bend on confident
+      // evidence, otherwise leave the geometry alone. NEVER drop: a misclassified
+      // owner stroke must survive.
+      if (res.chains[ci].frac >= 0.25) { addChain(ci); bentOD++; } else { addOriginal(ci); keptOD++; }
+      continue;
+    }
     if (res.chains[ci].frac < MIN_EVID) {
       let len = 0; const p = res.chains[ci].pts;
       for (let k = 1; k < p.length; k++) len += Math.hypot(p[k][0] - p[k - 1][0], p[k][1] - p[k - 1][1]);
       candidates.push({ ci, len });
     } else addChain(ci);
   }
+  console.log('oneway/dirt: re-bent', bentOD, '| kept as-is (weak evidence)', keptOD);
   // low-evidence chains are fantasy — the map shows no road. Re-add one ONLY when it
   // alone holds two inhabited parts of the network together (and never a dead-end
   // feeder into the fields). Shortest first: prefer the least invented geometry.

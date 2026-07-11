@@ -414,60 +414,12 @@ export async function applyTrace(t, opts = {}) {
       for (let si = 0; si < bsegs.length; si++) if (!busd[si]) bchains.push(bwalk(bsegs[si].a, si));   // pure loops
       const blen = (c) => { let l = 0; for (let i = 1; i < c.ids.length; i++) l += dist(bpts[c.ids[i - 1]], bpts[c.ids[i]]); return l; };
       bchains.sort((p, q) => blen(q) - blen(p));
-      // ---- base LOOPS are roundabouts too ----
-      // A small closed circuit in the old bake — one junction-free loop chain, or
-      // the 2–3 arcs a loop splits into between its approach junctions — is a
-      // scribbled roundabout from an earlier trace, baked as an angular blob.
-      // Convert it to a knot: the arcs are removed here, a clean ring replaces it.
-      const knotFromChains = (list) => {
-        const pts = []; let len = 0;
-        for (const c of list) { for (const id of c.ids) pts.push(bpts[id]); len += blen(c); }
-        if (len < 6 || len > 30 || pts.length < 5) return null;
-        let cx = 0, cz = 0; for (const p of pts) { cx += p[0]; cz += p[1]; } cx /= pts.length; cz /= pts.length;
-        const rs = pts.map((p) => Math.hypot(p[0] - cx, p[1] - cz));
-        const maxR = Math.max(...rs), R = rs.reduce((a, b) => a + b, 0) / rs.length;
-        // ONLY unambiguously roundabout-sized loops convert (<=2.2u radius ≈ 135m
-        // across — 1965 Singapore had no big roundabouts). A larger drawn circuit
-        // is a real loop ROAD (a circus, a block, a service loop): kept as drawn.
-        if (maxR > 2.2 || maxR < 1.2 || Math.min(...rs) < 0.25 * maxR) return null;   // not roundabout-shaped
-        let v = 0; for (const r of rs) v += (r - R) * (r - R);
-        return { c: [cx, cz], R: Math.max(1.6, Math.min(4.2, R + Math.sqrt(v / rs.length))), maxR };
-      };
-      const isLoopable = (c) => !c.dirt && !c._knot && c.ids.length >= 3 && blen(c) <= 34;
-      for (const c of bchains) {   // single junction-free loops
-        if (!isLoopable(c) || dist(bpts[c.ids[0]], bpts[c.ids[c.ids.length - 1]]) > 3) continue;
-        const k = knotFromChains([c]); if (k) { c._knot = true; knots.push(k); }
-      }
-      const ekey = (c) => { const a = c.ids[0], b = c.ids[c.ids.length - 1]; return a < b ? a + ':' + b : b + ':' + a; };
-      const groups = new Map();   // 2-arc loops: two chains joining the same junction pair
-      bchains.forEach((c) => { if (!isLoopable(c)) return; const k = ekey(c); (groups.get(k) || groups.set(k, []).get(k)).push(c); });
-      for (const [, g] of groups) {
-        for (let i = 0; i < g.length - 1; i++) { if (g[i]._knot) continue;
-          for (let j = i + 1; j < g.length; j++) { if (g[j]._knot) continue;
-            const k = knotFromChains([g[i], g[j]]); if (!k) continue;
-            g[i]._knot = g[j]._knot = true; knots.push(k); break; } }
-      }
-      const jadj = new Map();   // 3-arc loops: chains ab, bc, ca between three junctions
-      bchains.forEach((c) => { if (!isLoopable(c)) return; const a = c.ids[0], b = c.ids[c.ids.length - 1]; if (a === b) return;
-        (jadj.get(a) || jadj.set(a, []).get(a)).push({ to: b, c }); (jadj.get(b) || jadj.set(b, []).get(b)).push({ to: a, c }); });
-      for (const [a, la] of jadj) for (const e1 of la) {
-        const b = e1.to; if (b <= a || e1.c._knot) continue;
-        for (const e2 of (jadj.get(b) || [])) {
-          const c2 = e2.to; if (c2 <= b || c2 === a || e2.c._knot || e2.c === e1.c) continue;
-          const e3 = (jadj.get(c2) || []).find((x) => x.to === a && !x.c._knot && x.c !== e1.c && x.c !== e2.c);
-          if (!e3) continue;
-          const k = knotFromChains([e1.c, e2.c, e3.c]); if (!k) continue;
-          e1.c._knot = e2.c._knot = e3.c._knot = true; knots.push(k); break;
-        }
-      }
-      if (knots.length) did.push(`${knots.length} baked loop blob(s) read as roundabouts`);
       // Base chains bake VERBATIM — the duplicate fold must NEVER run on the base
       // network. What reads as a "braided twin" is often real: a dual carriageway
       // drawn as two one-way lines, or two close parallel streets. Folding deletes
       // or displaces drawn roads. How they LOOK is handled without touching the
       // drawing: tremor smoothing, junction caps and width blending.
       for (const c of bchains) {
-        if (c._knot) continue;
         const w = c.ids.map((id) => bpts[id]);
         strokes.push({ w, oneway: c.ow, dirt: c.dirt, base: true });
         for (let x = 1; x < w.length; x++) accAdd(w[x - 1], w[x]);
@@ -531,14 +483,13 @@ export async function applyTrace(t, opts = {}) {
     }
     if (ringsMade) did.push(`roundabouts -> ${ringsMade} ring(s) built (${roundabouts.length} on map)`);
     dbgStrokes('after base+rings');
-    // ---- fold duplicates & keep the novel spans of every remaining stroke ----
+    // Freehand strokes bake AS DRAWN — no duplicate folding. The map's owner draws
+    // dual carriageways as close one-way pairs and parallel streets deliberately;
+    // any automatic "twin" folding eventually deletes or displaces real roads.
     for (const road of rest) {
-      const { spans, folded, ends } = foldSpans(road.w);
-      if (folded) dupDropped++;
-      for (const sp of spans) { strokes.push({ w: sp, oneway: road.oneway, dirt: road.dirt }); for (let x = 1; x < sp.length; x++) accAdd(sp[x - 1], sp[x]); }
-      if (ends) spliceEnds.push(...ends);
+      strokes.push({ w: road.w, oneway: road.oneway, dirt: road.dirt });
+      for (let x = 1; x < road.w.length; x++) accAdd(road.w[x - 1], road.w[x]);
     }
-    if (dupDropped) did.push(`folded ${dupDropped} re-traced stroke(s) into the roads they duplicate`);
     const ringNodes = new Map();   // roundabout index -> node ids of its synthesized ring
     for (const road of strokes) {
       // simplify each stroke (keep corners/curves, drop oversampling), then weld it

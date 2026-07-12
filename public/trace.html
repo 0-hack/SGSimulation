@@ -125,20 +125,22 @@ let game = { roads: [], mainland: [], reservoirs: [], railway: [], sands: [], ai
 // Save rewrites that layer (with the survivors) even if nothing new was drawn in it.
 let overlayDirty = {};
 let active = 'roads', roadType = 'road', freehand = true, mode = 'draw';   // roadType: road | single | dirt
-let vis = {}; KEYS.forEach(k => vis[k] = true); vis.guide = true;
+let vis = {}; KEYS.forEach(k => vis[k] = true); vis.guide = true; vis.joins = true;
 let opacity = 0.55, brush = 16, bType = 'terminal', bRot = 0, bHgt = 1.0;
 let view = { zoom: 1, offX: 0, offY: 0, unit: 1000 };
 let bg = { offX: 0, offY: 0, scaleX: 1, scaleY: 1 };
 let cur = null, curItem = null, resumable = null, history = [], redoStack = [], rectStart = null, rectNow = null;
 let sel = null, act = null, grab = null;
+let segGrid = null, joinCache = [];   // road-join spatial index + cached join points
 
 for (const k of KEYS) {
   const b = document.createElement('button'); b.className = 'lay' + (k === 'roads' ? ' on' : ''); b.style.setProperty('--c', LAYERS[k].c);
   b.textContent = LAYERS[k].name; b.onclick = () => setLayer(k); b.id = 'L-' + k; $('layers').appendChild(b);
 }
-for (const k of [...KEYS, 'guide']) {
-  const b = document.createElement('button'); b.className = 'vis on'; b.style.setProperty('--c', k === 'guide' ? '#ffd23f' : LAYERS[k].c);
-  b.textContent = k === 'guide' ? 'Guide' : LAYERS[k].name.slice(0, 4); b.id = 'v-' + k;
+for (const k of [...KEYS, 'guide', 'joins']) {
+  const b = document.createElement('button'); b.className = 'vis on'; b.style.setProperty('--c', k === 'guide' ? '#ffd23f' : k === 'joins' ? '#39ff14' : LAYERS[k].c);
+  b.textContent = k === 'guide' ? 'Guide' : k === 'joins' ? 'Joins' : LAYERS[k].name.slice(0, 4); b.id = 'v-' + k;
+  if (k === 'joins') b.title = 'Show a green ring wherever a road you draw meets another road — the junction the game will connect.';
   b.onclick = () => { vis[k] = !vis[k]; b.classList.toggle('on', vis[k]); draw(); }; $('vis').appendChild(b);
 }
 const RECT = k => LAYERS[k].kind === 'rect';
@@ -150,11 +152,11 @@ function applyLoaded(d) { if (d.bg) bg = d.bg; const nd = blank();
   nd.roads = (d.roads || []).map(r => Array.isArray(r) ? { pts: r, oneway: false, dirt: false } : { pts: r.pts, oneway: !!r.oneway, dirt: !!r.dirt, base: !!r.base });
   nd.mainland = (d.mainland || d.coast || []).concat(d.islands || []); // old Islands folded into Coast
   nd.reservoirs = d.reservoirs || d.resv || []; nd.railway = d.railway || []; nd.sands = d.sands || [];
-  nd.airport = d.airport || []; nd.bulldoze = d.bulldoze || []; data = nd; }
+  nd.airport = d.airport || []; nd.bulldoze = d.bulldoze || []; data = nd; recomputeJoins(); }
 
 function snapshot() { history.push(JSON.stringify(data)); if (history.length > 120) history.shift(); redoStack = []; }
-function undo() { if (history.length) { redoStack.push(JSON.stringify(data)); data = JSON.parse(history.pop()); cur = null; curItem = null; rectStart = null; sel = null; draw(); updateStat(); } }
-function redo() { if (redoStack.length) { history.push(JSON.stringify(data)); data = JSON.parse(redoStack.pop()); cur = null; curItem = null; rectStart = null; sel = null; draw(); updateStat(); } }
+function undo() { if (history.length) { redoStack.push(JSON.stringify(data)); data = JSON.parse(history.pop()); cur = null; curItem = null; rectStart = null; sel = null; recomputeJoins(); draw(); updateStat(); } }
+function redo() { if (redoStack.length) { history.push(JSON.stringify(data)); data = JSON.parse(redoStack.pop()); cur = null; curItem = null; rectStart = null; sel = null; recomputeJoins(); draw(); updateStat(); } }
 function resize() { cv.width = innerWidth; cv.height = innerHeight; draw(); }
 addEventListener('resize', resize);
 
@@ -230,6 +232,9 @@ function draw() {
     if (active === 'roads') st = roadStyle(curItem || { oneway: roadType === 'single', dirt: roadType === 'dirt' }, true);
     else st = { c: LAYERS[active].c, w: 2.6 };
     ctx.lineWidth = st.w; ctx.strokeStyle = st.c; ctx.globalAlpha = 0.9; strokePoly(cur, RECT(active)); dots(cur); ctx.globalAlpha = 1; }
+  // green rings at road junctions: cached (committed drawn roads) + live (current stroke)
+  if (vis.joins) { drawJoins(joinCache);
+    if (cur && active === 'roads' && cur.length >= 2 && segGrid) drawJoins(dedupeJoins(joinsForRoad(cur, 'cur'))); }
   if (rectStart && rectNow) drawRect(rectToBldg(rectStart, rectNow), LAYERS[active].c + '99');
   if (mode === 'erase' && lastPt) { ctx.strokeStyle = '#e2503b'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(lastPt.sx, lastPt.sy, brush, 0, 7); ctx.stroke(); }
 }
@@ -261,6 +266,7 @@ function finishCur() {
   if (RECT(active)) { if (cur.length >= 3) { const b = fitRect(cur); if (b) { data[active].push(b); sel = { layer: active, idx: data[active].length - 1 }; syncToolbar(b); } } }
   else if (cur.length >= 2) commitLine();
   cur = null; curItem = null;
+  recomputeJoins();
 }
 // try to continue the most-recently-drawn line by clicking near its end
 function tryResume(g) {
@@ -277,6 +283,7 @@ function updateStat() {
   const gameN = KEYS.reduce((t, k) => t + ((game[k] && game[k].length) || 0), 0);
   if (gameN) s += ` · <span style="color:#8ab"><b>${gameN}</b> in&nbsp;game</span>`;
   if (data.bulldoze.length) s += ` · <span style="color:#ff7a7a"><b>${data.bulldoze.length}</b> to&nbsp;delete</span>`;
+  if (joinCache.length) s += ` · <span style="color:#39ff14"><b>${joinCache.length}</b> join${joinCache.length === 1 ? '' : 's'}</span>`;
   $('stat').innerHTML = s;
   autosave();
 }
@@ -307,7 +314,7 @@ function loadGameData() {
       _sandsCustom: (cu.CUSTOM_SANDS || []).filter((p) => p && p.length >= 3),
     };
     overlayDirty = {}; // fresh overlay — drop any pending erase flags
-    draw(); updateStat();
+    recomputeJoins(); draw(); updateStat();
   }).catch(() => {
     // fallback: the read-only endpoint
     fetch('/api/trace/current').then((r) => r.json()).then((j) => {
@@ -319,7 +326,7 @@ function loadGameData() {
         sands: (j.sands || []).filter((p) => p && p.length >= 2),
         airport: (j.airport || []).map((r) => (r.pts || r)).filter((p) => p && p.length >= 2),
       };
-      draw(); updateStat();
+      recomputeJoins(); draw(); updateStat();
     }).catch(() => {});
   });
 }
@@ -405,6 +412,58 @@ cv.addEventListener('wheel', e => { e.preventDefault(); const p = evPos(e), g = 
   view.offX = p.sx - g[0] * view.unit * view.zoom; view.offY = p.sy - (1 - g[1]) * view.unit * view.zoom; draw(); }, { passive: false });
 // distance from point c to segment a-b
 function ptSegDist(c, a, b) { const dx = b[0] - a[0], dy = b[1] - a[1], l2 = dx * dx + dy * dy || 1e-9; let t = ((c[0] - a[0]) * dx + (c[1] - a[1]) * dy) / l2; t = Math.max(0, Math.min(1, t)); return Math.hypot(c[0] - (a[0] + t * dx), c[1] - (a[1] + t * dy)); }
+
+// ---- Road JOINS -----------------------------------------------------------------
+// A "join" is where a road you draw MEETS another road: an endpoint landing on
+// another road (T / end-to-end) or a mid-span crossing (X). Each is drawn as a green
+// ring so you can confirm the two roads are connected, and every join is written into
+// the exported JSON — so the map build knows they link and vehicles drive across them.
+// Applies to all three road kinds (2-way, single, dirt); a join is type-agnostic.
+const JOIN_TOL = 1.2 / 1600;   // normalised units (1 = whole map = 1600 world units);
+                               // ~matches how far the game welds a junction on Apply
+const JCELL = 0.01;
+const jkey = (x, y) => Math.floor(x / JCELL) + ',' + Math.floor(y / JCELL);
+function roadsAll() { const out = [];
+  (game.roads || []).forEach((a, i) => { if (a && a.length >= 2) out.push({ o: 'g' + i, pts: a }); });
+  (data.roads || []).forEach((r, i) => { const p = r.pts || r; if (p && p.length >= 2) out.push({ o: 'd' + i, pts: p }); });
+  return out; }
+function buildSegGrid() { segGrid = new Map();
+  for (const rd of roadsAll()) { const p = rd.pts;
+    for (let i = 1; i < p.length; i++) { const a = p[i - 1], b = p[i];
+      const n = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / JCELL)), seen = new Set();
+      for (let s = 0; s <= n; s++) { const t = s / n, key = jkey(a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t);
+        if (!seen.has(key)) { seen.add(key); (segGrid.get(key) || segGrid.set(key, []).get(key)).push({ o: rd.o, a, b }); } } } } }
+function nearbySegs(x, y) { const out = [], cx = Math.floor(x / JCELL), cy = Math.floor(y / JCELL);
+  for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) { const arr = segGrid && segGrid.get((cx + dx) + ',' + (cy + dy)); if (arr) for (const s of arr) out.push(s); }
+  return out; }
+function segInt(p1, p2, p3, p4) {   // proper segment intersection point, or null
+  const d1x = p2[0] - p1[0], d1y = p2[1] - p1[1], d2x = p4[0] - p3[0], d2y = p4[1] - p3[1];
+  const den = d1x * d2y - d1y * d2x; if (Math.abs(den) < 1e-12) return null;
+  const t = ((p3[0] - p1[0]) * d2y - (p3[1] - p1[1]) * d2x) / den;
+  const u = ((p3[0] - p1[0]) * d1y - (p3[1] - p1[1]) * d1x) / den;
+  if (t < 0 || t > 1 || u < 0 || u > 1) return null;
+  return [p1[0] + t * d1x, p1[1] + t * d1y]; }
+// join points where road `pts` (owner `o`) meets any OTHER road in the seg grid
+function joinsForRoad(pts, o) { const res = [];
+  if (!pts || pts.length < 2) return res;
+  for (const idx of [0, pts.length - 1]) { const c = pts[idx];   // endpoint on another road
+    for (const s of nearbySegs(c[0], c[1])) { if (s.o === o) continue;
+      if (ptSegDist(c, s.a, s.b) <= JOIN_TOL) { res.push([c[0], c[1]]); break; } } }
+  for (let i = 1; i < pts.length; i++) { const a = pts[i - 1], b = pts[i];   // crossings
+    for (const s of nearbySegs((a[0] + b[0]) / 2, (a[1] + b[1]) / 2)) { if (s.o === o) continue; const X = segInt(a, b, s.a, s.b); if (X) res.push(X); } }
+  return res; }
+function dedupeJoins(list) { const seen = new Set(), out = [], R = 1.0 / 1600;
+  for (const p of list) { const key = Math.round(p[0] / R) + ',' + Math.round(p[1] / R); if (!seen.has(key)) { seen.add(key); out.push(p); } }
+  return out; }
+// recompute joins that INVOLVE a freshly-drawn road (data.roads) vs the whole network
+function recomputeJoins() { buildSegGrid(); const all = [];
+  (data.roads || []).forEach((r, i) => { for (const p of joinsForRoad(r.pts || r, 'd' + i)) all.push(p); });
+  joinCache = dedupeJoins(all); }
+function drawJoins(list) {
+  for (const p of list) { const [x, y] = toScreen(p[0], p[1]);
+    ctx.beginPath(); ctx.arc(x, y, 5.5, 0, 7); ctx.fillStyle = 'rgba(57,255,20,0.28)'; ctx.fill();
+    ctx.lineWidth = 2; ctx.strokeStyle = '#39ff14'; ctx.stroke();
+    ctx.beginPath(); ctx.arc(x, y, 1.7, 0, 7); ctx.fillStyle = '#08340a'; ctx.fill(); } }
 // distance from point gp to a rotated rect b (0 if inside)
 function rectDist(b, gp) { const r = (b.rot || 0) * PI / 180, c = Math.cos(-r), s = Math.sin(-r), ox = gp[0] - b.cx, oy = gp[1] - b.cy; const lx = Math.max(Math.abs(ox * c - oy * s) - b.w / 2, 0), ly = Math.max(Math.abs(ox * s + oy * c) - b.h / 2, 0); return Math.hypot(lx, ly); }
 // cut the portions of a polyline that fall within the brush circle (segment-aware)
@@ -464,7 +523,7 @@ function eraseAt(p) {
     if (r.cut) { game[k] = r.out; overlayDirty[k] = true;
       if (k === 'sands') game._sandsCustom = splitErase(game._sandsCustom || []).out; } // sands save back via CUSTOM_SANDS
   }
-  sel = null; resumable = null; draw(); updateStat();
+  sel = null; resumable = null; recomputeJoins(); draw(); updateStat();
 }
 addEventListener('keydown', e => { keys[e.key] = true; const tag = (e.target.tagName || '');
   if (tag === 'INPUT' || tag === 'SELECT') return;
@@ -524,7 +583,11 @@ function allMapRoads() {
 // session — so a saved coast/reservoir is always in the exported file. Save-to-map
 // passes false so a road-only save doesn't needlessly rewrite the coast each time.
 function fullTrace(includeAll) {
+  recomputeJoins();   // fresh join list for the export/apply snapshot
   const t = { version: 3, bg, roads: allMapRoads(), bulldoze: [], full: true };
+  // explicit road junctions the player made (normalised points): the map build welds
+  // them so vehicles cross, and it documents which strokes are meant to connect.
+  if (joinCache.length) t.joins = joinCache.map(p => [+p[0].toFixed(5), +p[1].toFixed(5)]);
   const existing = { mainland: game.mainland, reservoirs: game.reservoirs, railway: game.railway, sands: game._sandsCustom, airport: game.airport };
   for (const k of ['mainland', 'reservoirs', 'railway', 'sands', 'airport']) {
     // include a layer you DREW in, ERASED from (overlayDirty), or — for Export — any
@@ -549,7 +612,7 @@ $('load').onchange = e => { const f = e.target.files[0]; if (!f) return; const r
   rd.onload = () => { try { applyLoaded(JSON.parse(rd.result));
     game = { roads: [], mainland: [], reservoirs: [], railway: [], sands: [], airport: [], _sandsCustom: [] };
     overlayDirty = {};
-    sel = null; resumable = null; snapshot(); draw(); updateStat(); toast('Loaded — the imported map replaces the default'); } catch (err) { toast('Bad file: ' + err.message, true); } }; rd.readAsText(f); };
+    sel = null; resumable = null; recomputeJoins(); snapshot(); draw(); updateStat(); toast('Loaded — the imported map replaces the default'); } catch (err) { toast('Bad file: ' + err.message, true); } }; rd.readAsText(f); };
 // Start a fresh working session: wipe the in-browser autosave so the previously
 // traced lines stop showing on top of the game overlay. The game's own roads
 // (the faded reference) are untouched; export first if you want a copy.
@@ -624,6 +687,7 @@ fetch('/trace-data.json').then(r => r.json()).then(d => {
     '<b>Pause anytime</b> with <b>Esc</b> — your trace is kept &amp; autosaved; click near a line\'s end to continue. <b>Undo</b>/<b>Redo</b> (Ctrl+Z / Ctrl+Y). <b>Erase</b> clears anything inside the brush across all <b>visible</b> layers (hide a layer to protect it; the <b>brush</b> slider sets the size). <b>Coast</b> traces mainland AND islands.<br>' +
     '<b>Road type</b> (the drop-down, for new roads): <b>Road · 2-way</b> = standard two-lane road; <b><span style="color:' + SINGLE_COLOR + '">Single lane</span></b> = a narrow lane drawn thinner (one car at a time, both directions — no arrows); <b><span style="color:' + DIRT_COLOR + '">Dirt track</span></b> = a brown off-track / unpaved road.<br>' +
     '<b>What\'s already in the game</b> shows for every <b>show</b> filter (roads, coast, reservoirs, railway, sands, airport) as a faded line in that layer\'s colour — trace/edit on top. <b>Delete a game road:</b> show <span style="color:#37d0ff">Roads</span>, switch to <b>Erase</b>, scrub over it, then <b>🎮 Add to game</b>. <b>Airport ✈</b> = runway centre-line (plane take-off/landing, not a car road).<br>' +
+    '<b><span style="color:#39ff14">Joins</span>:</b> when a road you draw touches another road — end-to-end, a T, or a crossing — a <span style="color:#39ff14">green ring</span> marks the junction (works for 2-way, single &amp; dirt). A ring means the game will <b>connect</b> the two so vehicles drive across; no ring means they miss each other — nudge the ends together. Toggle with <b>Joins</b> in <b>show</b>.<br>' +
     '<b>Save</b> = keep state in this browser (also autosaves) · <b>Export</b> = download JSON · <b>Load</b> = import a trace JSON (replaces the map view) · <b>🖼 Map image</b> = upload a different reference map to trace over · <b>🆕 New</b> = clear the saved session (or open <b>trace.html?fresh</b>). Dashed <span style="color:#ffd23f">yellow</span> = current game coast (trace the real one in <span style="color:#7CFC8A">green</span>).'; };
   bgImg.onload = boot; bgImg.onerror = () => { $('hint').textContent = 'Could not load /trace-map.jpg'; boot(); };
 }).catch(err => { $('hint').textContent = 'Could not load /trace-data.json — ' + err.message; });

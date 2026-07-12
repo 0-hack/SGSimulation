@@ -459,11 +459,11 @@ function dedupeJoins(list) { const seen = new Set(), out = [], R = 1.0 / 1600;
 function recomputeJoins() { buildSegGrid(); const all = [];
   (data.roads || []).forEach((r, i) => { for (const p of joinsForRoad(r.pts || r, 'd' + i)) all.push(p); });
   joinCache = dedupeJoins(all); }
-function drawJoins(list) {
-  for (const p of list) { const [x, y] = toScreen(p[0], p[1]);
-    ctx.beginPath(); ctx.arc(x, y, 5.5, 0, 7); ctx.fillStyle = 'rgba(57,255,20,0.28)'; ctx.fill();
-    ctx.lineWidth = 2; ctx.strokeStyle = '#39ff14'; ctx.stroke();
-    ctx.beginPath(); ctx.arc(x, y, 1.7, 0, 7); ctx.fillStyle = '#08340a'; ctx.fill(); } }
+function drawJoins(list) {   // hollow ring so the road stays visible through the join
+  ctx.save(); ctx.lineWidth = 1.8; ctx.strokeStyle = '#39ff14';
+  for (const p of list) { const [x, y] = toScreen(p[0], p[1]); ctx.beginPath(); ctx.arc(x, y, 5, 0, 7); ctx.stroke(); }
+  ctx.restore(); }
+function toggleJoins() { vis.joins = !vis.joins; const jb = $('v-joins'); if (jb) jb.classList.toggle('on', vis.joins); draw(); }
 // distance from point gp to a rotated rect b (0 if inside)
 function rectDist(b, gp) { const r = (b.rot || 0) * PI / 180, c = Math.cos(-r), s = Math.sin(-r), ox = gp[0] - b.cx, oy = gp[1] - b.cy; const lx = Math.max(Math.abs(ox * c - oy * s) - b.w / 2, 0), ly = Math.max(Math.abs(ox * s + oy * c) - b.h / 2, 0); return Math.hypot(lx, ly); }
 // cut the portions of a polyline that fall within the brush circle (segment-aware)
@@ -532,7 +532,8 @@ addEventListener('keydown', e => { keys[e.key] = true; const tag = (e.target.tag
   if ((e.key === 'Delete' || e.key === 'Backspace') && sel && data[sel.layer][sel.idx]) { snapshot(); data[sel.layer].splice(sel.idx, 1); sel = null; draw(); updateStat(); }
   if (e.key === 'Enter') { finishCur(); draw(); updateStat(); }
   if (e.key === 'Escape') { finishCur(); draw(); updateStat(); toast('Paused — click near the end to continue'); }   // commit + pause, do NOT discard
-  if (e.key === 'd') setMode('draw'); if (e.key === 'e') setMode('erase'); if (e.key === 'p') setMode('pan'); });
+  if (e.key === 'd') setMode('draw'); if (e.key === 'e') setMode('erase'); if (e.key === 'p') setMode('pan');
+  if (e.key === 'j' || e.key === 'J') toggleJoins(); });   // quick hide/unhide of the join rings
 addEventListener('keyup', e => { keys[e.key] = false; });
 
 function setMode(m) { finishCur(); mode = m; cv.style.cursor = m === 'pan' ? 'grab' : (m === 'erase' ? 'cell' : 'crosshair');
@@ -687,7 +688,7 @@ fetch('/trace-data.json').then(r => r.json()).then(d => {
     '<b>Pause anytime</b> with <b>Esc</b> — your trace is kept &amp; autosaved; click near a line\'s end to continue. <b>Undo</b>/<b>Redo</b> (Ctrl+Z / Ctrl+Y). <b>Erase</b> clears anything inside the brush across all <b>visible</b> layers (hide a layer to protect it; the <b>brush</b> slider sets the size). <b>Coast</b> traces mainland AND islands.<br>' +
     '<b>Road type</b> (the drop-down, for new roads): <b>Road · 2-way</b> = standard two-lane road; <b><span style="color:' + SINGLE_COLOR + '">Single lane</span></b> = a narrow lane drawn thinner (one car at a time, both directions — no arrows); <b><span style="color:' + DIRT_COLOR + '">Dirt track</span></b> = a brown off-track / unpaved road.<br>' +
     '<b>What\'s already in the game</b> shows for every <b>show</b> filter (roads, coast, reservoirs, railway, sands, airport) as a faded line in that layer\'s colour — trace/edit on top. <b>Delete a game road:</b> show <span style="color:#37d0ff">Roads</span>, switch to <b>Erase</b>, scrub over it, then <b>🎮 Add to game</b>. <b>Airport ✈</b> = runway centre-line (plane take-off/landing, not a car road).<br>' +
-    '<b><span style="color:#39ff14">Joins</span>:</b> when a road you draw touches another road — end-to-end, a T, or a crossing — a <span style="color:#39ff14">green ring</span> marks the junction (works for 2-way, single &amp; dirt). A ring means the game will <b>connect</b> the two so vehicles drive across; no ring means they miss each other — nudge the ends together. Toggle with <b>Joins</b> in <b>show</b>.<br>' +
+    '<b><span style="color:#39ff14">Joins</span>:</b> when a road you draw touches another road — end-to-end, a T, or a crossing — a <span style="color:#39ff14">green ring</span> marks the junction (works for 2-way, single &amp; dirt). A ring means the game will <b>connect</b> the two so vehicles drive across; no ring means they miss each other — nudge the ends together. <b>Hide/unhide</b> the rings with the <b>Joins</b> button in <b>show</b> or the <b>J</b> key, so they never block your view of the road.<br>' +
     '<b>Save</b> = keep state in this browser (also autosaves) · <b>Export</b> = download JSON · <b>Load</b> = import a trace JSON (replaces the map view) · <b>🖼 Map image</b> = upload a different reference map to trace over · <b>🆕 New</b> = clear the saved session (or open <b>trace.html?fresh</b>). Dashed <span style="color:#ffd23f">yellow</span> = current game coast (trace the real one in <span style="color:#7CFC8A">green</span>).'; };
   bgImg.onload = boot; bgImg.onerror = () => { $('hint').textContent = 'Could not load /trace-map.jpg'; boot(); };
 }).catch(err => { $('hint').textContent = 'Could not load /trace-data.json — ' + err.message; });

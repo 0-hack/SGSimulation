@@ -5173,35 +5173,162 @@ export class Scene3D {
     }
     return false;
   }
-  // Dress a historic lane's small river crossing as a little bridge (like the old
-  // Singapore River bridges): a low parapet wall down each kerb of the raised span,
-  // and a pair of short stone piers dropping into the water at the deepest point.
-  _riverBridgeKit(g, pts, hw) {
-    // the span that sits over the VISIBLE water (tight — matches the blue, so the parapet
-    // doesn't sprawl onto the banks). A tiny abutment overhang keeps it looking anchored.
+  // The span of a lane that sits over the VISIBLE river water (bank-to-bank + a small
+  // abutment), collected during the road pass so a distinctive bridge can be built there.
+  _wetSpan(pts) {
     const over = pts.map((p) => this._overWater(p.x, p.z, 0.12));
-    let first = over.indexOf(true); if (first < 0) return;
-    let last = over.lastIndexOf(true);
-    const railMat = toon(0xcac2b0), pierMat = toon(0x8a8f96);
-    const RAIL_OFF = hw + 0.13;                                  // low parapet just outside the kerb
-    for (let i = Math.max(1, first); i <= last; i++) {
-      const a = pts[i - 1], b = pts[i];
-      let tx = b.x - a.x, tz = b.z - a.z; const L = Math.hypot(tx, tz); if (L < 1e-3) continue; tx /= L; tz /= L;
-      const nx = -tz, nz = tx, ang = Math.atan2(tx, tz);
-      const cx = (a.x + b.x) / 2, cy = (a.y + b.y) / 2, cz = (a.z + b.z) / 2;
-      for (const sgn of [-1, 1]) {
-        const rail = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.3, L + 0.06), railMat);
-        rail.position.set(cx + nx * RAIL_OFF * sgn, cy + 0.13, cz + nz * RAIL_OFF * sgn);
-        rail.rotation.y = ang; rail.castShadow = true; g.add(rail);
+    let f = over.indexOf(true); if (f < 0) return null;
+    let l = over.lastIndexOf(true);
+    f = Math.max(0, f - 1); l = Math.min(pts.length - 1, l + 1);
+    return pts.slice(f, l + 1);
+  }
+  // A thin structural strut/cable between two 3-D points — the shared building block for
+  // the river bridges' arches, cables, hangers and truss members.
+  _strut(g, a, b, r, mat) {
+    const dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z, len = Math.hypot(dx, dy, dz) || 1e-3;
+    const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, len, 6), mat);
+    m.position.set((a.x + b.x) / 2, (a.y + b.y) / 2, (a.z + b.z) / 2);
+    m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(dx / len, dy / len, dz / len));
+    m.castShadow = true; g.add(m); return m;
+  }
+  // a box centred at (cx,cy,cz), oriented along the bridge axis (local Z = along the span)
+  _bdeck(g, f, cx, cy, cz, across, up, along, mat) {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(across, up, along), mat);
+    m.position.set(cx, cy, cz); m.rotation.y = f.ang; m.castShadow = true; g.add(m); return m;
+  }
+  // a point on the bridge frame: `along` from centre down the span, `side` across, `up` above deck
+  _bpt(f, along, side, up) {
+    return { x: f.mid.x + f.ax * along + f.px * side, y: f.deckY + up, z: f.mid.z + f.az * along + f.pz * side };
+  }
+  // shared body: a deck slab tucked under the asphalt, and a railing down BOTH kerbs
+  _bridgeDeck(g, f, deckMat, railMat, railH = 0.32) {
+    this._bdeck(g, f, f.mid.x, f.deckY - 0.11, f.mid.z, 2 * f.W + 0.12, 0.22, f.L + 0.5, deckMat);
+    for (const s of [-1, 1]) {
+      const c = this._bpt(f, 0, (f.W + 0.05) * s, railH / 2 + 0.02);
+      this._bdeck(g, f, c.x, c.y, c.z, 0.09, railH, f.L + 0.5, railMat);
+    }
+  }
+  // Collect the crossings found in the road pass, de-duplicate lanes sharing a site into
+  // one bridge, and place the real Singapore River bridges in their true order upstream
+  // from the mouth: Anderson (steel arches) → Cavenagh (suspension) → Elgin & Coleman
+  // (masonry arches) → Read & Ord (steel girder/truss).
+  _buildRiverBridges(list) {
+    const sites = [];
+    for (const b of list) {
+      if (!b || !b.pts || b.pts.length < 2) continue;
+      const mid = b.pts[b.pts.length >> 1];
+      const host = sites.find((s) => Math.hypot(s.mid.x - mid.x, s.mid.z - mid.z) < 9);
+      if (host) { if (b.pts.length > host.pts.length) { host.pts = b.pts; host.hw = b.hw; host.mid = mid; } }
+      else sites.push({ pts: b.pts, hw: b.hw, mid });
+    }
+    const mouth = { x: -18, z: 174 };
+    sites.sort((a, b) => Math.hypot(a.mid.x - mouth.x, a.mid.z - mouth.z) - Math.hypot(b.mid.x - mouth.x, b.mid.z - mouth.z));
+    const builders = [this._bridgeAnderson, this._bridgeCavenagh, this._bridgeElgin, this._bridgeColeman, this._bridgeRead, this._bridgeOrd];
+    sites.forEach((s, i) => {
+      const p = s.pts, A = p[0], B = p[p.length - 1];
+      let ax = B.x - A.x, az = B.z - A.z; const L = Math.hypot(ax, az) || 1; ax /= L; az /= L;
+      const f = { ax, az, px: -az, pz: ax, L, W: s.hw + 0.28, ang: Math.atan2(ax, az),
+        deckY: Math.max(...p.map((q) => q.y)), mid: { x: (A.x + B.x) / 2, z: (A.z + B.z) / 2 } };
+      builders[Math.min(i, builders.length - 1)].call(this, this.roadGroup, f);
+    });
+  }
+  // ANDERSON BRIDGE — three shallow steel arches springing above the roadway.
+  _bridgeAnderson(g, f) {
+    const steel = toon(0x8f979f);
+    this._bridgeDeck(g, f, toon(0x9aa0a6), steel, 0.3);
+    const RISE = Math.min(1.4, f.L * 0.3), SEG = 8;
+    for (const s of [-1, 1]) {
+      let prev = null;
+      for (let k = 0; k <= SEG; k++) {
+        const t = k / SEG, along = -f.L / 2 + t * f.L, up = RISE * Math.sin(Math.PI * t);
+        const cur = this._bpt(f, along, (f.W - 0.02) * s, up + 0.12);
+        if (prev) this._strut(g, prev, cur, 0.06, steel);
+        if (k % 2 === 0 && up > 0.2) this._strut(g, cur, this._bpt(f, along, (f.W - 0.02) * s, 0.05), 0.03, steel);
+        prev = cur;
       }
     }
-    const mid = (first + last) >> 1, p = pts[mid], nb = pts[Math.min(pts.length - 1, mid + 1)];  // one slim pier pair mid-span
-    let tx = nb.x - p.x, tz = nb.z - p.z; const L = Math.hypot(tx, tz) || 1; tx /= L; tz /= L;
-    const nx = -tz, nz = tx, h = Math.max(0.7, p.y - SEA_Y - 0.15);
-    for (const sgn of [-1, 1]) {
-      const pier = new THREE.Mesh(new THREE.BoxGeometry(0.35, h, 0.35), pierMat);
-      pier.position.set(p.x + nx * (hw + 0.02) * sgn, SEA_Y + h / 2, p.z + nz * (hw + 0.02) * sgn);
-      pier.castShadow = true; g.add(pier);
+    this._strut(g, this._bpt(f, 0, -(f.W - 0.02), RISE + 0.12), this._bpt(f, 0, (f.W - 0.02), RISE + 0.12), 0.04, steel);
+  }
+  // CAVENAGH BRIDGE — suspension: four square end towers, draped cables, vertical hangers.
+  _bridgeCavenagh(g, f) {
+    const cream = toon(0xd8d2c4), cable = toon(0x5b5f66);
+    this._bridgeDeck(g, f, toon(0xcfc9bb), cream, 0.26);
+    const TOW = 2.1, endA = f.L / 2 * 0.8;
+    for (const s of [-1, 1]) for (const e of [-1, 1]) {
+      const base = this._bpt(f, endA * e, (f.W + 0.05) * s, 0);
+      this._bdeck(g, f, base.x, f.deckY + TOW / 2, base.z, 0.16, TOW, 0.16, cream);
+    }
+    for (const s of [-1, 1]) {
+      let prev = this._bpt(f, -endA, (f.W + 0.05) * s, TOW - 0.1);
+      for (let k = 1; k <= 8; k++) {
+        const u = k / 8, along = -endA + u * (2 * endA), sag = -0.55 * Math.sin(Math.PI * u);
+        const cur = this._bpt(f, along, (f.W + 0.05) * s, TOW - 0.1 + sag);
+        this._strut(g, prev, cur, 0.035, cable);
+        if (k < 8) this._strut(g, cur, this._bpt(f, along, (f.W + 0.05) * s, 0.06), 0.02, cable);
+        prev = cur;
+      }
+    }
+  }
+  // ELGIN BRIDGE — a single graceful arch under the deck, solid balustrade, corner lamps.
+  _bridgeElgin(g, f) {
+    const stone = toon(0xdedacf);
+    this._bridgeDeck(g, f, stone, stone, 0.3);
+    const DIP = Math.min(1.3, f.L * 0.3), SEG = 8;
+    for (const s of [-1, 1]) {
+      let prev = null;
+      for (let k = 0; k <= SEG; k++) {
+        const t = k / SEG, along = -f.L / 2 + t * f.L, down = -DIP * Math.sin(Math.PI * t);
+        const cur = this._bpt(f, along, (f.W - 0.05) * s, down - 0.13);
+        if (prev) this._strut(g, prev, cur, 0.09, stone);
+        prev = cur;
+      }
+    }
+    for (const s of [-1, 1]) for (const e of [-1, 1]) {
+      const c = this._bpt(f, (f.L / 2 - 0.3) * e, (f.W + 0.02) * s, 0);
+      this._bdeck(g, f, c.x, f.deckY + 0.5, c.z, 0.07, 1.0, 0.07, toon(0x3a3f45));
+      const ball = new THREE.Mesh(new THREE.SphereGeometry(0.13, 8, 6), toon(0xfbeec0));
+      ball.position.set(c.x, f.deckY + 1.06, c.z); ball.castShadow = true; g.add(ball);
+    }
+  }
+  // COLEMAN BRIDGE — three semicircular masonry arches under the deck.
+  _bridgeColeman(g, f) {
+    const stone = toon(0xd7cfc0);
+    this._bridgeDeck(g, f, stone, stone, 0.3);
+    const N3 = 3, span = f.L / N3, DIP = Math.min(0.85, span * 0.45), SEG = 6;
+    for (const s of [-1, 1]) for (let a = 0; a < N3; a++) {
+      const c0 = -f.L / 2 + a * span; let prev = null;
+      for (let k = 0; k <= SEG; k++) {
+        const t = k / SEG, along = c0 + t * span, down = -DIP * Math.sin(Math.PI * t);
+        const cur = this._bpt(f, along, (f.W - 0.05) * s, down - 0.12);
+        if (prev) this._strut(g, prev, cur, 0.08, stone);
+        prev = cur;
+      }
+    }
+  }
+  // READ BRIDGE — a steel lattice (Warren) truss girder down each side.
+  _bridgeRead(g, f) {
+    const steel = toon(0x7f8890);
+    this._bridgeDeck(g, f, toon(0x8a9098), steel, 0.06);
+    const TH = 0.8, SEG = Math.max(3, Math.round(f.L / 2));
+    for (const s of [-1, 1]) {
+      for (let k = 0; k <= SEG; k++) {
+        const along = -f.L / 2 + (k / SEG) * f.L;
+        this._strut(g, this._bpt(f, along, f.W * s, 0.05), this._bpt(f, along, f.W * s, TH), 0.04, steel);
+        if (k < SEG) {
+          const along2 = -f.L / 2 + ((k + 1) / SEG) * f.L;
+          this._strut(g, this._bpt(f, along, f.W * s, TH), this._bpt(f, along2, f.W * s, TH), 0.04, steel);
+          this._strut(g, this._bpt(f, along, f.W * s, 0.05), this._bpt(f, along2, f.W * s, TH), 0.03, steel);
+        }
+      }
+    }
+  }
+  // ORD BRIDGE — a plain steel plate-girder deck (a solid beam down each side).
+  _bridgeOrd(g, f) {
+    const green = toon(0x5f7d6b);
+    this._bridgeDeck(g, f, toon(0x7a8288), green, 0.34);
+    for (const s of [-1, 1]) {
+      const c = this._bpt(f, 0, (f.W + 0.03) * s, 0.38);
+      this._bdeck(g, f, c.x, c.y, c.z, 0.1, 0.66, f.L + 0.2, green);
     }
   }
   // AUTO-BRIDGE: a road may never sit ON the KTM tracks or float across open water,
@@ -5452,6 +5579,7 @@ export class Scene3D {
       const pavedNode = new Set();
       for (const e of roads.edges) { if (!e.dirt) { pavedNode.add(e.a); pavedNode.add(e.b); } }
       const capAt = new Map();   // node id -> {x,y,z,hw}: junction cap position + widest paved road there
+      const bridgeSpans = [];    // river crossings collected here, built as distinctive bridges after the pass
       for (const { nodes, oneway, dirt } of this._tracedChains(roads)) {
         const raw = nodes.map((ni) => { const nd = roads.nodes[ni]; return nd && { x: nd.x, z: nd.z }; }).filter(Boolean);
         // resample to sub-cell spacing so the ribbon hugs the hillsides (and so a
@@ -5466,12 +5594,12 @@ export class Scene3D {
         const pts = bp.pts;
         if (dirt) {
           dirtRibbon(pts, HWD, pavedNode.has(nodes[0]), pavedNode.has(nodes[nodes.length - 1]));  // narrow kampong track, feathered into asphalt at junctions
-          if (bp.bridged) this._riverBridgeKit(this.roadGroup, pts, HWD);
+          if (bp.bridged) { const ws = this._wetSpan(pts); if (ws) bridgeSpans.push({ pts: ws, hw: HWD }); }
         } else {
           const hw = oneway ? HW1 : HW2;
           ribbonSmooth(road, pts, hw, 0.04);                     // paved (standard or single lane)
           if (!oneway) markLine(pts, 0, true, 0.05);             // two-way: a dashed centre line down the middle
-          if (bp.bridged) this._riverBridgeKit(this.roadGroup, pts, hw);   // small river bridge dressing
+          if (bp.bridged) { const ws = this._wetSpan(pts); if (ws) bridgeSpans.push({ pts: ws, hw }); }   // build a distinctive bridge here after the pass
           // remember where this chain ENDS and how wide it is — every chain end is a
           // junction (or a dead end / type change), and two ribbons butting there at
           // an angle leave a V-shaped notch. A cap disc below fills the wedge.
@@ -5481,6 +5609,7 @@ export class Scene3D {
           }
         }
       }
+      this._buildRiverBridges(bridgeSpans);   // distinctive Singapore River bridges over the collected crossings
       // JUNCTION CAPS: separately-drawn roads that touch must read as ONE piece of
       // road — a filled disc at each meeting point covers the seam between ribbons.
       for (const c of capAt.values()) {

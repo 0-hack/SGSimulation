@@ -5175,22 +5175,56 @@ export class Scene3D {
   }
   // The span of a lane that sits over the VISIBLE river water (bank-to-bank + a small
   // abutment), collected during the road pass so a distinctive bridge can be built there.
-  _wetSpan(pts) {
+  // Every GENUINE bank-to-bank river crossing in a lane. A bridge belongs only where the
+  // lane goes land → water → land AND its two bank-edges sit on OPPOSITE banks of the
+  // river — so a lane running ALONG the water, or merely grazing it, gets no bridge, and
+  // each crossing spans just its own channel (not from one crossing to a graze downstream).
+  _riverCrossings(pts0) {
+    // densify to ~1u so a thin channel is never jumped between two samples
+    const pts = [];
+    for (let i = 0; i < pts0.length - 1; i++) {
+      const a = pts0[i], b = pts0[i + 1], d = Math.hypot(b.x - a.x, b.z - a.z), n = Math.max(1, Math.ceil(d / 1.0));
+      for (let s = 0; s < n; s++) { const t = s / n; pts.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, z: a.z + (b.z - a.z) * t }); }
+    }
+    pts.push(pts0[pts0.length - 1]);
     const wet = pts.map((p) => this._overWater(p.x, p.z, 0.04));
-    let f = wet.indexOf(true); if (f < 0) return null;
-    let l = wet.lastIndexOf(true);
-    // interpolate the EXACT bank-to-bank water crossing so the bridge is only as long as
-    // the river is wide (not padded out onto the banks).
-    const edge = (i, j) => {
+    const edge = (i, j) => {   // interpolate the exact water boundary between pts[i] and pts[j]
       let lo = 0, hi = 1;
       for (let k = 0; k < 14; k++) { const m = (lo + hi) / 2, x = pts[i].x + (pts[j].x - pts[i].x) * m, z = pts[i].z + (pts[j].z - pts[i].z) * m;
         if (this._overWater(x, z, 0.04) === wet[i]) lo = m; else hi = m; }
       const t = (lo + hi) / 2;
       return { x: pts[i].x + (pts[j].x - pts[i].x) * t, y: pts[i].y + (pts[j].y - pts[i].y) * t, z: pts[i].z + (pts[j].z - pts[i].z) * t };
     };
-    const A = f > 0 ? edge(f - 1, f) : pts[f];
-    const B = l < pts.length - 1 ? edge(l, l + 1) : pts[l];
-    return [A, ...pts.slice(f, l + 1), B];
+    const out = [];
+    let i = 0;
+    while (i < pts.length) {
+      if (!wet[i]) { i++; continue; }
+      let j = i; while (j + 1 < pts.length && wet[j + 1]) j++;     // contiguous wet run [i..j]
+      if (i > 0 && j < pts.length - 1) {                           // dry land on BOTH sides
+        const A = edge(i - 1, i), B = edge(j + 1, j);
+        if (this._crossesRiver(A, B)) out.push([A, ...pts.slice(i, j + 1), B]);
+      }
+      i = j + 1;
+    }
+    return out;
+  }
+  // Do A and B (the two bank-edges) sit on OPPOSITE banks of the nearest river centreline?
+  _crossesRiver(A, B) {
+    const cell = (x, z) => ({ x: x / TILE + N / 2, y: N / 2 - z / TILE });
+    const mc = cell((A.x + B.x) / 2, (A.z + B.z) / 2);
+    let dir = null, bd = 1e9;
+    for (const br of riverBranches(N)) for (let k = 0; k < br.length - 1; k++) {
+      const a = br[k], b = br[k + 1], dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy || 1e-9;
+      let t = ((mc.x - a.x) * dx + (mc.y - a.y) * dy) / l2; t = t < 0 ? 0 : t > 1 ? 1 : t;
+      const px = a.x + t * dx, py = a.y + t * dy, d = Math.hypot(mc.x - px, mc.y - py);
+      if (d < bd) { bd = d; dir = { x: dx, y: dy }; }
+    }
+    if (!dir) return false;
+    const L = Math.hypot(dir.x, dir.y) || 1, rx = dir.x / L, ry = dir.y / L;   // river direction (cell space)
+    const ca = cell(A.x, A.z), cb = cell(B.x, B.z);
+    const sA = (ca.x - mc.x) * -ry + (ca.y - mc.y) * rx;                        // signed offset across the river
+    const sB = (cb.x - mc.x) * -ry + (cb.y - mc.y) * rx;
+    return sA * sB < 0;
   }
   // A thin structural strut/cable between two 3-D points — the shared building block for
   // the river bridges' arches, cables, hangers and truss members.
@@ -5608,12 +5642,12 @@ export class Scene3D {
         const pts = bp.pts;
         if (dirt) {
           dirtRibbon(pts, HWD, pavedNode.has(nodes[0]), pavedNode.has(nodes[nodes.length - 1]));  // narrow kampong track, feathered into asphalt at junctions
-          if (bp.bridged) { const ws = this._wetSpan(pts); if (ws) bridgeSpans.push({ pts: ws, hw: HWD }); }
+          if (bp.bridged) for (const c of this._riverCrossings(pts)) bridgeSpans.push({ pts: c, hw: HWD });
         } else {
           const hw = oneway ? HW1 : HW2;
           ribbonSmooth(road, pts, hw, 0.04);                     // paved (standard or single lane)
           if (!oneway) markLine(pts, 0, true, 0.05);             // two-way: a dashed centre line down the middle
-          if (bp.bridged) { const ws = this._wetSpan(pts); if (ws) bridgeSpans.push({ pts: ws, hw }); }   // build a distinctive bridge here after the pass
+          if (bp.bridged) for (const c of this._riverCrossings(pts)) bridgeSpans.push({ pts: c, hw });   // one distinctive bridge per genuine crossing
           // remember where this chain ENDS and how wide it is — every chain end is a
           // junction (or a dead end / type change), and two ribbons butting there at
           // an angle leave a V-shaped notch. A cap disc below fills the wedge.

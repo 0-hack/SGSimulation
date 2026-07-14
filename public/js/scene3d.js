@@ -5157,22 +5157,34 @@ export class Scene3D {
       pil.position.set(pts[i].x, gy + h / 2, pts[i].z); pil.castShadow = true; g.add(pil);
     }
   }
+  // Is a world point over the VISIBLE Singapore River water ribbon? Tight — it tests the
+  // drawn water edge (the branch half-width), unlike riverMask which pads a margin for
+  // buildability, so bridge decks and parapets seat exactly on the blue. `pad` in cells.
+  _overWater(x, z, pad = 0) {
+    const gx = x / TILE + N / 2, gy = N / 2 - z / TILE;   // fractional grid cell
+    for (const br of riverBranches(N)) {
+      for (let i = 0; i < br.length - 1; i++) {
+        const a = br[i], b = br[i + 1];
+        const dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy || 1e-9;
+        let t = ((gx - a.x) * dx + (gy - a.y) * dy) / l2; t = t < 0 ? 0 : t > 1 ? 1 : t;
+        const px = a.x + t * dx, py = a.y + t * dy, w = a.w + (b.w - a.w) * t;
+        if (Math.hypot(gx - px, gy - py) < w + pad) return true;
+      }
+    }
+    return false;
+  }
   // Dress a historic lane's small river crossing as a little bridge (like the old
   // Singapore River bridges): a low parapet wall down each kerb of the raised span,
   // and a pair of short stone piers dropping into the water at the deepest point.
   _riverBridgeKit(g, pts, hw) {
-    // the span that actually sits over water (river cells), padded one point each side
-    // so the parapet lands on the bank abutments — keeps the bridge short, not the whole ramp.
-    const over = pts.map((p) => {
-      const gx = Math.round(p.x / TILE + N / 2), gy = Math.round(N / 2 - p.z / TILE);
-      return gx >= 0 && gy >= 0 && gx < N && gy < N && this.riverMask[gy] && this.riverMask[gy][gx];
-    });
+    // the span that sits over the VISIBLE water (tight — matches the blue, so the parapet
+    // doesn't sprawl onto the banks). A tiny abutment overhang keeps it looking anchored.
+    const over = pts.map((p) => this._overWater(p.x, p.z, 0.12));
     let first = over.indexOf(true); if (first < 0) return;
     let last = over.lastIndexOf(true);
-    first = Math.max(0, first - 1); last = Math.min(pts.length - 1, last + 1);
     const railMat = toon(0xcac2b0), pierMat = toon(0x8a8f96);
     const RAIL_OFF = hw + 0.13;                                  // low parapet just outside the kerb
-    for (let i = first + 1; i <= last; i++) {
+    for (let i = Math.max(1, first); i <= last; i++) {
       const a = pts[i - 1], b = pts[i];
       let tx = b.x - a.x, tz = b.z - a.z; const L = Math.hypot(tx, tz); if (L < 1e-3) continue; tx /= L; tz /= L;
       const nx = -tz, nz = tx, ang = Math.atan2(tx, tz);
@@ -5207,23 +5219,31 @@ export class Scene3D {
     if (n < 2) return { pts, bridged: false };
     const RAIL_CLEAR = 2.6, WATER_CLEAR = 1.5, SEA_DECK = SEA_Y + 2.0, SLOPE = 0.16;
     const RIVER_CLEAR = 0.55, RIVER_DECK = 0.9, RIVER_SLOPE = 0.32;   // a low, short-approach bridge over the thin river (deck sits just above the water)
-    const ground = new Array(n), target = new Array(n).fill(-Infinity), obs = [];
-    for (let i = 0; i < n; i++) {
-      const p = pts[i]; ground[i] = p.y;
-      const gx = Math.round(p.x / TILE + N / 2), gy = Math.round(N / 2 - p.z / TILE);
-      if (gx < 0 || gy < 0 || gx >= N || gy >= N) continue;
-      const onRiver = this.riverMask && this.riverMask[gy] && this.riverMask[gy][gx];
-      if (riverOnly) {
-        if (onRiver) { target[i] = Math.max(RIVER_DECK, p.y + RIVER_CLEAR); obs.push(i); }
-        continue;
+    const ground = pts.map((p) => p.y), target = new Array(n).fill(-Infinity), obs = [];
+    if (riverOnly) {
+      // Lift only where the lane sits over the VISIBLE river. Sample every segment finely
+      // (≤1u) so a thin channel between two ground points is never skipped — that skip was
+      // leaving some crossings unbridged (a road sitting flat across the water).
+      const wet = pts.map((p) => this._overWater(p.x, p.z, 0.25));
+      for (let i = 0; i < n - 1; i++) {
+        if (wet[i] && wet[i + 1]) continue;
+        const a = pts[i], b = pts[i + 1], d = Math.hypot(b.x - a.x, b.z - a.z), steps = Math.ceil(d / 1.0);
+        for (let s = 1; s < steps; s++) { const t = s / steps; if (this._overWater(a.x + (b.x - a.x) * t, a.z + (b.z - a.z) * t, 0.25)) { wet[i] = true; wet[i + 1] = true; break; } }
       }
-      const onRail = this._railMask && this._railMask[gy] && this._railMask[gy][gx];
-      const rawLand = (this.land[gy] && this.land[gy][gx]) || (this.reclaimedMask && this.reclaimedMask[gy] && this.reclaimedMask[gy][gx]);
-      const onWater = !rawLand || onRiver;
-      let t = -Infinity;
-      if (onWater) t = Math.max(t, SEA_DECK, p.y + WATER_CLEAR);   // clear the water surface
-      if (onRail) t = Math.max(t, p.y + RAIL_CLEAR);               // clear a passing train
-      if (t > -Infinity) { target[i] = t; obs.push(i); }
+      for (let i = 0; i < n; i++) if (wet[i]) { target[i] = Math.max(RIVER_DECK, pts[i].y + RIVER_CLEAR); obs.push(i); }
+    } else {
+      for (let i = 0; i < n; i++) {
+        const p = pts[i];
+        const gx = Math.round(p.x / TILE + N / 2), gy = Math.round(N / 2 - p.z / TILE);
+        if (gx < 0 || gy < 0 || gx >= N || gy >= N) continue;
+        const onRail = this._railMask && this._railMask[gy] && this._railMask[gy][gx];
+        const rawLand = (this.land[gy] && this.land[gy][gx]) || (this.reclaimedMask && this.reclaimedMask[gy] && this.reclaimedMask[gy][gx]);
+        const onWater = !rawLand || (this.riverMask && this.riverMask[gy] && this.riverMask[gy][gx]);
+        let t = -Infinity;
+        if (onWater) t = Math.max(t, SEA_DECK, p.y + WATER_CLEAR);   // clear the water surface
+        if (onRail) t = Math.max(t, p.y + RAIL_CLEAR);               // clear a passing train
+        if (t > -Infinity) { target[i] = t; obs.push(i); }
+      }
     }
     if (!obs.length) return { pts, bridged: false };
     const s = [0]; for (let i = 1; i < n; i++) s.push(s[i - 1] + Math.hypot(pts[i].x - pts[i - 1].x, pts[i].z - pts[i - 1].z));

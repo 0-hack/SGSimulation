@@ -5176,11 +5176,21 @@ export class Scene3D {
   // The span of a lane that sits over the VISIBLE river water (bank-to-bank + a small
   // abutment), collected during the road pass so a distinctive bridge can be built there.
   _wetSpan(pts) {
-    const over = pts.map((p) => this._overWater(p.x, p.z, 0.12));
-    let f = over.indexOf(true); if (f < 0) return null;
-    let l = over.lastIndexOf(true);
-    f = Math.max(0, f - 1); l = Math.min(pts.length - 1, l + 1);
-    return pts.slice(f, l + 1);
+    const wet = pts.map((p) => this._overWater(p.x, p.z, 0.04));
+    let f = wet.indexOf(true); if (f < 0) return null;
+    let l = wet.lastIndexOf(true);
+    // interpolate the EXACT bank-to-bank water crossing so the bridge is only as long as
+    // the river is wide (not padded out onto the banks).
+    const edge = (i, j) => {
+      let lo = 0, hi = 1;
+      for (let k = 0; k < 14; k++) { const m = (lo + hi) / 2, x = pts[i].x + (pts[j].x - pts[i].x) * m, z = pts[i].z + (pts[j].z - pts[i].z) * m;
+        if (this._overWater(x, z, 0.04) === wet[i]) lo = m; else hi = m; }
+      const t = (lo + hi) / 2;
+      return { x: pts[i].x + (pts[j].x - pts[i].x) * t, y: pts[i].y + (pts[j].y - pts[i].y) * t, z: pts[i].z + (pts[j].z - pts[i].z) * t };
+    };
+    const A = f > 0 ? edge(f - 1, f) : pts[f];
+    const B = l < pts.length - 1 ? edge(l, l + 1) : pts[l];
+    return [A, ...pts.slice(f, l + 1), B];
   }
   // A thin structural strut/cable between two 3-D points — the shared building block for
   // the river bridges' arches, cables, hangers and truss members.
@@ -5202,10 +5212,11 @@ export class Scene3D {
   }
   // shared body: a deck slab tucked under the asphalt, and a railing down BOTH kerbs
   _bridgeDeck(g, f, deckMat, railMat, railH = 0.32) {
-    this._bdeck(g, f, f.mid.x, f.deckY - 0.11, f.mid.z, 2 * f.W + 0.12, 0.22, f.L + 0.5, deckMat);
+    const dl = f.L + 0.3;   // deck = the water width + a small abutment onto each bank
+    this._bdeck(g, f, f.mid.x, f.deckY - 0.11, f.mid.z, 2 * f.W + 0.12, 0.22, dl, deckMat);
     for (const s of [-1, 1]) {
       const c = this._bpt(f, 0, (f.W + 0.05) * s, railH / 2 + 0.02);
-      this._bdeck(g, f, c.x, c.y, c.z, 0.09, railH, f.L + 0.5, railMat);
+      this._bdeck(g, f, c.x, c.y, c.z, 0.09, railH, dl, railMat);
     }
   }
   // Collect the crossings found in the road pass, de-duplicate lanes sharing a site into

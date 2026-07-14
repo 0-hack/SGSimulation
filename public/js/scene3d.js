@@ -5157,24 +5157,69 @@ export class Scene3D {
       pil.position.set(pts[i].x, gy + h / 2, pts[i].z); pil.castShadow = true; g.add(pil);
     }
   }
+  // Dress a historic lane's small river crossing as a little bridge (like the old
+  // Singapore River bridges): a low parapet wall down each kerb of the raised span,
+  // and a pair of short stone piers dropping into the water at the deepest point.
+  _riverBridgeKit(g, pts, hw) {
+    // the span that actually sits over water (river cells), padded one point each side
+    // so the parapet lands on the bank abutments — keeps the bridge short, not the whole ramp.
+    const over = pts.map((p) => {
+      const gx = Math.round(p.x / TILE + N / 2), gy = Math.round(N / 2 - p.z / TILE);
+      return gx >= 0 && gy >= 0 && gx < N && gy < N && this.riverMask[gy] && this.riverMask[gy][gx];
+    });
+    let first = over.indexOf(true); if (first < 0) return;
+    let last = over.lastIndexOf(true);
+    first = Math.max(0, first - 1); last = Math.min(pts.length - 1, last + 1);
+    const railMat = toon(0xcac2b0), pierMat = toon(0x8a8f96);
+    const RAIL_OFF = hw + 0.13;                                  // low parapet just outside the kerb
+    for (let i = first + 1; i <= last; i++) {
+      const a = pts[i - 1], b = pts[i];
+      let tx = b.x - a.x, tz = b.z - a.z; const L = Math.hypot(tx, tz); if (L < 1e-3) continue; tx /= L; tz /= L;
+      const nx = -tz, nz = tx, ang = Math.atan2(tx, tz);
+      const cx = (a.x + b.x) / 2, cy = (a.y + b.y) / 2, cz = (a.z + b.z) / 2;
+      for (const sgn of [-1, 1]) {
+        const rail = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.3, L + 0.06), railMat);
+        rail.position.set(cx + nx * RAIL_OFF * sgn, cy + 0.13, cz + nz * RAIL_OFF * sgn);
+        rail.rotation.y = ang; rail.castShadow = true; g.add(rail);
+      }
+    }
+    const mid = (first + last) >> 1, p = pts[mid], nb = pts[Math.min(pts.length - 1, mid + 1)];  // one slim pier pair mid-span
+    let tx = nb.x - p.x, tz = nb.z - p.z; const L = Math.hypot(tx, tz) || 1; tx /= L; tz /= L;
+    const nx = -tz, nz = tx, h = Math.max(0.7, p.y - SEA_Y - 0.15);
+    for (const sgn of [-1, 1]) {
+      const pier = new THREE.Mesh(new THREE.BoxGeometry(0.35, h, 0.35), pierMat);
+      pier.position.set(p.x + nx * (hw + 0.02) * sgn, SEA_Y + h / 2, p.z + nz * (hw + 0.02) * sgn);
+      pier.castShadow = true; g.add(pier);
+    }
+  }
   // AUTO-BRIDGE: a road may never sit ON the KTM tracks or float across open water,
   // so any span of a ground-level centre-line that overlaps the railway or the sea/
   // river is lifted onto a deck and the approaches ramp smoothly up to it. Returns
   // { pts, bridged } — pts keep the input x/z but carry the raised (and ramping) y.
   // The input y is treated as the ground baseline, so the non-crossing parts stay put.
   // Applied identically to the historic traced roads and to player-built roads.
-  _bridgeProfile(pts) {
+  // `riverOnly` (the historic traced lanes): bridge ONLY the narrow Singapore River, as
+  // a small low hump — rail is crossed at grade (level crossings, as it really was) and
+  // the coastal lanes never span open sea. Player roads (riverOnly=false) bridge rail,
+  // sea and river alike onto a full deck.
+  _bridgeProfile(pts, riverOnly = false) {
     const n = pts.length;
     if (n < 2) return { pts, bridged: false };
     const RAIL_CLEAR = 2.6, WATER_CLEAR = 1.5, SEA_DECK = SEA_Y + 2.0, SLOPE = 0.16;
+    const RIVER_CLEAR = 0.55, RIVER_DECK = 0.9, RIVER_SLOPE = 0.32;   // a low, short-approach bridge over the thin river (deck sits just above the water)
     const ground = new Array(n), target = new Array(n).fill(-Infinity), obs = [];
     for (let i = 0; i < n; i++) {
       const p = pts[i]; ground[i] = p.y;
       const gx = Math.round(p.x / TILE + N / 2), gy = Math.round(N / 2 - p.z / TILE);
       if (gx < 0 || gy < 0 || gx >= N || gy >= N) continue;
+      const onRiver = this.riverMask && this.riverMask[gy] && this.riverMask[gy][gx];
+      if (riverOnly) {
+        if (onRiver) { target[i] = Math.max(RIVER_DECK, p.y + RIVER_CLEAR); obs.push(i); }
+        continue;
+      }
       const onRail = this._railMask && this._railMask[gy] && this._railMask[gy][gx];
       const rawLand = (this.land[gy] && this.land[gy][gx]) || (this.reclaimedMask && this.reclaimedMask[gy] && this.reclaimedMask[gy][gx]);
-      const onWater = !rawLand || (this.riverMask && this.riverMask[gy] && this.riverMask[gy][gx]);
+      const onWater = !rawLand || onRiver;
       let t = -Infinity;
       if (onWater) t = Math.max(t, SEA_DECK, p.y + WATER_CLEAR);   // clear the water surface
       if (onRail) t = Math.max(t, p.y + RAIL_CLEAR);               // clear a passing train
@@ -5182,9 +5227,10 @@ export class Scene3D {
     }
     if (!obs.length) return { pts, bridged: false };
     const s = [0]; for (let i = 1; i < n; i++) s.push(s[i - 1] + Math.hypot(pts[i].x - pts[i - 1].x, pts[i].z - pts[i - 1].z));
+    const slope = riverOnly ? RIVER_SLOPE : SLOPE;
     const out = pts.map((p, i) => {
       let y = ground[i];
-      for (const j of obs) { const cand = target[j] - SLOPE * Math.abs(s[i] - s[j]); if (cand > y) y = cand; }  // ramp up to the nearest crossing at a gentle grade
+      for (const j of obs) { const cand = target[j] - slope * Math.abs(s[i] - s[j]); if (cand > y) y = cand; }  // ramp up to the nearest crossing at a gentle grade
       return { x: p.x, y, z: p.z };
     });
     return { pts: out, bridged: true };
@@ -5204,7 +5250,7 @@ export class Scene3D {
       // terrain. A player road auto-bridges any span crossing the rail or sea; the historic
       // 1965 lanes cross the tracks at grade (level crossings), as they really did.
       const gp = e.poly.map((p) => ({ x: p.x, y: this._roadY(p.x, p.z), z: p.z }));
-      return e.traced ? gp : this._bridgeProfile(gp).pts;
+      return e.traced ? this._bridgeProfile(gp, true).pts : this._bridgeProfile(gp).pts;
     }
     const a = roads.nodes[e.a], b = roads.nodes[e.b];
     if (!a || !b) return [];
@@ -5222,7 +5268,7 @@ export class Scene3D {
       });
     }
     const gp = this._densifyRoad(base, 2.0, 0);
-    return e.traced ? gp : this._bridgeProfile(gp).pts;   // player road auto-bridges rail/water; historic lanes stay at grade
+    return e.traced ? this._bridgeProfile(gp, true).pts : this._bridgeProfile(gp).pts;   // historic lanes get a small river bridge; player roads auto-bridge rail/sea/river
   }
 
   // Walk the traced-road graph into maximal polylines: chains run through degree-2
@@ -5393,13 +5439,19 @@ export class Scene3D {
         // trace keeps its own points, we do NOT re-curve or distort it here).
         if (raw.length < 2) continue;
         // the historic 1965 lanes stay on the ground and cross the KTM tracks at grade
-        // (level crossings) — only the player's modern roads auto-bridge over rail/sea.
-        const pts = this._densifyRoad(raw, 2.0, 0.10);
-        if (dirt) { dirtRibbon(pts, HWD, pavedNode.has(nodes[0]), pavedNode.has(nodes[nodes.length - 1])); }  // narrow kampong track, feathered into asphalt at junctions
-        else {
+        // (level crossings), but a lane crossing the Singapore River rises onto a small
+        // bridge (deck + parapets + piers) — only the player's modern roads also bridge
+        // rail and open sea.
+        const bp = this._bridgeProfile(this._densifyRoad(raw, 2.0, 0.10), true);
+        const pts = bp.pts;
+        if (dirt) {
+          dirtRibbon(pts, HWD, pavedNode.has(nodes[0]), pavedNode.has(nodes[nodes.length - 1]));  // narrow kampong track, feathered into asphalt at junctions
+          if (bp.bridged) this._riverBridgeKit(this.roadGroup, pts, HWD);
+        } else {
           const hw = oneway ? HW1 : HW2;
           ribbonSmooth(road, pts, hw, 0.04);                     // paved (standard or single lane)
           if (!oneway) markLine(pts, 0, true, 0.05);             // two-way: a dashed centre line down the middle
+          if (bp.bridged) this._riverBridgeKit(this.roadGroup, pts, hw);   // small river bridge dressing
           // remember where this chain ENDS and how wide it is — every chain end is a
           // junction (or a dead end / type change), and two ribbons butting there at
           // an angle leave a V-shaped notch. A cap disc below fills the wedge.
@@ -5477,7 +5529,7 @@ export class Scene3D {
           markLine(pts, off, Math.abs(off) > 0.05);   // solid only on the centre (between directions)
         }
         stopLine(pts, w, false); stopLine(pts, w, true);
-        if (bridged) this._addPillars(this.roadGroup, pts, 0.55);
+        if (bridged) this._riverBridgeKit(this.roadGroup, pts, w + 0.35);   // historic lane over the river = a small bridge
       }
     }
 

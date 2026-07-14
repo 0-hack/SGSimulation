@@ -34,9 +34,9 @@ export const SEED_1965 = [
   //      mostly 2–5 storeys, with only a handful of taller blocks (the Asia
   //      Insurance and Bank of China buildings, ~18 storeys); the high-rise office
   //      CBD only rose in the 1970s–80s. Packed into the blocks between the streets ----
-  { key: 'godown',       cx: 0.448, cy: 0.356, n: 2, spread: 0.010, name: 'Singapore River godowns' },
+  { key: 'godown',       cx: 0.466, cy: 0.393, n: 1, spread: 0.011, name: 'Singapore River godowns' },   // lining the river's south bank (Boat Quay warehouses)
   { key: 'shophouse',    cx: 0.434, cy: 0.373, n: 6, spread: 0.010, name: 'Chinatown (Kreta Ayer)' },
-  { key: 'shophouse',    cx: 0.450, cy: 0.377, n: 5, spread: 0.010, name: 'Raffles Place & Boat Quay' },
+  { key: 'shophouse',    cx: 0.475, cy: 0.389, n: 5, spread: 0.010, name: 'Raffles Place & Boat Quay' },   // the curved shophouse row along the south bank
   { key: 'shophouse',    cx: 0.462, cy: 0.372, n: 3, spread: 0.009, name: 'Collyer Quay' },
   { key: 'shophouse',    cx: 0.423, cy: 0.367, n: 3, spread: 0.010, name: 'Tanjong Pagar' },
   { key: 'lau_pa_sat',   cx: 0.460, cy: 0.362, name: 'Lau Pa Sat (Telok Ayer Market)' },
@@ -60,7 +60,9 @@ export const SEED_1965 = [
   { key: 'power_station', cx: 0.298, cy: 0.330, name: 'Pasir Panjang ‘B’ Station' },
   { key: 'sewage',       cx: 0.430, cy: 0.358, name: 'Singapore River sewerage works' },
   // ---- Civic & administrative core, just behind the quays (City Hall / Padang) ----
-  { key: 'colonial',     cx: 0.464, cy: 0.380, name: 'Parliament House & City Hall' },
+  { key: 'colonial',     cx: 0.492, cy: 0.404, name: 'Supreme Court & City Hall (the Padang)' },   // north of the river mouth, facing the Padang
+  { key: 'colonial',     cx: 0.483, cy: 0.396, name: 'Empress Place Building' },                    // on the river's north bank at the mouth
+  { key: 'colonial',     cx: 0.486, cy: 0.399, name: 'Old Parliament House' },                      // beside Empress Place on the north bank
   { key: 'police',       cx: 0.456, cy: 0.382, name: 'Hill Street Police Station' },
   { key: 'fire_station', cx: 0.460, cy: 0.388, name: 'Central Fire Station' },
   { key: 'cinema',       cx: 0.450, cy: 0.392, name: 'Cathay Cinema' },
@@ -70,8 +72,9 @@ export const SEED_1965 = [
   //      from the build menu (Heritage), so the player can keep or reshape the old
   //      district. Placed at their real sites; they snap to the nearest free cell if a
   //      street or shophouse already sits on the exact spot ----
-  { key: 'fullerton',        cx: 0.457, cy: 0.381, name: 'Fullerton Building' },
-  { key: 'victoria_theatre', cx: 0.461, cy: 0.389, name: 'Victoria Theatre & Concert Hall' },
+  { key: 'fullerton',        cx: 0.487, cy: 0.387, name: 'Fullerton Building' },                    // right at the river mouth (south bank), by Anderson Bridge
+  { key: 'victoria_theatre', cx: 0.477, cy: 0.400, name: 'Victoria Theatre & Concert Hall' },       // north bank, beside Empress Place
+  { key: 'shophouse',        cx: 0.456, cy: 0.399, n: 1, spread: 0.008, name: 'Clarke Quay' },        // trading shophouses along the upriver (west) bank
   { key: 'raffles_hotel',    cx: 0.470, cy: 0.405, name: 'Raffles Hotel' },
   { key: 'sri_mariamman',    cx: 0.437, cy: 0.374, name: 'Sri Mariamman Temple' },
   { key: 'sultan_mosque',    cx: 0.482, cy: 0.417, name: 'Sultan Mosque' },

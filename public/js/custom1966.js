@@ -72,7 +72,7 @@ export const SEED_1965 = [
   //      from the build menu (Heritage), so the player can keep or reshape the old
   //      district. Placed at their real sites; they snap to the nearest free cell if a
   //      street or shophouse already sits on the exact spot ----
-  { key: 'fullerton',        cx: 0.487, cy: 0.387, name: 'Fullerton Building' },                    // right at the river mouth (south bank), by Anderson Bridge
+  { key: 'fullerton',        cx: 0.481, cy: 0.384, name: 'Fullerton Building' },                    // on the south bank by the river mouth, clear of the Anderson Bridge crossing
   { key: 'victoria_theatre', cx: 0.477, cy: 0.400, name: 'Victoria Theatre & Concert Hall' },       // north bank, beside Empress Place
   { key: 'shophouse',        cx: 0.456, cy: 0.399, n: 1, spread: 0.008, name: 'Clarke Quay' },        // trading shophouses along the upriver (west) bank
   { key: 'raffles_hotel',    cx: 0.470, cy: 0.405, name: 'Raffles Hotel' },

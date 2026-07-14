@@ -5157,14 +5157,36 @@ export class Scene3D {
       pil.position.set(pts[i].x, gy + h / 2, pts[i].z); pil.castShadow = true; g.add(pil);
     }
   }
-  // Is a world point over the VISIBLE Singapore River water ribbon? Tight — it tests the
-  // drawn water edge (the branch half-width), unlike riverMask which pads a margin for
-  // buildability, so bridge decks and parapets seat exactly on the blue. `pad` in cells.
+  // A DENSE sample of the river's water centreline — the SAME smooth Catmull-Rom curve the
+  // water ribbon is swept along (not the raw branch corners) with its half-width. So the
+  // detected water edge follows the drawn blue exactly, including where it bulges on a bend
+  // (measuring to the straight branch chords under-reads the width there). Cached + bbox'd.
+  _riverCenterline() {
+    if (this._rivDense) return this._rivDense;
+    const lines = []; let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+    for (const br of riverBranches(N)) {
+      if (br.length < 2) continue;
+      const curve = new THREE.CatmullRomCurve3(br.map((p) => new THREE.Vector3(p.x, 0, p.y)), false, 'catmullrom', 0.5);
+      const STEPS = Math.max(20, (br.length - 1) * 14), samp = curve.getPoints(STEPS), line = [];
+      for (let i = 0; i <= STEPS; i++) {
+        const f = (i / STEPS) * (br.length - 1), i0 = Math.min(br.length - 1, Math.floor(f)), i1 = Math.min(br.length - 1, i0 + 1), tt = f - i0;
+        const v = samp[i], w = br[i0].w * (1 - tt) + br[i1].w * tt;
+        line.push({ x: v.x, y: v.z, w });
+        x0 = Math.min(x0, v.x); x1 = Math.max(x1, v.x); y0 = Math.min(y0, v.z); y1 = Math.max(y1, v.z);
+      }
+      lines.push(line);
+    }
+    this._rivDense = { lines, bx0: x0 - 4, bx1: x1 + 4, by0: y0 - 4, by1: y1 + 4 };
+    return this._rivDense;
+  }
+  // Is a world point over the VISIBLE Singapore River water ribbon? `pad` in cells.
   _overWater(x, z, pad = 0) {
     const gx = x / TILE + N / 2, gy = N / 2 - z / TILE;   // fractional grid cell
-    for (const br of riverBranches(N)) {
-      for (let i = 0; i < br.length - 1; i++) {
-        const a = br[i], b = br[i + 1];
+    const d = this._riverCenterline();
+    if (gx < d.bx0 || gx > d.bx1 || gy < d.by0 || gy > d.by1) return false;   // far from the river — quick reject
+    for (const line of d.lines) {
+      for (let i = 0; i < line.length - 1; i++) {
+        const a = line[i], b = line[i + 1];
         const dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy || 1e-9;
         let t = ((gx - a.x) * dx + (gy - a.y) * dy) / l2; t = t < 0 ? 0 : t > 1 ? 1 : t;
         const px = a.x + t * dx, py = a.y + t * dy, w = a.w + (b.w - a.w) * t;
@@ -5187,11 +5209,14 @@ export class Scene3D {
       for (let s = 0; s < n; s++) { const t = s / n; pts.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, z: a.z + (b.z - a.z) * t }); }
     }
     pts.push(pts0[pts0.length - 1]);
-    const wet = pts.map((p) => this._overWater(p.x, p.z, 0.04));
-    const edge = (i, j) => {   // interpolate the exact water boundary between pts[i] and pts[j]
+    // detect the crossing a little BEYOND the water edge (PAD) so the bridge reaches onto the
+    // land on each side (end-to-end of the bank), rather than stopping at the water's edge.
+    const PAD = 0.18;
+    const wet = pts.map((p) => this._overWater(p.x, p.z, PAD));
+    const edge = (i, j) => {   // interpolate the land-edge boundary between pts[i] and pts[j]
       let lo = 0, hi = 1;
       for (let k = 0; k < 14; k++) { const m = (lo + hi) / 2, x = pts[i].x + (pts[j].x - pts[i].x) * m, z = pts[i].z + (pts[j].z - pts[i].z) * m;
-        if (this._overWater(x, z, 0.04) === wet[i]) lo = m; else hi = m; }
+        if (this._overWater(x, z, PAD) === wet[i]) lo = m; else hi = m; }
       const t = (lo + hi) / 2;
       return { x: pts[i].x + (pts[j].x - pts[i].x) * t, y: pts[i].y + (pts[j].y - pts[i].y) * t, z: pts[i].z + (pts[j].z - pts[i].z) * t };
     };

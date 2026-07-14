@@ -204,12 +204,28 @@ export function riverBranches(size) {
     [P(23.58, 18.78, 0.084), P(23.45, 18.79, 0.060), P(23.36, 18.79, 0.027), P(23.27, 18.75, 0.031),
      P(23.19, 18.78, 0.051), P(23.07, 18.99, 0.031), P(22.94, 19.09, 0.027), P(22.65, 19.05, 0.032),
      P(22.60, 19.18, 0.027), P(22.54, 19.19, 0.027), P(22.25, 19.15, 0.027), P(22.08, 19.04, 0.027),
-     P(21.84, 19.11, 0.027), P(21.83, 19.28, 0.028), P(21.78, 19.34, 0.027), P(21.60, 19.33, 0.018)],
+     P(21.84, 19.11, 0.027), P(21.83, 19.28, 0.028), P(21.78, 19.34, 0.027), P(21.60, 19.33, 0.026),
+     // continues inland as the canalised upper reach (the survey-map "Canal" toward Alexandra)
+     P(21.30, 19.34, 0.024), P(21.00, 19.34, 0.023), P(20.66, 19.35, 0.021), P(20.34, 19.35, 0.015)],
   ];
   _rivSize = size;
   return _rivCache;
 }
 export function inRiver(x, y, size) {
   return nearBranches(x, y, riverBranches(size), 0.35);
+}
+// The Singapore River as a closed COASTLINE outline (normalised [nx,ny]) — its two banks
+// offset from the swept centreline and joined into a loop. Used so the river reads as part
+// of the traced coast: the map tracer (trace.html) shows it under the Coast layer.
+export function riverOutline() {
+  const br = riverBranches(48)[0], n = br.length, left = [], right = [];
+  for (let i = 0; i < n; i++) {
+    const a = br[Math.max(0, i - 1)], b = br[Math.min(n - 1, i + 1)], p = br[i];
+    let tx = b.x - a.x, ty = b.y - a.y; const L = Math.hypot(tx, ty) || 1; tx /= L; ty /= L;
+    const nx = -ty, ny = tx, w = p.w + 0.06;          // bank offset (a touch beyond the water edge)
+    left.push([(p.x + nx * w) / 48, (p.y + ny * w) / 48]);
+    right.push([(p.x - nx * w) / 48, (p.y - ny * w) / 48]);
+  }
+  return left.concat(right.reverse());
 }
 

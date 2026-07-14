@@ -5229,7 +5229,10 @@ export class Scene3D {
       let ax = B.x - A.x, az = B.z - A.z; const L = Math.hypot(ax, az) || 1; ax /= L; az /= L;
       const f = { ax, az, px: -az, pz: ax, L, W: s.hw + 0.28, ang: Math.atan2(ax, az),
         deckY: Math.max(...p.map((q) => q.y)), mid: { x: (A.x + B.x) / 2, z: (A.z + B.z) / 2 } };
-      builders[Math.min(i, builders.length - 1)].call(this, this.roadGroup, f);
+      // first two sites get the iconic Anderson & Cavenagh; the upstream ones cycle through
+      // the arch/girder designs (Elgin, Coleman, Read, Ord) as the canal reaches inland.
+      const bi = i < builders.length ? i : 2 + ((i - 2) % (builders.length - 2));
+      builders[bi].call(this, this.roadGroup, f);
     });
   }
   // ANDERSON BRIDGE — three shallow steel arches springing above the roadway.

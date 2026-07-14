@@ -219,6 +219,8 @@ function draw() {
     ctx.strokeStyle = LAYERS[k].c; ctx.lineWidth = k === 'mainland' ? 2.4 : 2;
     for (const p of game[k]) strokePoly(p, !!LAYERS[k].closed && isClosedPoly(p)); // erased coast arcs draw OPEN
   }
+  // the Singapore River, shown under the Coast filter (a sea inlet recorded on the coast)
+  if (vis.mainland && game._riverRef) { ctx.strokeStyle = LAYERS.mainland.c; ctx.lineWidth = 2.0; strokePoly(game._riverRef, true); }
   ctx.globalAlpha = 1;
   for (const k of ['sands', 'reservoirs', 'mainland', 'railway', 'airport', 'roads']) {
     if (!vis[k]) continue; const L = LAYERS[k];
@@ -313,6 +315,9 @@ function loadGameData() {
       // SG_SANDS beaches stay untouched), so keep them apart for the save union below.
       _sandsCustom: (cu.CUSTOM_SANDS || []).filter((p) => p && p.length >= 3),
     };
+    // The Singapore River, recorded as a coast feature: shown under the Coast filter as a
+    // reference (a separate ref so a coast re-save doesn't turn the water into a land loop).
+    game._riverRef = (typeof sh.riverOutline === 'function') ? sh.riverOutline() : null;
     overlayDirty = {}; // fresh overlay — drop any pending erase flags
     recomputeJoins(); draw(); updateStat();
   }).catch(() => {

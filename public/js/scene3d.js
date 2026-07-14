@@ -596,8 +596,10 @@ export class Scene3D {
     const wMat = new THREE.MeshToonMaterial({ color: SEA_COLOR, transparent: true, opacity: 0.95, side: THREE.DoubleSide, gradientMap: toonGradient() });
     for (const poly of SG_RESERVOIRS) this._reservoirLake(poly, sMat, wMat);
     const branches = riverBranches(N);
-    for (const br of branches) this._waterRibbon(br, 2.0, 0.1, sMat);   // river banks first (lower)
-    for (const br of branches) this._waterRibbon(br, 0, 0.18, wMat);    // river water on top
+    // The Singapore River is part of the sea (a tidal inlet), not a distinct river:
+    // render it as pure sea-coloured water with no muddy bank, so it reads as the sea
+    // reaching inland rather than a separate channel.
+    for (const br of branches) this._waterRibbon(br, 0, 0.18, wMat);
   }
 
   // Multi-source BFS distance (in cells) from every cell to the nearest water

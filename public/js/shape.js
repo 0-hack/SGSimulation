@@ -187,24 +187,29 @@ export function inReservoir(x, y, size) {
   return false;
 }
 
-// The Singapore River — traced from the 1966 survey map (the map owner's Coast-layer
-// trace). A slim tidal channel running from the river mouth at the south coast (near
-// the GPO/Fullerton) up into the downtown. Rendered as a swept water ribbon like the
-// reservoirs (so it is visible over the terrain, not just a coastline notch), and its
-// cells read as water via inRiver (unbuildable, blocks roads). Branch points are
-// {x, y (cells), w (half-width cells)} in the 48-cell base grid, scaled to `size`.
+// The Singapore River — traced faithfully from the 1966 survey map (the map owner's
+// Coast-layer trace). A slim tidal channel: the mouth opens into the sea at the south
+// coast (near the GPO/Fullerton/Anderson Bridge) and it winds inland through the
+// downtown up toward Kim Seng. It is part of the sea, not a distinct river: rendered
+// as pure sea-coloured water (no muddy bank) so it reads as a sea inlet, and its cells
+// read as water via inRiver (unbuildable, blocks roads). Widths match the drawn banks
+// (thin — ~0.9–1.7 world units half-width). Branch points are {x, y (cells), w
+// (half-width cells)} in the 48-cell base grid, scaled to `size`. The first point sits
+// at the shoreline so the channel joins the sea; the last tapers to the inland tip.
 export function riverBranches(size) {
   if (_rivCache && _rivSize === size) return _rivCache;
   const k = size / 48;
   const P = (x, y, w) => ({ x: x * k, y: y * k, w: w * k });
   _rivCache = [
-    [P(24.00, 18.32, 0.34), P(23.36, 18.79, 0.31), P(22.94, 19.08, 0.29), P(22.55, 19.19, 0.26),
-     P(22.08, 19.03, 0.23), P(21.78, 19.34, 0.21), P(21.60, 19.33, 0.13)],
+    [P(23.58, 18.78, 0.084), P(23.45, 18.79, 0.060), P(23.36, 18.79, 0.027), P(23.27, 18.75, 0.031),
+     P(23.19, 18.78, 0.051), P(23.07, 18.99, 0.031), P(22.94, 19.09, 0.027), P(22.65, 19.05, 0.032),
+     P(22.60, 19.18, 0.027), P(22.54, 19.19, 0.027), P(22.25, 19.15, 0.027), P(22.08, 19.04, 0.027),
+     P(21.84, 19.11, 0.027), P(21.83, 19.28, 0.028), P(21.78, 19.34, 0.027), P(21.60, 19.33, 0.018)],
   ];
   _rivSize = size;
   return _rivCache;
 }
 export function inRiver(x, y, size) {
-  return nearBranches(x, y, riverBranches(size), 0.4);
+  return nearBranches(x, y, riverBranches(size), 0.35);
 }
 

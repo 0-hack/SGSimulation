@@ -5205,7 +5205,9 @@ export class Scene3D {
   // (a junction) — a crossing cut in half by a junction sitting in the water extrapolates
   // past the chain end to find the far bank; a true dead end in the water gets no bridge.
   _riverCrossings(pts, contStart = false, contEnd = false) {
-    const PAD = 0.18, n = pts.length;
+    // PAD: generous, for finding the crossing (never miss a thin channel). FIT: tight, for
+    // sizing the span — the bridge ends AT the water edge so it sits within the banks.
+    const PAD = 0.18, FIT = 0.04, n = pts.length;
     if (n < 2) return [];
     const wetAt = (x, z) => this._overWater(x, z, PAD);
     const wet = pts.map((p) => wetAt(p.x, p.z));
@@ -5234,13 +5236,15 @@ export class Scene3D {
         // they are junction nodes shared with the other lanes meeting there)
         const kS = Math.max(1, (A.idx != null ? A.idx : i - 1) + 1), kE = Math.min(n - 2, (B.idx != null ? B.idx : j + 1) - 1);
         for (let k = kS; k <= kE; k++) { const t = (k - kS + 1) / (kE - kS + 2); pts[k].x = A.x + (B.x - A.x) * t; pts[k].z = A.z + (B.z - A.z) * t; }
-        // the bridge = each wet interval of the straight chord (its exact water width)
+        // the bridge = each wet interval of the straight chord, sized with the TIGHT test so
+        // the span fits within the banks (and a narrow land tongue between two channels
+        // splits them into separate spans instead of being decked over)
         const cl = Math.hypot(B.x - A.x, B.z - A.z), st = Math.max(8, Math.ceil(cl / 0.25));
         const deckY = Math.max(...pts.slice(i, j + 1).map((q) => q.y));
         const P = (t) => ({ x: A.x + (B.x - A.x) * t, y: deckY, z: A.z + (B.z - A.z) * t });
         let t0 = -1, tPrev = 0;
         for (let s = 0; s <= st; s++) {
-          const t = s / st, w = wetAt(A.x + (B.x - A.x) * t, A.z + (B.z - A.z) * t);
+          const t = s / st, w = this._overWater(A.x + (B.x - A.x) * t, A.z + (B.z - A.z) * t, FIT);
           if (w && t0 < 0) t0 = t;
           if (!w && t0 >= 0) { if ((tPrev - t0) * cl >= 0.8) out.push([P(t0), P((t0 + tPrev) / 2), P(tPrev)]); t0 = -1; }
           tPrev = t;
@@ -5291,11 +5295,11 @@ export class Scene3D {
   }
   // shared body: a deck slab tucked under the asphalt, and a railing down BOTH kerbs
   _bridgeDeck(g, f, deckMat, railMat, railH = 0.32) {
-    const dl = f.L + 0.3;   // deck = the water width + a small abutment onto each bank
-    this._bdeck(g, f, f.mid.x, f.deckY - 0.11, f.mid.z, 2 * f.W + 0.12, 0.22, dl, deckMat);
+    const dl = f.L + 0.1;   // deck = the water width, ending right at the banks
+    this._bdeck(g, f, f.mid.x, f.deckY - 0.11, f.mid.z, 2 * f.W + 0.1, 0.22, dl, deckMat);
     for (const s of [-1, 1]) {
-      const c = this._bpt(f, 0, (f.W + 0.05) * s, railH / 2 + 0.02);
-      this._bdeck(g, f, c.x, c.y, c.z, 0.09, railH, dl, railMat);
+      const c = this._bpt(f, 0, (f.W + 0.04) * s, railH / 2 + 0.02);
+      this._bdeck(g, f, c.x, c.y, c.z, 0.08, railH, dl, railMat);
     }
   }
   // Collect the crossings found in the road pass, de-duplicate lanes sharing a site into
@@ -5317,7 +5321,7 @@ export class Scene3D {
     sites.forEach((s, i) => {
       const p = s.pts, A = p[0], B = p[p.length - 1];
       let ax = B.x - A.x, az = B.z - A.z; const L = Math.hypot(ax, az) || 1; ax /= L; az /= L;
-      const f = { ax, az, px: -az, pz: ax, L, W: s.hw + 0.28, ang: Math.atan2(ax, az),
+      const f = { ax, az, px: -az, pz: ax, L, W: s.hw + 0.06, ang: Math.atan2(ax, az),   // barely wider than the carriageway
         deckY: Math.max(...p.map((q) => q.y)), mid: { x: (A.x + B.x) / 2, z: (A.z + B.z) / 2 } };
       // first two sites get the iconic Anderson & Cavenagh; the upstream ones cycle through
       // the arch/girder designs (Elgin, Coleman, Read, Ord) as the canal reaches inland.

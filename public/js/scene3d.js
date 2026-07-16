@@ -1211,7 +1211,10 @@ export class Scene3D {
     for (let oy = -r; oy <= r; oy++) for (let ox = -r; ox <= r; ox++) {
       const x = gx + ox, y = gy + oy;
       if (x < 0 || y < 0 || x >= N || y >= N) return false;
-      if (this.heritageMask[y][x]) return false;                  // …and the block must be clear of OTHER buildings (may overhang a road/rail edge, e.g. a station beside the tracks)
+      // the block must be clear of OTHER buildings and stay on dry land (never overhang
+      // the river/water) — overhanging a road/rail EDGE is fine (e.g. a station beside
+      // the tracks), which is why roads aren't checked here.
+      if (this.heritageMask[y][x] || !this.isLand(x, y)) return false;
     }
     return true;
   }
@@ -5226,9 +5229,11 @@ export class Scene3D {
       let runLen = 0; for (let k = Math.max(1, i); k <= j; k++) runLen += Math.hypot(pts[k].x - pts[k - 1].x, pts[k].z - pts[k - 1].z);
       if (runLen > 10) { i = j + 1; continue; }
       if (A && B) {
-        // straighten the lane between the banks (the chain's own end points never move)
+        if (!this._crossAngleOK(A, B)) { i = j + 1; continue; }   // along-the-bank dip, not a crossing
+        // straighten the lane between the banks (the chain's own end points never move) and
+        // FLATTEN it at deck height so the carriageway rides ON the deck, not under it
         const kS = A.idx + 1, kE = B.idx - 1;
-        for (let k = kS; k <= kE; k++) { const t = (k - kS + 1) / (kE - kS + 2); pts[k].x = A.x + (B.x - A.x) * t; pts[k].z = A.z + (B.z - A.z) * t; }
+        for (let k = kS; k <= kE; k++) { const t = (k - kS + 1) / (kE - kS + 2); pts[k].x = A.x + (B.x - A.x) * t; pts[k].z = A.z + (B.z - A.z) * t; pts[k].y = deckY; }
         res.spans.push(...this._chordSpans(A, B, deckY));
       } else if (A && !B && contEnd) {                        // run cut off by the chain end
         res.halves.push({ end: 1, J: { x: pts[n - 1].x, z: pts[n - 1].z }, A, deckY });
@@ -5287,18 +5292,19 @@ export class Scene3D {
     for (const l of links) g(find(l.j0)).links.push(l);
     const out = [];
     for (const grp of groups.values()) {
-      let best = null;                                        // farthest OPPOSITE-bank anchor pair
+      let best = null;                                        // farthest TRUE-crossing anchor pair
       for (let a = 0; a < grp.halves.length; a++) for (let b = a + 1; b < grp.halves.length; b++) {
         const A = grp.halves[a].A, B = grp.halves[b].A;
         const L = Math.hypot(A.x - B.x, A.z - B.z);
-        if (L <= 14 && (!best || L > best.L) && this._crossesRiver(A, B)) best = { A, B, L };
+        if (L <= 14 && (!best || L > best.L) && this._crossAngleOK(A, B)) best = { A, B, L };
       }
       if (!best) {
-        // no through-crossing here — the lanes only clip a LOBE of the water (in and back
-        // out on the same bank). Deck each in-water connector where it stands, unmoved.
+        // no through-crossing at this junction cluster — deck an in-water connector where
+        // it stands ONLY if it truly crosses the water (never a lane running along it).
         for (const l of grp.links) {
           const pts = l.pts, n = pts.length, A = { x: pts[0].x, z: pts[0].z }, B = { x: pts[n - 1].x, z: pts[n - 1].z };
-          for (let k = 1; k < n - 1; k++) { const t = k / (n - 1); pts[k].x = A.x + (B.x - A.x) * t; pts[k].z = A.z + (B.z - A.z) * t; }
+          if (!this._crossAngleOK(A, B)) continue;
+          for (let k = 0; k < n; k++) { const t = n === 1 ? 0 : k / (n - 1); if (k > 0 && k < n - 1) { pts[k].x = A.x + (B.x - A.x) * t; pts[k].z = A.z + (B.z - A.z) * t; } pts[k].y = l.deckY; }
           for (const s of this._chordSpans(A, B, l.deckY)) out.push({ pts: s, hw: l.hw });
         }
         continue;
@@ -5310,49 +5316,55 @@ export class Scene3D {
         if (!jp.has(id)) { let t = ((juncs[id].x - A.x) * dx + (juncs[id].z - A.z) * dz) / l2; t = Math.max(0.05, Math.min(0.95, t)); jp.set(id, { x: A.x + dx * t, z: A.z + dz * t }); }
         return jp.get(id);
       };
-      let deckY = -Infinity, hw = 0;
-      for (const h of grp.halves) { this._straightenLeg(h, jpOf(h.jid), true); deckY = Math.max(deckY, h.deckY); hw = Math.max(hw, h.hw); }
-      for (const l of grp.links) {                            // connector lane lies along the chord
+      let deckY = -Infinity, hw = 0;                          // one shared deck height for the whole crossing
+      for (const h of grp.halves) { deckY = Math.max(deckY, h.deckY); hw = Math.max(hw, h.hw); }
+      for (const l of grp.links) { deckY = Math.max(deckY, l.deckY); hw = Math.max(hw, l.hw); }
+      for (const h of grp.halves) this._straightenLeg(h, jpOf(h.jid), true, deckY);
+      for (const l of grp.links) {                            // connector lane lies flat along the chord
         const p0 = jpOf(l.j0), p1 = jpOf(l.j1), pts = l.pts, n = pts.length;
-        for (let k = 0; k < n; k++) { const t = n === 1 ? 0 : k / (n - 1); pts[k].x = p0.x + (p1.x - p0.x) * t; pts[k].z = p0.z + (p1.z - p0.z) * t; }
-        deckY = Math.max(deckY, l.deckY); hw = Math.max(hw, l.hw);
+        for (let k = 0; k < n; k++) { const t = n === 1 ? 0 : k / (n - 1); pts[k].x = p0.x + (p1.x - p0.x) * t; pts[k].z = p0.z + (p1.z - p0.z) * t; pts[k].y = deckY; }
       }
       for (const s of this._chordSpans(A, B, deckY)) out.push({ pts: s, hw });
     }
     return out;
   }
-  // straighten a half-crossing lane from its bank anchor up to the junction point Jp
-  _straightenLeg(h, Jp, moveEnd) {
+  // straighten a half-crossing lane from its bank anchor up to the junction point Jp,
+  // flat at the crossing's deck height so the carriageway rides on the deck
+  _straightenLeg(h, Jp, moveEnd, deckY) {
     const pts = h.pts, n = pts.length, A = h.A;
     if (h.end === 1) {
       const kS = A.idx + 1, kE = moveEnd ? n - 1 : n - 2, m = kE - kS + 1;
       if (m < 1) return;
-      for (let k = kS; k <= kE; k++) { const t = (k - kS + 1) / (moveEnd ? m : m + 1); pts[k].x = A.x + (Jp.x - A.x) * t; pts[k].z = A.z + (Jp.z - A.z) * t; }
+      for (let k = kS; k <= kE; k++) { const t = (k - kS + 1) / (moveEnd ? m : m + 1); pts[k].x = A.x + (Jp.x - A.x) * t; pts[k].z = A.z + (Jp.z - A.z) * t; if (deckY != null) pts[k].y = deckY; }
     } else {
       const kE = A.idx - 1, kS = moveEnd ? 0 : 1, m = kE - kS + 1;
       if (m < 1) return;
-      for (let k = kE; k >= kS; k--) { const t = (kE - k + 1) / (moveEnd ? m : m + 1); pts[k].x = A.x + (Jp.x - A.x) * t; pts[k].z = A.z + (Jp.z - A.z) * t; }
+      for (let k = kE; k >= kS; k--) { const t = (kE - k + 1) / (moveEnd ? m : m + 1); pts[k].x = A.x + (Jp.x - A.x) * t; pts[k].z = A.z + (Jp.z - A.z) * t; if (deckY != null) pts[k].y = deckY; }
     }
   }
-  // Do A and B sit on OPPOSITE banks? True when the straight chord between them crosses the
-  // river centreline an odd number of times. (A road can also pass over a LOBE of the water
-  // with both ends on the SAME bank — that gets a deck in place, never a chord stitch.)
-  _crossesRiver(A, B) {
-    const gc = (x, z) => ({ x: x / TILE + N / 2, y: N / 2 - z / TILE });
-    const a = gc(A.x, A.z), b = gc(B.x, B.z);
-    let hits = 0;
-    for (const line of this._riverCenterline().lines) {
-      for (let k = 0; k < line.length - 1; k++) {
-        const p = line[k], q = line[k + 1];
-        const d1 = (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
-        const d2 = (b.x - a.x) * (q.y - a.y) - (b.y - a.y) * (q.x - a.x);
-        if ((d1 > 0) === (d2 > 0)) continue;
-        const d3 = (q.x - p.x) * (a.y - p.y) - (q.y - p.y) * (a.x - p.x);
-        const d4 = (q.x - p.x) * (b.y - p.y) - (q.y - p.y) * (b.x - p.x);
-        if ((d3 > 0) !== (d4 > 0)) hits++;
-      }
+  // Does the chord A→B actually CROSS the water — at least ~35° to the local flow — rather
+  // than run along the bank's edge? Bank-hugging lanes that dip over the water's edge must
+  // never be decked or straightened; a genuine crossing meets the river at an angle.
+  _crossAngleOK(A, B) {
+    const cl = Math.hypot(B.x - A.x, B.z - A.z) || 1e-9, st = Math.max(8, Math.ceil(cl / 0.25));
+    let m = null;                                             // first visibly-wet point on the chord
+    for (let s = 0; s <= st; s++) {
+      const t = s / st, x = A.x + (B.x - A.x) * t, z = A.z + (B.z - A.z) * t;
+      if (this._overWater(x, z, 0.04) && this._meshY(x, z) < 0.15) { m = { x, z }; break; }
     }
-    return hits % 2 === 1;
+    if (!m) return false;
+    const gx = m.x / TILE + N / 2, gy = N / 2 - m.z / TILE;
+    let dir = null, bd = 1e9;                                 // local flow direction at that point
+    for (const line of this._riverCenterline().lines) for (let k = 0; k < line.length - 1; k++) {
+      const a = line[k], b = line[k + 1], dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy || 1e-9;
+      let t = ((gx - a.x) * dx + (gy - a.y) * dy) / l2; t = t < 0 ? 0 : t > 1 ? 1 : t;
+      const d = Math.hypot(gx - (a.x + t * dx), gy - (a.y + t * dy));
+      if (d < bd) { bd = d; dir = { x: dx, y: dy }; }
+    }
+    if (!dir) return false;
+    const dl = Math.hypot(dir.x, dir.y) || 1e-9;
+    const qx = (B.x - A.x) / cl, qy = -(B.z - A.z) / cl;      // chord direction in cell space (z flips)
+    return Math.abs(qx * (dir.y / dl) - qy * (dir.x / dl)) >= 0.57;   // |sin| ≥ sin 35°
   }
   // A thin structural strut/cable between two 3-D points — the shared building block for
   // the river bridges' arches, cables, hangers and truss members.

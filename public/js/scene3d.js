@@ -5408,6 +5408,10 @@ export class Scene3D {
     }
     const mouth = { x: -18, z: 174 };
     sites.sort((a, b) => Math.hypot(a.mid.x - mouth.x, a.mid.z - mouth.z) - Math.hypot(b.mid.x - mouth.x, b.mid.z - mouth.z));
+    // tuning hook: slide the mouth (Fullerton-area) bridge north by N world units so the
+    // map owner can pick its correct seat visually. 0 (default) = no shift.
+    const mShift = (typeof window !== 'undefined' && window.__mouthBridgeShift) || 0;
+    if (mShift && sites.length) for (const p of sites[0].pts) p.z -= mShift;   // mid is pts[1] — shifts with them
     const builders = [this._bridgeAnderson, this._bridgeCavenagh, this._bridgeElgin, this._bridgeColeman, this._bridgeRead, this._bridgeOrd];
     sites.forEach((s, i) => {
       const p = s.pts, A = p[0], B = p[p.length - 1];

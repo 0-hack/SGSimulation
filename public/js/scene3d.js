@@ -2067,6 +2067,7 @@ export class Scene3D {
     if (this.heritageGroup && this.heritageGroup.visible) roots.push(this.heritageGroup);
     if (this.natureGroup && this.natureGroup.visible) roots.push(this.natureGroup);
     if (this.airportGroup && this.airportGroup.visible) roots.push(this.airportGroup);
+    if (this._bridgeGroups) for (const g of this._bridgeGroups.values()) roots.push(g);   // player bridges
     if (!roots.length) return null;
     this.raycaster.setFromCamera(this._ndc(p), this.camera);
     const hits = this.raycaster.intersectObjects(roots, true);
@@ -2079,6 +2080,7 @@ export class Scene3D {
           if (d.kind === 'landmark') return { kind: 'landmark', id: d.id, label: d.label };
           if (d.kind === 'airportPart') return { kind: 'airportPart', part: d.part, label: d.label };
           if (d.kind === 'prop') return { kind: 'prop', i: d.i, label: d.label };
+          if (d.kind === 'bridge') return { kind: 'bridge', i: d.index, label: 'Bridge' };
           return { kind: d.kind, x: d.x, y: d.y };
         }
         o = o.parent;
@@ -2474,6 +2476,7 @@ export class Scene3D {
     else if (t.kind === 'landmark') this._tintObjectRed(this._landmarkGroup(t.id), true);
     else if (t.kind === 'airportPart') this._tintObjectRed(this._airportPartByKey(t.part), true);
     else if (t.kind === 'prop') this._tintObjectRed(this.propMeshes && this.propMeshes[t.i], true);
+    else if (t.kind === 'bridge') this._tintObjectRed(this._bridgeGroups && this._bridgeGroups.get(t.i), true);
     else this._demoRibbon(t.key, t.poly, true);   // road cut / rail / runway ribbon
   }
   _demoUnshow(t) {
@@ -2483,6 +2486,7 @@ export class Scene3D {
     else if (t.kind === 'landmark') this._tintObjectRed(this._landmarkGroup(t.id), false);
     else if (t.kind === 'airportPart') this._tintObjectRed(this._airportPartByKey(t.part), false);
     else if (t.kind === 'prop') this._tintObjectRed(this.propMeshes && this.propMeshes[t.i], false);
+    else if (t.kind === 'bridge') this._tintObjectRed(this._bridgeGroups && this._bridgeGroups.get(t.i), false);
     else this._demoRibbon(t.key, null, false);
   }
   // The pickable group for a placed building OR one still under construction (so both tint red).
@@ -5398,13 +5402,15 @@ export class Scene3D {
   // from the mouth: Anderson (steel arches) → Cavenagh (suspension) → Elgin & Coleman
   // (masonry arches) → Read & Ord (steel girder/truss).
   _buildRiverBridges(list) {
+    this._bridgeGroups = new Map();   // player bridge index -> its mesh group (for demolish pick/tint)
     const sites = [];
     for (const b of list) {
       if (!b || !b.pts || b.pts.length < 2) continue;
       const mid = b.pts[b.pts.length >> 1];
       const host = sites.find((s) => Math.hypot(s.mid.x - mid.x, s.mid.z - mid.z) < 5);
-      if (host) { if (b.pts.length > host.pts.length) { host.pts = b.pts; host.hw = b.hw; host.mid = mid; } }
-      else sites.push({ pts: b.pts, hw: b.hw, mid });
+      // a player-placed bridge OWNS its site — an automatic span nearby never displaces it
+      if (host) { if (!host.manual && (b.manual || b.pts.length > host.pts.length)) { host.pts = b.pts; host.hw = b.hw; host.mid = mid; host.manual = !!b.manual; host.bridgeIndex = b.bridgeIndex; } }
+      else sites.push({ pts: b.pts, hw: b.hw, mid, manual: !!b.manual, bridgeIndex: b.bridgeIndex });
     }
     const mouth = { x: -18, z: 174 };
     sites.sort((a, b) => Math.hypot(a.mid.x - mouth.x, a.mid.z - mouth.z) - Math.hypot(b.mid.x - mouth.x, b.mid.z - mouth.z));
@@ -5417,8 +5423,69 @@ export class Scene3D {
       // first two sites get the iconic Anderson & Cavenagh; the upstream ones cycle through
       // the arch/girder designs (Elgin, Coleman, Read, Ord) as the canal reaches inland.
       const bi = i < builders.length ? i : 2 + ((i - 2) % (builders.length - 2));
-      builders[bi].call(this, this.roadGroup, f);
+      // a player bridge gets its own group so Demolish can pick and remove exactly it
+      let g = this.roadGroup;
+      if (s.manual) { g = new THREE.Group(); g.userData.demo = { kind: 'bridge', index: s.bridgeIndex }; this.roadGroup.add(g); this._bridgeGroups.set(s.bridgeIndex, g); }
+      builders[bi].call(this, g, f);
     });
+  }
+  // Player-placed bridges from state.bridges: { x, z, len, w, rot } (world units, radians).
+  // Each becomes an exact span chord (owning its site), and every lane passing over the
+  // bridge is snapped STRAIGHT along its centreline at deck height.
+  _manualBridges() {
+    const list = (this.state && Array.isArray(this.state.bridges)) ? this.state.bridges : [];
+    return list.map((b, i) => {
+      const ax = Math.sin(b.rot || 0), az = Math.cos(b.rot || 0), hl = (b.len || 6) / 2;
+      const A = { x: b.x - ax * hl, z: b.z - az * hl }, B = { x: b.x + ax * hl, z: b.z + az * hl };
+      const deckY = Math.max(0.9, this._meshY(A.x, A.z) + 0.2, this._meshY(B.x, B.z) + 0.2);
+      return { ...b, ax, az, hl, A, B, deckY, index: i };
+    });
+  }
+  // Snap the stretch of a lane that passes over a player bridge onto the bridge's
+  // centreline, flat at deck height — the road fits straight on top of the deck.
+  // Draw chains keep their ends (junctions elsewhere must not move); nav edges are
+  // tiny 2-3 point pieces whose SHARED endpoints project identically from both
+  // sides, so those snap ends too (snapEnds) or cars would dip off the deck.
+  _snapLaneToBridges(pts, bridges, snapEnds = false) {
+    for (const b of bridges) {
+      const capL = b.hl + 1.2, capW = (b.w || 1.4) / 2 + 1.0;   // capture box around the deck
+      let i0 = -1, i1 = -1;
+      for (let k = 0; k < pts.length; k++) {
+        const dx = pts[k].x - b.x, dz = pts[k].z - b.z;
+        const al = dx * b.ax + dz * b.az, ac = -dx * b.az + dz * b.ax;
+        if (Math.abs(al) <= capL && Math.abs(ac) <= capW) { if (i0 < 0) i0 = k; i1 = k; }
+      }
+      if (i0 < 0) continue;
+      const kA = snapEnds ? i0 : Math.max(1, i0), kB = snapEnds ? i1 : Math.min(pts.length - 2, i1);
+      for (let k = kA; k <= kB; k++) {
+        const dx = pts[k].x - b.x, dz = pts[k].z - b.z;
+        let al = dx * b.ax + dz * b.az; al = Math.max(-b.hl, Math.min(b.hl, al));
+        pts[k].x = b.x + b.ax * al; pts[k].z = b.z + b.az * al; pts[k].y = b.deckY;
+      }
+    }
+  }
+  // Ghost preview of a player bridge being positioned: a translucent deck of the exact
+  // length × width at deck height, turned to `rot`. b = { x, z, len, w, rot }, null clears.
+  setBridgePreview(b) {
+    if (this._bridgePrev) {
+      this.scene.remove(this._bridgePrev);
+      this._bridgePrev.traverse((o) => { if (o.isMesh) { o.geometry.dispose(); o.material.dispose(); } });
+      this._bridgePrev = null;
+    }
+    if (!b) return;
+    const g = new THREE.Group();
+    const rot = b.rot || 0, len = b.len || 8, w = b.w || 1.6;
+    const ax = Math.sin(rot), az = Math.cos(rot), hl = len / 2;
+    const deckY = Math.max(0.9, this._meshY(b.x - ax * hl, b.z - az * hl) + 0.2, this._meshY(b.x + ax * hl, b.z + az * hl) + 0.2);
+    const mat = new THREE.MeshBasicMaterial({ color: 0x35d07f, transparent: true, opacity: 0.55, depthWrite: false });
+    const deck = new THREE.Mesh(new THREE.BoxGeometry(w, 0.22, len), mat);
+    deck.position.set(b.x, deckY, b.z); deck.rotation.y = rot; g.add(deck);
+    for (const s of [-1, 1]) {                               // parapet hints show the exact width
+      const rail = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.36, len), mat);
+      rail.position.set(b.x - az * (w / 2) * s, deckY + 0.24, b.z + ax * (w / 2) * s);
+      rail.rotation.y = rot; g.add(rail);
+    }
+    this.scene.add(g); this._bridgePrev = g;
   }
   // ANDERSON BRIDGE — three shallow steel arches springing above the roadway.
   _bridgeAnderson(g, f) {
@@ -5778,6 +5845,7 @@ export class Scene3D {
       // before any ribbon is drawn (crossings split by a junction in the water are
       // stitched between the two lanes below, which also mutates both lanes).
       const halfSpans = [], halfLinks = [], prepared = [];
+      const manualBridges = this._manualBridges();
       for (const { nodes, oneway, dirt } of this._tracedChains(roads)) {
         const raw = nodes.map((ni) => { const nd = roads.nodes[ni]; return nd && { x: nd.x, z: nd.z }; }).filter(Boolean);
         if (raw.length < 2) continue;
@@ -5789,9 +5857,15 @@ export class Scene3D {
           for (const h of r.halves) halfSpans.push({ ...h, pts, hw });
           for (const l of r.links) halfLinks.push({ ...l, pts, hw });
         }
+        if (manualBridges.length) this._snapLaneToBridges(pts, manualBridges);   // the road rides straight on a player bridge
         prepared.push({ pts, hw, dirt, oneway, nodes });
       }
       for (const s of this._stitchHalves(halfSpans, halfLinks)) bridgeSpans.push(s);
+      // player-placed bridges: exact chords at their placed position/length/width/angle
+      for (const b of manualBridges) bridgeSpans.push({
+        pts: [{ x: b.A.x, y: b.deckY, z: b.A.z }, { x: b.x, y: b.deckY, z: b.z }, { x: b.B.x, y: b.deckY, z: b.B.z }],
+        hw: Math.max(0.15, (b.w || 1.4) / 2 - 0.06), manual: true, bridgeIndex: b.index,
+      });
       // SWEEP 2 — draw the prepared (and now straightened) lanes
       for (const { pts, hw, dirt, oneway, nodes } of prepared) {
         if (dirt) {
@@ -5826,11 +5900,13 @@ export class Scene3D {
     // width wherever a bridge of a different lane/type joins — no abrupt width step.
     if (roads) {
       const infos = [], nodeHW = new Map(), nodeBridge = new Set();
+      const manualB2 = this._manualBridges();
       roads.edges.forEach((e) => {
         if (e.traced) return;              // already drawn as smooth chains above
         const T = ROAD_TYPES[e.type] || ROAD_TYPES.road;
         const pts = this._sampleEdge(roads, e);
         if (pts.length < 2) return;
+        if (manualB2.length) this._snapLaneToBridges(pts, manualB2);   // player roads also ride straight on a player bridge
         const myHW = T.renderHW || T.width / 2;
         let bridged = !!e.elevated;
         if (!bridged) for (let i = 0; i < pts.length; i++) { if (pts[i].y - this._roadY(pts[i].x, pts[i].z) > 0.8) { bridged = true; break; } }
@@ -5965,10 +6041,15 @@ export class Scene3D {
       add([{ x: a.x, y: 0.16, z: a.z }, { x: b.x, y: 0.16, z: b.z }], 2, 'road', false, true, false, false, false);
     }
     const roads = this.state?.roads;
-    if (roads) roads.edges.forEach((e) => {
-      const T = ROAD_TYPES[e.type] || ROAD_TYPES.road;
-      add(this._sampleEdge(roads, e), e.lanes || T.lanes, e.type, e.elevated, !e.elevated, e.traced, e.oneway, e.dirt);
-    });
+    if (roads) {
+      const mb = this._manualBridges();   // traffic drives straight over player bridges too
+      roads.edges.forEach((e) => {
+        const T = ROAD_TYPES[e.type] || ROAD_TYPES.road;
+        const pts = this._sampleEdge(roads, e);
+        if (mb.length) this._snapLaneToBridges(pts, mb, true);
+        add(pts, e.lanes || T.lanes, e.type, e.elevated, !e.elevated, e.traced, e.oneway, e.dirt);
+      });
+    }
     this.navNodes = nodes; this.navAdj = adj;
     this._computeOneWayGroups();   // group one-way edges into "roads" (capacity: one car each)
     this._buildLights();

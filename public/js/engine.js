@@ -83,6 +83,7 @@ export function newGame({ name = 'New Singapore', owner = 'Anonymous' } = {}) {
     pendingDecisions: [],     // queue of decisions awaiting the PM — NON-blocking; the country runs on meanwhile
     _decUid: 0,               // monotonic id for decision cards
     props: [],                // free-placed street furniture (lamps, signals): { type, x, z, rot } in WORLD coords, not grid-bound
+    bridges: [],              // player-placed river bridges: { x, z, len, w, rot } in WORLD coords — roads snap straight across them
     roads: { nodes: [], edges: [], islands: [] }, // player-drawn freeform road network
     reclaimed: [],            // [x,y] sea cells reclaimed into finished, buildable land
     reclaiming: [],           // { x,y,total,left } cells still rising from the sea (legacy per-cell)
@@ -195,6 +196,7 @@ export function ensureGrid(state) {
   if (!Array.isArray(state.plants)) state.plants = [];
   if (!state.surfaces || typeof state.surfaces !== 'object') state.surfaces = {};
   if (!state.removedTrees || typeof state.removedTrees !== 'object') state.removedTrees = {};
+  if (!Array.isArray(state.bridges)) state.bridges = [];
   if (!state.removedLandmarks || typeof state.removedLandmarks !== 'object') state.removedLandmarks = {};
   if (!state.removedAirportParts || typeof state.removedAirportParts !== 'object') state.removedAirportParts = {};
   if (!Array.isArray(state.props)) state.props = [];
@@ -354,6 +356,23 @@ export function placeProp(state, { type, x, z, rot = 0 }) {
 export function removeProp(state, i) {
   if (!Array.isArray(state.props) || i < 0 || i >= state.props.length) return false;
   state.props.splice(i, 1);
+  return true;
+}
+// A player-placed river bridge: { x, z, len, w, rot } in world coords. Priced by span —
+// a longer/wider deck costs more. Returns the bridge, or null if it can't be afforded.
+export function placeBridge(state, { x, z, len = 8, w = 1.6, rot = 0 }) {
+  len = Math.max(3, Math.min(30, +len || 8)); w = Math.max(0.6, Math.min(4, +w || 1.6));
+  const cost = Math.round((6 + len * 1.1 * (0.7 + w * 0.4)) * (state.economy?.priceIndex || 1));
+  if (state.treasury < cost) return null;
+  state.treasury -= cost;
+  if (!Array.isArray(state.bridges)) state.bridges = [];
+  const bridge = { x, z, len, w, rot };
+  state.bridges.push(bridge);
+  return bridge;
+}
+export function removeBridge(state, i) {
+  if (!Array.isArray(state.bridges) || i < 0 || i >= state.bridges.length) return false;
+  state.bridges.splice(i, 1);
   return true;
 }
 

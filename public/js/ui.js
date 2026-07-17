@@ -206,6 +206,29 @@ function renderRoads(ctx) {
   }
   wrap.append(el('p', 'tool-hint', 'Tip: tap to chain pieces end-to-end (yellow ring marks the join); the cost adds up. ✔ Build starts construction, ✕ Cancel discards. ↻ Rotate / R aims the first piece.'));
   wrap.append(tools);
+
+  // ---- River bridge: place a deck by hand, roads snap straight across it ----
+  if (ctx.bridge && ctx.selectBridgeTool) {
+    wrap.append(el('div', 'section-title', 'River bridge'));
+    wrap.append(el('p', 'policy-desc', 'Place a bridge deck exactly where YOU want it. Tap the river to drop it, tap again to move it, drag the dial (or press R) to rotate, and set the length & width below — then ✓ Done to build. Any road crossing the deck straightens and runs flat on top.'));
+    const bb = el('button', 'btn' + (ctx.bridge.active ? ' active' : ''),
+      `<span class="bi">🌉</span> ${ctx.bridge.active ? 'Bridge tool ON — tap the river to place' : 'Place a bridge'}`);
+    bb.onclick = () => ctx.selectBridgeTool();
+    wrap.append(bb);
+    const mkSlider = (label, min, max, step, val, fmt, apply) => {
+      const row = el('div', 'brush-row');
+      row.append(el('span', 'brush-label', label));
+      const slider = document.createElement('input');
+      slider.type = 'range'; slider.min = String(min); slider.max = String(max); slider.step = String(step); slider.value = String(val);
+      const out = el('span', 'brush-val', fmt(val));
+      slider.oninput = (e) => { const v = parseFloat(e.target.value); out.textContent = fmt(v); apply(v); };
+      row.append(slider); row.append(out);
+      wrap.append(row);
+    };
+    const m = (v) => `${Math.round(v * 12.5)} m`;          // 1 world unit ≈ 12.5 m on this map
+    mkSlider('Length', 3, 30, 0.5, ctx.bridge.len ?? 8, m, (v) => ctx.setBridgeLen(v));
+    mkSlider('Width', 0.6, 4, 0.1, ctx.bridge.w ?? 1.6, m, (v) => ctx.setBridgeW(v));
+  }
   return wrap;
 }
 

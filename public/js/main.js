@@ -3,7 +3,7 @@ import {
   newGame, tickDay, build, demolish, queueDemolish, queueDemoVisual, canPlace, derive, fireDamage,
   resolveEvent, snapshot, refreshSummary, ensureGrid, packState, issueBond, repayDebt,
   projectProgress, checkProjects,
-  reclaimLand, reclaimCost, buildingCost, priced, placeProp, removeProp,
+  reclaimLand, reclaimCost, buildingCost, priced, placeProp, removeProp, placeBridge, removeBridge,
   routeLength, addRoadwork, smoothRoute, spliceRoad,
   polyArea, reclaimAreaCost, addReclaimArea,
   roadEraseCover, eraseRoadsAlong,
@@ -121,6 +121,7 @@ const G = {
   demoRoadPreview: null,        // live hover preview (road chunk under the cursor) — what a click would cut
   pieceRot: 0,                  // running orientation of the road piece being aimed (for the dial)
   road: { tool: null, type: 'road', elevated: false, pending: [] },
+  bridge: { active: false, len: 8, w: 1.6, rot: 0, pending: null },  // Bridge tool: tap to drop a pending deck, then move/rotate/resize and ✓ Done
   reclaim: { active: false },  // land-reclamation tool: tap sea to fill land
   plant: { active: false, kind: null },  // Plants tool: tap to place individual tropical specimens
   surface: { active: false, type: 'concrete', scale: 1 },  // Surface-paint tool: drag to paint ground surfaces (brush scale in cells)
@@ -155,13 +156,14 @@ function boot() {
 
   // ✓ Done: confirm the object you're positioning / commit the demolish selection,
   // else exit place mode.
-  $('tool-banner-stop').onclick = () => { if (G.adjust) commitAdjust(); else if (G.build.bulldoze && demoCount()) commitDemolish(); else cancelTools(); };
+  $('tool-banner-stop').onclick = () => { if (G.bridge.pending) commitBridge(); else if (G.adjust) commitAdjust(); else if (G.build.bulldoze && demoCount()) commitDemolish(); else cancelTools(); };
   // 🗑 Remove: discard the object you're positioning, or clear the demolish selection.
-  $('tool-banner-remove').onclick = () => { if (G.adjust) cancelAdjust('Removed.'); else if (G.build.bulldoze && demoCount()) { clearDemoSelection(); toast('Selection cleared.'); } };
+  $('tool-banner-remove').onclick = () => { if (G.bridge.pending) cancelBridge('Removed.'); else if (G.adjust) cancelAdjust('Removed.'); else if (G.build.bulldoze && demoCount()) { clearDemoSelection(); toast('Selection cleared.'); } };
   // ⛰ Cut / 🏗 Lift: switch a sloped building between excavated and elevated.
   $('tool-banner-found').onclick = () => toggleFoundation();
   $('tool-banner-rotate').onclick = () => {
-    if (G.adjust) rotateAdjust(Math.PI / 4);              // 45° snap (drag/dial give any angle)
+    if (G.bridge.pending) setBridgeRot((G.bridge.pending.rot || 0) + Math.PI / 4);
+    else if (G.adjust) rotateAdjust(Math.PI / 4);         // 45° snap (drag/dial give any angle)
     else if (G.view && G.view.pieceMode) rotatePieceBy(Math.PI / 4);
     else if (G.build.selected) rotateBuild(Math.PI / 4);  // 45° per tap (pre-aims the ghost)
   };
@@ -172,11 +174,13 @@ function boot() {
     const t = e.target;
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
     if (e.key === 'Escape' && G._pendingCommit) { closeCommit(true); toast('Discarded.'); e.preventDefault(); return; }
+    if (e.key === 'Escape' && G.bridge.pending) { cancelBridge('Cancelled.'); e.preventDefault(); return; }
     if (e.key === 'Escape' && G.adjust) { cancelAdjust('Cancelled.'); e.preventDefault(); return; }
     if (e.key === 'Escape' && G.build.bulldoze && demoCount()) { clearDemoSelection(); toast('Selection cleared.'); e.preventDefault(); return; }
     if (e.key === 'Escape' && activeTool()) { cancelTools(); toast('Stopped placing.'); e.preventDefault(); }
     if (e.key === 'r' || e.key === 'R') {
-      if (G.adjust) { rotateAdjust(Math.PI / 4); e.preventDefault(); }
+      if (G.bridge.pending) { setBridgeRot((G.bridge.pending.rot || 0) + Math.PI / 4); e.preventDefault(); }
+      else if (G.adjust) { rotateAdjust(Math.PI / 4); e.preventDefault(); }
       else if (G.view && G.view.pieceMode) { rotatePieceBy(Math.PI / 4); e.preventDefault(); }
       else if (G.build.selected) { rotateBuild(Math.PI / 4); e.preventDefault(); }
     }
@@ -559,6 +563,17 @@ function onTileTap(x, y, world, landmark) {
     else { G.view.addPlant(world.x, world.z, G.plant.kind, Math.random() * Math.PI * 2, 0.85 + Math.random() * 0.4); G.dirty = true; }
     return;
   }
+  // Bridge tool: the first tap drops a pending bridge at the exact spot; further taps
+  // MOVE it there. The dial rotates it, the panel sliders set length & width, ✓ builds it.
+  if (G.bridge.active && !G.build.bulldoze && world) {
+    if (!G.bridge.pending) {
+      G.bridge.pending = { x: world.x, z: world.z, len: G.bridge.len, w: G.bridge.w, rot: G.bridge.rot };
+      toast('Positioning bridge — tap to move · drag the dial to rotate · panel sliders set length & width · ✓ Done.');
+    } else { G.bridge.pending.x = world.x; G.bridge.pending.z = world.z; }
+    G.view.setBridgePreview(G.bridge.pending);
+    updateToolBanner();
+    return;
+  }
   const b = G.build;
   if (b.bulldoze) {
     // Multi-select: a tap TOGGLES the item under the cursor in/out of the teardown
@@ -744,6 +759,52 @@ function cancelAdjust(msg) {
   updateToolBanner();
   if (msg) toast(msg);
 }
+// ---- Bridge tool: the player places the bridge personally — position (tap), angle
+// (dial / R), length & width (panel sliders) — and the road snaps straight across it.
+function commitBridge() {
+  const b = G.bridge.pending; if (!b) return;
+  const placed = placeBridge(G.state, b);
+  if (!placed) { toast('Treasury too low for this bridge.'); return; }
+  G.bridge.pending = null;
+  G.view.setBridgePreview(null);
+  G.view.rebuildRoadNet();               // the deck appears and any road over it snaps straight on top
+  afterEdit();
+  toast('🌉 Bridge built — the road runs straight across the deck.');
+  updateToolBanner();
+}
+function cancelBridge(msg) {
+  if (!G.bridge.pending) return;
+  G.bridge.pending = null;
+  if (G.view) G.view.setBridgePreview(null);
+  updateToolBanner();
+  if (msg) toast(msg);
+}
+function setBridgeRot(rad) {
+  rad = ((rad % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+  G.bridge.rot = rad;
+  if (G.bridge.pending) { G.bridge.pending.rot = rad; G.view.setBridgePreview(G.bridge.pending); }
+  updateRotDial();
+}
+// fully drop the tool (used when another tool takes over)
+function clearBridgeTool() {
+  if (G.bridge.pending && G.view) G.view.setBridgePreview(null);
+  G.bridge.active = false; G.bridge.pending = null;
+}
+function selectBridgeTool() {
+  clearAdjustSilently();
+  if (demoCount() || G.demoHover) clearDemoSelection();
+  const on = !G.bridge.active;
+  clearBridgeTool();
+  G.bridge.active = on;
+  G.build.selected = null; G.build.bulldoze = false; G.reclaim.active = false;
+  G.plant.active = false; G.plant.kind = null; G.surface.active = false;
+  G.road.tool = null; G.road.pending = [];
+  if (G.view) { G.view.setPreview(null); G.view.setBulldoze(false); G.view.setRoadMode(false); G.view.setPaintMode(false); G.view.setDrawMode(false); G.view.setPieceMode(false); G.view.setRoundaboutPreview(false); G.view.setPlantMode(false); G.view.showRoadPreview([]); }
+  refreshPanel(); updateToolBanner();
+  if (G.bridge.active) { closeSheet(); toast('Bridge: tap the river where the bridge should stand — then move, rotate and resize it, and ✓ Done.'); }
+}
+function setBridgeLen(v) { G.bridge.len = v; if (G.bridge.pending) { G.bridge.pending.len = v; G.view.setBridgePreview(G.bridge.pending); } }
+function setBridgeW(v) { G.bridge.w = v; if (G.bridge.pending) { G.bridge.pending.w = v; G.view.setBridgePreview(G.bridge.pending); } }
 
 function afterEdit() {
   G.dirty = true;
@@ -821,17 +882,21 @@ function activeTool() {
   if (G.plant.active && G.plant.kind) return { verb: 'plant', label: '🌿 ' + (PLANTS[G.plant.kind]?.name || 'Plant') };
   if (G.surface.active) return { verb: 'paint', label: '🎨 ' + (G.surface.type === 'clear' ? 'Clear surface' : (SURFACE_TYPES[G.surface.type]?.name || 'Surface')) };
   if (G.reclaim.active) return { verb: 'fill with land', label: '🏝 Reclaim' };
+  if (G.bridge.active) return { verb: 'place a bridge', label: '🌉 Bridge' };
   if (G.road.tool) return { verb: 'draw', label: '🛣 Road · ' + G.road.tool };
   return null;
 }
 function updateToolBanner() {
-  const t = activeTool(), el = $('tool-banner'), adjusting = !!G.adjust;
+  const t = activeTool(), el = $('tool-banner'), adjusting = !!G.adjust, bridging = !!G.bridge.pending;
   // Editing a tool freezes the clock and the living map so you can build calmly.
-  setEditPause(!!t || adjusting);
+  setEditPause(!!t || adjusting || bridging);
   if (!el) return;
-  if (!t && !adjusting) { el.classList.add('hidden'); return; }
+  if (!t && !adjusting && !bridging) { el.classList.add('hidden'); return; }
   const piece = G.road.tool === 'straight' || G.road.tool === 'curveL' || G.road.tool === 'curveR';
-  if (adjusting) {
+  if (bridging) {
+    const b = G.bridge.pending;
+    $('tool-banner-text').innerHTML = `<b>⏸ Positioning · 🌉 Bridge (${Math.round(b.len * 12.5)} m × ${Math.round(b.w * 12.5)} m)</b><br><span class="tb-sub">Tap the map to move · dial / ↻ to rotate · panel sliders set length &amp; width · 🗑 Remove · ✓ Done</span>`;
+  } else if (adjusting) {
     const name = BUILDINGS[G.adjust.key]?.name || 'object';
     $('tool-banner-text').innerHTML = `<b>⏸ Positioning · ${name}</b><br><span class="tb-sub">Drag it to rotate · tap a new spot to move · dial / ↻ for snaps · 🗑 Remove · ✓ Done</span>`;
   } else if (G.build.bulldoze) {
@@ -846,9 +911,9 @@ function updateToolBanner() {
     found.classList.toggle('hidden', !show);
     if (show) found.textContent = G.adjust.fmode === 'lift' ? '🏗 Elevated' : '⛰ Excavated';
   }
-  $('tool-banner-rotate').classList.toggle('hidden', !(adjusting || piece || G.build.selected));
-  $('tool-banner-remove').classList.toggle('hidden', !(adjusting || demoReady));   // 🗑 = clear the selection
-  const stop = $('tool-banner-stop'); if (stop) stop.textContent = (adjusting || demoReady) ? '✓ Done' : '✕ Done';
+  $('tool-banner-rotate').classList.toggle('hidden', !(adjusting || piece || G.build.selected || bridging));
+  $('tool-banner-remove').classList.toggle('hidden', !(adjusting || demoReady || bridging));   // 🗑 = clear the selection
+  const stop = $('tool-banner-stop'); if (stop) stop.textContent = (adjusting || demoReady || bridging) ? '✓ Done' : '✕ Done';
   updateRotDial();   // show the live-facing dial alongside the rotate button
   el.classList.remove('hidden');
 }
@@ -870,6 +935,7 @@ function rotatePieceBy(delta) {
 // marker spins to the chosen angle, plus the degrees. Sits at the far left of the
 // banner, clear of the rotate button, so it's never hidden by the cursor.
 function rotDialState() {
+  if (G.bridge.pending) return { rad: G.bridge.pending.rot || 0, show: true };
   if (G.adjust) return { rad: G.adjust.rot || 0, show: true };
   if (G.build.selected) return { rad: G.build.rot || 0, show: true };
   const piece = G.road.tool === 'straight' || G.road.tool === 'curveL' || G.road.tool === 'curveR';
@@ -908,6 +974,7 @@ function setupRotDialDrag() {
   };
   const apply = (e) => {
     const rad = ((angleAt(e) % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+    if (G.bridge.pending) { setBridgeRot(rad); return; }
     if (G.adjust) { G.adjust.rot = rad; G.view.setAdjustRotation(rad); }
     else if (G.view && G.view.pieceMode) { rotatePieceBy(rad - (G.pieceRot || 0)); return; }
     else if (G.build.selected) { G.build.rot = rad; if (G.view) G.view.setBuildRotation(rad); }
@@ -932,6 +999,7 @@ function setEditPause(on) {
 }
 function cancelTools() {
   clearAdjustSilently();
+  clearBridgeTool();
   hideHoverInfo();
   if (demoCount() || G.demoHover) clearDemoSelection();
   G.build.selected = null; G.build.bulldoze = false; G.reclaim.active = false;
@@ -945,6 +1013,7 @@ function cancelTools() {
 // Surface-paint tool: pick a ground surface and drag to paint it over the land.
 function selectSurface(type) {
   clearAdjustSilently();
+  clearBridgeTool();
   if (demoCount() || G.demoHover) clearDemoSelection();
   G.surface.type = type; G.surface.active = true;
   G.build.selected = null; G.build.bulldoze = false; G.reclaim.active = false; G.plant.active = false; G.plant.kind = null; G.road.tool = null;
@@ -966,6 +1035,7 @@ function onPaintSurface(x, y) {
 // Plants tool: pick a tropical species and start placing single specimens.
 function selectPlant(kind) {
   clearAdjustSilently();
+  clearBridgeTool();
   if (demoCount() || G.demoHover) clearDemoSelection();
   G.plant.active = true; G.plant.kind = kind;
   G.build.selected = null; G.build.bulldoze = false; G.reclaim.active = false; G.road.tool = null;
@@ -1076,9 +1146,11 @@ function commitDemolish() {
   if (!G.demoSel.size && !cuts.length) { cancelTools(); return; }
   const items = [];
   const propIdx = [];                    // free-placed street furniture cleared at once (a lamp is a quick job)
+  const bridgeIdx = [];                  // player-placed bridges cleared at once; roads re-route after
   let maxDemo = 0;                       // longest teardown in this batch (for the toast)
   for (const t of G.demoSel.values()) {
     if (t.kind === 'prop') { propIdx.push(t.i); continue; }
+    if (t.kind === 'bridge') { bridgeIdx.push(t.i); continue; }
     if (t.kind === 'building') items.push({ kind: 'building', x: t.x, y: t.y });
     else if (t.kind === 'heritage') {
       // A prebuilt heritage house that sits in the grid tears down over TIME (hoarding
@@ -1106,6 +1178,10 @@ function commitDemolish() {
   if (propIdx.length) {                  // remove props highest-index-first so earlier indices stay valid
     propIdx.sort((p, q) => q - p).forEach((i) => removeProp(G.state, i));
     G.view.syncProps(G.state); G.dirty = true;
+  }
+  if (bridgeIdx.length) {                // remove bridges highest-index-first; the road net re-drapes
+    bridgeIdx.sort((p, q) => q - p).forEach((i) => removeBridge(G.state, i));
+    roadsRebuilt = true; G.dirty = true;
   }
   if (items.length) queueDemolish(G.state, items);
   for (const it of items) { if (it.kind === 'building') { const c = G.state.grid?.[it.y]?.[it.x]; if (c && c.demolish) maxDemo = Math.max(maxDemo, c.demolish.total); } }
@@ -1350,6 +1426,7 @@ function onPieceChain(mergedPts) {
 }
 function selectRoadTool(tool) {
   clearAdjustSilently();
+  clearBridgeTool();
   G.road.tool = G.road.tool === tool ? null : tool;
   G.road.pending = [];
   G.pieceRot = 0;             // fresh orientation for a newly-picked piece tool
@@ -1371,6 +1448,7 @@ function selectRoadTool(tool) {
 function toggleReclaim() {
   G.reclaim.active = !G.reclaim.active;
   if (G.reclaim.active) {
+    clearBridgeTool();
     G.build.selected = null; G.build.bulldoze = false;
     G.road.tool = null; G.view.setRoadMode(false); G.view.showRoadPreview([]);
     G.view.setPreview(null); G.view.setBulldoze(false);
@@ -1420,12 +1498,14 @@ function refreshPanel() {
       setCommFunc: (f) => { G.community.func = f; loadCommunity(); },
       road: G.road, reclaim: G.reclaim, toggleReclaim, plant: G.plant, selectPlant,
       surface: G.surface, selectSurface, setSurfaceScale,
+      bridge: G.bridge, selectBridgeTool, setBridgeLen, setBridgeW,
       selectRoadTool, setRoadType: (t) => { G.road.type = t; applyRoadToolMode(); refreshPanel(); },
       toggleBridge: () => { G.road.elevated = !G.road.elevated; refreshPanel(); },
       setCat: (c) => { clearAdjustSilently(); G.build.cat = c; if (c !== 'roads') { G.road.tool = null; G.view.setRoadMode(false); } if (c !== 'land') { G.reclaim.active = false; G.surface.active = false; G.view.setPaintMode(false); } if (c !== 'plants' && G.plant.active) { G.plant.active = false; G.plant.kind = null; G.view.setPlantMode(false); } refreshPanel(); updateToolBanner(); if (c === 'community' && !G.community.loading && G.community.list == null) loadCommunity(); },
       setTheme: (t) => { G.build.theme = t; if (G.adjust) { G.adjust.theme = t; G.view.enterAdjust(G.adjust.x, G.adjust.y, G.adjust.key, t, G.adjust.rot); } else if (G.build.selected) G.view.setPreview(G.build.selected, t); refreshPanel(); },
       selectBuilding: (k) => {
         clearAdjustSilently();
+        clearBridgeTool();
         G.build.selected = G.build.selected === k ? null : k;
         G.build.bulldoze = false; G.reclaim.active = false; G.view.setPaintMode(false);
         G.road.tool = null; G.view.setRoadMode(false); G.view.setDrawMode(false); G.view.setPieceMode(false); G.view.showRoadPreview([]);
@@ -1440,6 +1520,7 @@ function refreshPanel() {
       },
       toggleBulldoze: () => {
         clearAdjustSilently();
+        clearBridgeTool();
         G.demoSel.clear(); G.demoHover = null; G.demoCuts = [];
         G.build.bulldoze = !G.build.bulldoze;
         G.build.selected = null; G.reclaim.active = false; G.view.setPaintMode(false);
@@ -1787,6 +1868,7 @@ window.__sg = {
   selectBuilding: (k) => { clearAdjustSilently(); G.build.selected = k; G.build.bulldoze = false; if (G.view) G.view.setPreview(k, G.build.theme); updateToolBanner(); },
   setBulldoze: (on) => { clearAdjustSilently(); if (!on) hideHoverInfo(); G.demoSel.clear(); G.demoHover = null; G.demoCuts = []; G.build.selected = null; G.build.bulldoze = !!on; if (G.view) G.view.setBulldoze(!!on); updateToolBanner(); },
   selectPlant, selectSurface, setSurfaceScale, toggleFoundation,
+  selectBridgeTool, commitBridge, cancelBridge, setBridgeRot, setBridgeLen, setBridgeW,
   tick: (n = 1) => { for (let i = 0; i < n; i++) tickDay(G.state); if (G.view) { G.view.syncConstruction(G.state); G.view.syncDemolition(G.state); } },
   derive: () => derive(G.state),
   afterEdit: () => afterEdit(),
@@ -1798,6 +1880,7 @@ window.__sg = {
   get build() { return G.build; },
   get plant() { return G.plant; },
   get surface() { return G.surface; },
+  get bridge() { return G.bridge; },
 };
 
 boot();

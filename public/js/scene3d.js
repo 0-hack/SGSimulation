@@ -830,7 +830,11 @@ export class Scene3D {
     const ctrl = pts.map((p) => { const c = cellToWorld(p.x, p.y); return new THREE.Vector3(c.x, 0, c.z); });
     const curve = new THREE.CatmullRomCurve3(ctrl, false, 'catmullrom', 0.5);
     const STEPS = Math.max(10, (pts.length - 1) * 14), samples = curve.getPoints(STEPS);
-    const pos = [], idx = [], tipFrac = 0.2;
+    // taper the inland tip over a FIXED ~3 world units, not a fraction of the whole
+    // branch — on the long river a 20% taper thinned the last third of the canal and
+    // left a road crossing near the tip with a bridge over dry land
+    let clen = 0; for (let i = 1; i < ctrl.length; i++) clen += ctrl[i].distanceTo(ctrl[i - 1]);
+    const pos = [], idx = [], tipFrac = Math.min(0.2, 3.0 / Math.max(1, clen));
     for (let i = 0; i <= STEPS; i++) {
       const f = (i / STEPS) * (pts.length - 1);
       const i0 = Math.min(pts.length - 1, Math.floor(f)), i1 = Math.min(pts.length - 1, i0 + 1), tt = f - i0;
@@ -5286,19 +5290,33 @@ export class Scene3D {
   // tongue (terrain above it); that part must not be decked over, and a tongue between two
   // channels splits them into separate spans. Each span ends at the visible water's edge.
   _chordSpans(A, B, deckY) {
-    const FIT = 0.04;
+    const FIT = 0.04, WIDE = 0.9, SEAT = 0.3;
     const cl = Math.hypot(B.x - A.x, B.z - A.z), st = Math.max(8, Math.ceil(cl / 0.25));
     const P = (t) => ({ x: A.x + (B.x - A.x) * t, y: deckY, z: A.z + (B.z - A.z) * t });
     const vis = (x, z) => this._overWater(x, z, FIT) && this._meshY(x, z) < 0.15;
+    // The tight FIT interval follows the analytic centreline, but the DRAWN ribbon
+    // (a spline) bows away from it — a deck cut to FIT can stop mid-water. Extend
+    // each end through the generous pad until true land, plus a small bank seat, so
+    // the deck's edges LINK the green land on both sides. (The meshY term still
+    // stops the extension at coastal tongues, which must not be decked over.)
+    const wide = (t) => { const x = A.x + (B.x - A.x) * t, z = A.z + (B.z - A.z) * t; return this._overWater(x, z, WIDE) && this._meshY(x, z) < 0.15; };
     const out = [];
+    const push = (ta, tb) => {
+      const step = 0.2 / cl, cap = 2.8 / cl;
+      let a = ta, b = tb;
+      while (a - step > 0 && ta - a < cap && wide(a - step)) a -= step;
+      while (b + step < 1 && b - tb < cap && wide(b + step)) b += step;
+      a = Math.max(0, a - SEAT / cl); b = Math.min(1, b + SEAT / cl);
+      out.push([P(a), P((a + b) / 2), P(b)]);
+    };
     let t0 = -1, tPrev = 0;
     for (let s = 0; s <= st; s++) {
       const t = s / st, w = vis(A.x + (B.x - A.x) * t, A.z + (B.z - A.z) * t);
       if (w && t0 < 0) t0 = t;
-      if (!w && t0 >= 0) { if ((tPrev - t0) * cl >= 0.8) out.push([P(t0), P((t0 + tPrev) / 2), P(tPrev)]); t0 = -1; }
+      if (!w && t0 >= 0) { if ((tPrev - t0) * cl >= 0.8) push(t0, tPrev); t0 = -1; }
       tPrev = t;
     }
-    if (t0 >= 0 && (1 - t0) * cl >= 0.8) out.push([P(t0), P((t0 + 1) / 2), P(1)]);
+    if (t0 >= 0 && (1 - t0) * cl >= 0.8) push(t0, 1);
     return out;
   }
   // Stitch crossings that no single lane sees whole: lanes that STOP at a junction in the
@@ -5443,6 +5461,7 @@ export class Scene3D {
     const mouth = { x: -18, z: 174 };
     sites.sort((a, b) => Math.hypot(a.mid.x - mouth.x, a.mid.z - mouth.z) - Math.hypot(b.mid.x - mouth.x, b.mid.z - mouth.z));
     const builders = [this._bridgeAnderson, this._bridgeCavenagh, this._bridgeElgin, this._bridgeColeman, this._bridgeRead, this._bridgeOrd];
+    this._bridgeFrames = [];                 // introspection: every deck frame actually built
     sites.forEach((s, i) => {
       const p = s.pts, A = p[0], B = p[p.length - 1];
       let ax = B.x - A.x, az = B.z - A.z; const L = Math.hypot(ax, az) || 1; ax /= L; az /= L;
@@ -5454,6 +5473,7 @@ export class Scene3D {
       // a player bridge gets its own group so Demolish can pick and remove exactly it
       let g = this.roadGroup;
       if (s.manual) { g = new THREE.Group(); g.userData.demo = { kind: 'bridge', index: s.bridgeIndex }; this.roadGroup.add(g); this._bridgeGroups.set(s.bridgeIndex, g); }
+      this._bridgeFrames.push({ ...f, manual: !!s.manual });
       builders[bi].call(this, g, f);
     });
   }

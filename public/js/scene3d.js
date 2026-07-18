@@ -587,6 +587,18 @@ export class Scene3D {
     }
     this._computeWaterDist();   // cell distance-to-water field (carves hill valleys)
     this._computeCoastDist();   // cell distance-to-sea field (keeps hills off the coast)
+    // River valley segments (world coords) for _terrainHN's ANALYTIC valley factor.
+    // The cell mask above is deliberately TIGHT (see inRiver) and can't flatten the
+    // valley any more — cell-quantised flattening painted a ~2-cell apron that
+    // swallowed the quay-road ends — so the heightfield suppresses hills by true
+    // distance to the channel polyline instead (continuous, no cell steps).
+    this._riverSegs = [];
+    for (const br of riverBranches(N)) {
+      for (let i = 0; i < br.length - 1; i++) {
+        const a = cellToWorld(br[i].x, br[i].y), b = cellToWorld(br[i + 1].x, br[i + 1].y);
+        this._riverSegs.push({ ax: a.x, az: a.z, bx: b.x, bz: b.z });
+      }
+    }
     // Reservoirs are drawn as filled dendritic LAKES traced from the survey map;
     // the river is still a slim swept ribbon. One unified water colour so the
     // river, reservoirs, coastal inlets and the open sea all read as one body.
@@ -658,6 +670,22 @@ export class Scene3D {
     const cd = this.coastDist ? this.coastDist[cy][cx] : 99;
     const coast = smoothstep(0.5, 4.0, cd);                // 0 at the shoreline, 1 inland
     let H = Math.max(0, h * valley * coast);
+    // the Singapore River's valley, by TRUE distance to the channel: flat floodplain
+    // within ~4 world units of the water, full hills again by ~12 (the tight cell
+    // mask can't drive this — see _buildCatchment)
+    if (H > 0 && this._riverSegs) {
+      const wx = (nx - 0.5) * WORLD, wz = (0.5 - ny) * WORLD;
+      let d2 = Infinity;
+      for (const s of this._riverSegs) {
+        const vx = s.bx - s.ax, vz = s.bz - s.az, L2 = vx * vx + vz * vz || 1e-9;
+        let t = ((wx - s.ax) * vx + (wz - s.az) * vz) / L2;
+        t = t < 0 ? 0 : t > 1 ? 1 : t;
+        const dx = wx - (s.ax + vx * t), dz = wz - (s.az + vz * t), dd = dx * dx + dz * dz;
+        if (dd < d2) d2 = dd;
+        if (d2 < 1) break;
+      }
+      H *= smoothstep(4.0, 12.0, Math.sqrt(d2));
+    }
     if (this._carves) { const wx = (nx - 0.5) * WORLD, wz = (0.5 - ny) * WORLD; H = this._applyCarves(wx, wz, H); }
     return H;
   }

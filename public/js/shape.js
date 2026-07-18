@@ -213,7 +213,7 @@ export function riverBranches(size) {
      P(22.62, 19.12, 0.020), P(22.55, 19.18, 0.018), P(22.46, 19.14, 0.014), P(22.38, 19.13, 0.014), P(22.28, 19.13, 0.014),
      // bx 21.9-22.2: the three quay stubs end AT the north bank here — the channel dips
      // just south of their tips and slims to clear the south-bank road too
-     P(22.20, 19.11, 0.012), P(22.17, 19.07, 0.012), P(22.13, 19.028, 0.012), P(22.09, 19.013, 0.012), P(22.05, 19.016, 0.012), P(22.00, 19.016, 0.012), P(21.95, 19.028, 0.012), P(21.86, 19.10, 0.016),
+     P(22.20, 19.11, 0.012), P(22.17, 19.07, 0.012), P(22.13, 19.028, 0.012), P(22.09, 19.009, 0.012), P(22.05, 19.016, 0.012), P(22.00, 19.016, 0.012), P(21.95, 19.028, 0.012), P(21.86, 19.10, 0.016),
      P(21.82, 19.19, 0.020), P(21.79, 19.26, 0.020), P(21.71, 19.30, 0.020),
      // the canalised upper reach (the survey-map canal toward Alexandra) — a thin straight cut
      P(21.64, 19.33, 0.012), P(21.56, 19.32, 0.012),
@@ -226,7 +226,10 @@ export function riverBranches(size) {
   return _rivCache;
 }
 export function inRiver(x, y, size) {
-  return nearBranches(x, y, riverBranches(size), 0.35);
+  // Tight margin: this drives the cell mask that paints/carves the BANK apron
+  // (and blocks building on the channel). At 0.35 the apron ran ~2 cells (5 world
+  // units) wide — quay roads that end AT the bank looked like they stood in it.
+  return nearBranches(x, y, riverBranches(size), 0.12);
 }
 // The Singapore River as a closed COASTLINE outline (normalised [nx,ny]) — its two banks
 // offset from the swept centreline and joined into a loop. Used so the river reads as part

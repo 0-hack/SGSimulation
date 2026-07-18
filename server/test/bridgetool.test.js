@@ -20,7 +20,7 @@ try {
   // mid-river spots on the NEW map-extracted course (world coords):
   // the mouth basin (~base 23.17,18.81) and the Boat Quay stretch (~base 22.46,19.16)
   const BASIN = { x: -27.7, z: 173.0 };
-  const MID = { x: -51.3, z: 161.3 };
+  const MID = { x: -51.3, z: 162.0 };
 
   // 1) tool on + tap the river → pending deck auto-fits, both ends on the banks
   const t1 = await p.evaluate(({ BASIN }) => {

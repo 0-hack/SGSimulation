@@ -7,7 +7,7 @@ const base = `http://localhost:${server.address().port}`;
 const OUT3D = process.env.OUT3D || '/tmp/bridge_3d.png';
 const OUTUI = process.env.OUTUI || '/tmp/bridge_ui.png';
 const X = parseFloat(process.env.X || '-18'), Z = parseFloat(process.env.Z || '171');
-const ROT = parseFloat(process.env.ROT || `${Math.PI / 3}`), LEN = parseFloat(process.env.LEN || '12'), W = parseFloat(process.env.W || '2');
+const ROT = parseFloat(process.env.ROT || `${Math.PI / 3}`), W = parseFloat(process.env.W || '2');
 const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox', '--disable-setuid-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-webgl', '--ignore-gpu-blocklist', '--enable-unsafe-swiftshader'] });
 try {
   const p = await browser.newPage();
@@ -28,18 +28,18 @@ try {
   await p.screenshot({ path: OUTUI });
 
   // place the bridge through the real tool flow, then photograph it
-  await p.evaluate(({ X, Z, ROT, LEN, W }) => {
+  await p.evaluate(({ X, Z, ROT, W }) => {
     const sg = window.__sg;
     sg.selectBridgeTool();
     sg.onTileTap(0, 0, { x: X, z: Z });
-    sg.setBridgeRot(ROT); sg.setBridgeLen(LEN); sg.setBridgeW(W);
+    sg.setBridgeRot(ROT); sg.setBridgeW(W);   // length auto-fits bank to bank
     sg.commitBridge();
     const v = window.__sgview;
     v.target.x = X; v.target.z = Z;
     v.cam.radius = 22; v.cam.phi = 0.6; v.cam.theta = 0.4;
     v.gameDays = Math.floor(v.gameDays) + 0.5;
     if (v.state?.weather) { v.state.weather.rain = 0; v.state.weather.cloud = 0.1; }
-  }, { X, Z, ROT, LEN, W });
+  }, { X, Z, ROT, W });
   await new Promise((r) => setTimeout(r, 1500));
   await p.evaluate(() => { const v = window.__sgview;
     setInterval(() => { v.gameDays = Math.floor(v.gameDays) + 0.5;

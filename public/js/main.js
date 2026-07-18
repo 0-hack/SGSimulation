@@ -121,7 +121,7 @@ const G = {
   demoRoadPreview: null,        // live hover preview (road chunk under the cursor) — what a click would cut
   pieceRot: 0,                  // running orientation of the road piece being aimed (for the dial)
   road: { tool: null, type: 'road', elevated: false, pending: [] },
-  bridge: { active: false, len: 8, w: 1.6, rot: 0, pending: null },  // Bridge tool: tap to drop a pending deck, then move/rotate/resize and ✓ Done
+  bridge: { active: false, w: 1.6, rot: 0, pending: null },  // Bridge tool: tap the river to drop a deck that auto-fits bank to bank; move/rotate/width then ✓ Done
   reclaim: { active: false },  // land-reclamation tool: tap sea to fill land
   plant: { active: false, kind: null },  // Plants tool: tap to place individual tropical specimens
   surface: { active: false, type: 'concrete', scale: 1 },  // Surface-paint tool: drag to paint ground surfaces (brush scale in cells)
@@ -563,13 +563,17 @@ function onTileTap(x, y, world, landmark) {
     else { G.view.addPlant(world.x, world.z, G.plant.kind, Math.random() * Math.PI * 2, 0.85 + Math.random() * 0.4); G.dirty = true; }
     return;
   }
-  // Bridge tool: the first tap drops a pending bridge at the exact spot; further taps
-  // MOVE it there. The dial rotates it, the panel sliders set length & width, ✓ builds it.
+  // Bridge tool: the first tap on the river drops a pending bridge; further taps MOVE
+  // it. The deck AUTO-FITS bank to bank along its angle — rotate and the fit follows;
+  // the panel slider sets only the width. ✓ builds it.
   if (G.bridge.active && !G.build.bulldoze && world) {
+    const rot = G.bridge.pending ? G.bridge.pending.rot : G.bridge.rot;
+    const fit = G.view.fitBridgeAt(world.x, world.z, rot);
+    if (!fit) { toast('Tap ON the river — the bridge sizes itself bank to bank. Rotate if it cannot reach a bank at this angle.'); return; }
     if (!G.bridge.pending) {
-      G.bridge.pending = { x: world.x, z: world.z, len: G.bridge.len, w: G.bridge.w, rot: G.bridge.rot };
-      toast('Positioning bridge — tap to move · drag the dial to rotate · panel sliders set length & width · ✓ Done.');
-    } else { G.bridge.pending.x = world.x; G.bridge.pending.z = world.z; }
+      G.bridge.pending = { ...fit, w: G.bridge.w, rot };
+      toast('Positioning bridge — it fits the banks itself · tap to move · drag the dial to rotate · panel slider sets width · ✓ Done.');
+    } else Object.assign(G.bridge.pending, fit);
     G.view.setBridgePreview(G.bridge.pending);
     updateToolBanner();
     return;
@@ -781,8 +785,16 @@ function cancelBridge(msg) {
 }
 function setBridgeRot(rad) {
   rad = ((rad % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
-  G.bridge.rot = rad;
-  if (G.bridge.pending) { G.bridge.pending.rot = rad; G.view.setBridgePreview(G.bridge.pending); }
+  if (G.bridge.pending) {
+    // re-fit the span at the new angle from the deck's centre (mid-water); if no
+    // bank is reachable at that angle, resist — keep the last good fit instead.
+    const p = G.bridge.pending;
+    const fit = G.view.fitBridgeAt(p.x, p.z, rad);
+    if (!fit) return;
+    Object.assign(p, fit, { rot: rad });
+    G.bridge.rot = rad;
+    G.view.setBridgePreview(p);
+  } else G.bridge.rot = rad;
   updateRotDial();
 }
 // fully drop the tool (used when another tool takes over)
@@ -801,9 +813,8 @@ function selectBridgeTool() {
   G.road.tool = null; G.road.pending = [];
   if (G.view) { G.view.setPreview(null); G.view.setBulldoze(false); G.view.setRoadMode(false); G.view.setPaintMode(false); G.view.setDrawMode(false); G.view.setPieceMode(false); G.view.setRoundaboutPreview(false); G.view.setPlantMode(false); G.view.showRoadPreview([]); }
   refreshPanel(); updateToolBanner();
-  if (G.bridge.active) { closeSheet(); toast('Bridge: tap the river where the bridge should stand — then move, rotate and resize it, and ✓ Done.'); }
+  if (G.bridge.active) { closeSheet(); toast('Bridge: tap the river where the bridge should stand — it fits the banks itself; move, rotate, set width, then ✓ Done.'); }
 }
-function setBridgeLen(v) { G.bridge.len = v; if (G.bridge.pending) { G.bridge.pending.len = v; G.view.setBridgePreview(G.bridge.pending); } }
 function setBridgeW(v) { G.bridge.w = v; if (G.bridge.pending) { G.bridge.pending.w = v; G.view.setBridgePreview(G.bridge.pending); } }
 
 function afterEdit() {
@@ -895,7 +906,7 @@ function updateToolBanner() {
   const piece = G.road.tool === 'straight' || G.road.tool === 'curveL' || G.road.tool === 'curveR';
   if (bridging) {
     const b = G.bridge.pending;
-    $('tool-banner-text').innerHTML = `<b>⏸ Positioning · 🌉 Bridge (${Math.round(b.len * 12.5)} m × ${Math.round(b.w * 12.5)} m)</b><br><span class="tb-sub">Tap the map to move · dial / ↻ to rotate · panel sliders set length &amp; width · 🗑 Remove · ✓ Done</span>`;
+    $('tool-banner-text').innerHTML = `<b>⏸ Positioning · 🌉 Bridge (fits banks: ${Math.round(b.len * 12.5)} m × ${Math.round(b.w * 12.5)} m)</b><br><span class="tb-sub">Tap the river to move · dial / ↻ to rotate (span refits) · panel slider sets width · 🗑 Remove · ✓ Done</span>`;
   } else if (adjusting) {
     const name = BUILDINGS[G.adjust.key]?.name || 'object';
     $('tool-banner-text').innerHTML = `<b>⏸ Positioning · ${name}</b><br><span class="tb-sub">Drag it to rotate · tap a new spot to move · dial / ↻ for snaps · 🗑 Remove · ✓ Done</span>`;
@@ -1498,7 +1509,7 @@ function refreshPanel() {
       setCommFunc: (f) => { G.community.func = f; loadCommunity(); },
       road: G.road, reclaim: G.reclaim, toggleReclaim, plant: G.plant, selectPlant,
       surface: G.surface, selectSurface, setSurfaceScale,
-      bridge: G.bridge, selectBridgeTool, setBridgeLen, setBridgeW,
+      bridge: G.bridge, selectBridgeTool, setBridgeW,
       selectRoadTool, setRoadType: (t) => { G.road.type = t; applyRoadToolMode(); refreshPanel(); },
       toggleBridge: () => { G.road.elevated = !G.road.elevated; refreshPanel(); },
       setCat: (c) => { clearAdjustSilently(); G.build.cat = c; if (c !== 'roads') { G.road.tool = null; G.view.setRoadMode(false); } if (c !== 'land') { G.reclaim.active = false; G.surface.active = false; G.view.setPaintMode(false); } if (c !== 'plants' && G.plant.active) { G.plant.active = false; G.plant.kind = null; G.view.setPlantMode(false); } refreshPanel(); updateToolBanner(); if (c === 'community' && !G.community.loading && G.community.list == null) loadCommunity(); },
@@ -1868,7 +1879,7 @@ window.__sg = {
   selectBuilding: (k) => { clearAdjustSilently(); G.build.selected = k; G.build.bulldoze = false; if (G.view) G.view.setPreview(k, G.build.theme); updateToolBanner(); },
   setBulldoze: (on) => { clearAdjustSilently(); if (!on) hideHoverInfo(); G.demoSel.clear(); G.demoHover = null; G.demoCuts = []; G.build.selected = null; G.build.bulldoze = !!on; if (G.view) G.view.setBulldoze(!!on); updateToolBanner(); },
   selectPlant, selectSurface, setSurfaceScale, toggleFoundation,
-  selectBridgeTool, commitBridge, cancelBridge, setBridgeRot, setBridgeLen, setBridgeW,
+  selectBridgeTool, commitBridge, cancelBridge, setBridgeRot, setBridgeW,
   tick: (n = 1) => { for (let i = 0; i < n; i++) tickDay(G.state); if (G.view) { G.view.syncConstruction(G.state); G.view.syncDemolition(G.state); } },
   derive: () => derive(G.state),
   afterEdit: () => afterEdit(),

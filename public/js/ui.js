@@ -210,24 +210,20 @@ function renderRoads(ctx) {
   // ---- River bridge: place a deck by hand, roads snap straight across it ----
   if (ctx.bridge && ctx.selectBridgeTool) {
     wrap.append(el('div', 'section-title', 'River bridge'));
-    wrap.append(el('p', 'policy-desc', 'Place a bridge deck exactly where YOU want it. Tap the river to drop it, tap again to move it, drag the dial (or press R) to rotate, and set the length & width below — then ✓ Done to build. Any road crossing the deck straightens and runs flat on top.'));
+    wrap.append(el('p', 'policy-desc', 'Place a bridge deck exactly where YOU want it. Tap the river to drop it — it sizes itself to fit bank to bank at that spot. Tap again to move it, drag the dial (or press R) to rotate (the fit follows the angle), set the width below, then ✓ Done to build. Any road crossing the deck straightens and runs flat on top.'));
     const bb = el('button', 'btn' + (ctx.bridge.active ? ' active' : ''),
       `<span class="bi">🌉</span> ${ctx.bridge.active ? 'Bridge tool ON — tap the river to place' : 'Place a bridge'}`);
     bb.onclick = () => ctx.selectBridgeTool();
     wrap.append(bb);
-    const mkSlider = (label, min, max, step, val, fmt, apply) => {
-      const row = el('div', 'brush-row');
-      row.append(el('span', 'brush-label', label));
-      const slider = document.createElement('input');
-      slider.type = 'range'; slider.min = String(min); slider.max = String(max); slider.step = String(step); slider.value = String(val);
-      const out = el('span', 'brush-val', fmt(val));
-      slider.oninput = (e) => { const v = parseFloat(e.target.value); out.textContent = fmt(v); apply(v); };
-      row.append(slider); row.append(out);
-      wrap.append(row);
-    };
     const m = (v) => `${Math.round(v * 12.5)} m`;          // 1 world unit ≈ 12.5 m on this map
-    mkSlider('Length', 3, 30, 0.5, ctx.bridge.len ?? 8, m, (v) => ctx.setBridgeLen(v));
-    mkSlider('Width', 0.6, 4, 0.1, ctx.bridge.w ?? 1.6, m, (v) => ctx.setBridgeW(v));
+    const row = el('div', 'brush-row');
+    row.append(el('span', 'brush-label', 'Width'));
+    const slider = document.createElement('input');
+    slider.type = 'range'; slider.min = '0.6'; slider.max = '4'; slider.step = '0.1'; slider.value = String(ctx.bridge.w ?? 1.6);
+    const out = el('span', 'brush-val', m(ctx.bridge.w ?? 1.6));
+    slider.oninput = (e) => { const v = parseFloat(e.target.value); out.textContent = m(v); ctx.setBridgeW(v); };
+    row.append(slider); row.append(out);
+    wrap.append(row);
   }
   return wrap;
 }

@@ -5464,6 +5464,26 @@ export class Scene3D {
       }
     }
   }
+  // Fit a bridge across the water at (x,z) along angle rot: walk the axis both ways
+  // from the tap point over visible water until each bank. Returns { x, z, len } —
+  // the deck centred on the water run with a small seat on each bank — or null when
+  // the tap isn't on water or no bank is reachable at that angle (e.g. pointing
+  // along the river). The bridge always fits the river exactly, whatever its width.
+  fitBridgeAt(x, z, rot) {
+    const ax = Math.sin(rot || 0), az = Math.cos(rot || 0);
+    // visible river water: inside the channel ribbon AND the carved (low) bed —
+    // bare _meshY misreads flat riverside land as wet (same test as _chordSpans)
+    const wet = (px, pz) => this._overWater(px, pz, 0.05) && this._meshY(px, pz) < 0.15;
+    if (!wet(x, z)) return null;
+    const STEP = 0.15, MAX = 25;
+    let a = 0, b = 0;
+    while (a < MAX && wet(x - ax * (a + STEP), z - az * (a + STEP))) a += STEP;
+    while (b < MAX && wet(x + ax * (b + STEP), z + az * (b + STEP))) b += STEP;
+    if (a >= MAX || b >= MAX) return null;
+    const SEAT = 0.45;                       // deck seats a touch onto each bank edge
+    a += SEAT; b += SEAT;
+    return { x: x + ax * ((b - a) / 2), z: z + az * ((b - a) / 2), len: a + b };
+  }
   // Ghost preview of a player bridge being positioned: a translucent deck of the exact
   // length × width at deck height, turned to `rot`. b = { x, z, len, w, rot }, null clears.
   setBridgePreview(b) {

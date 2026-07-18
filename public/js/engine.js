@@ -361,7 +361,7 @@ export function removeProp(state, i) {
 // A player-placed river bridge: { x, z, len, w, rot } in world coords. Priced by span —
 // a longer/wider deck costs more. Returns the bridge, or null if it can't be afforded.
 export function placeBridge(state, { x, z, len = 8, w = 1.6, rot = 0 }) {
-  len = Math.max(3, Math.min(30, +len || 8)); w = Math.max(0.6, Math.min(4, +w || 1.6));
+  len = Math.max(1, Math.min(50, +len || 8)); w = Math.max(0.6, Math.min(4, +w || 1.6));   // auto-fit spans can be tiny (a narrow stream) or long
   const cost = Math.round((6 + len * 1.1 * (0.7 + w * 0.4)) * (state.economy?.priceIndex || 1));
   if (state.treasury < cost) return null;
   state.treasury -= cost;

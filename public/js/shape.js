@@ -201,16 +201,22 @@ export function riverBranches(size) {
   const k = size / 48;
   const P = (x, y, w) => ({ x: x * k, y: y * k, w: w * k });
   _rivCache = [
-    // the course is sampled densely (~3.5-6u spacing) STRAIGHT OFF the owner's traced banks
-    // with the TRACED widths — sparse control points let the swept curve sag off the drawn
-    // line and a width floor made the water spill over the bank roads.
-    [P(23.58, 18.78, 0.084), P(23.45, 18.79, 0.060), P(23.34, 18.78, 0.021), P(23.23, 18.75, 0.035),
-     P(23.13, 18.86, 0.043), P(23.07, 18.99, 0.031), P(22.99, 19.07, 0.015), P(22.81, 19.09, 0.030),
-     P(22.70, 19.05, 0.027), P(22.60, 19.18, 0.025), P(22.45, 19.16, 0.015), P(22.27, 19.16, 0.021),
-     P(22.12, 19.04, 0.020), P(21.95, 19.08, 0.020), P(21.84, 19.11, 0.017), P(21.83, 19.26, 0.031),
-     P(21.77, 19.34, 0.024), P(21.62, 19.34, 0.012),
-     // continues inland as the canalised upper reach (the survey-map "Canal" toward Alexandra)
-     P(21.30, 19.34, 0.021), P(21.00, 19.34, 0.020), P(20.66, 19.35, 0.019), P(20.34, 19.35, 0.014)],
+    // the course is extracted STRAIGHT FROM the survey map image (trace-map.jpg, registered
+    // by the trace-data bg rect): water-pixel mask re-centred every ~2.6 world units, widths
+    // measured off the drawn channel — so the river sits exactly where the original map has
+    // it and the traced roads keep to its banks. First point reaches past the traced coast
+    // so the channel joins the sea at the old harbour mouth (Anderson Bridge).
+    [P(23.53, 18.62, 0.034), P(23.26, 18.76, 0.030), P(23.17, 18.81, 0.046), P(23.12, 18.90, 0.033), P(23.07, 18.99, 0.030),
+     P(22.99, 19.03, 0.020), P(22.91, 19.05, 0.020), P(22.82, 19.07, 0.020), P(22.74, 19.06, 0.020), P(22.66, 19.05, 0.021),
+     P(22.62, 19.12, 0.020), P(22.55, 19.19, 0.020), P(22.46, 19.16, 0.020), P(22.38, 19.13, 0.020), P(22.28, 19.15, 0.020),
+     P(22.20, 19.12, 0.020), P(22.15, 19.06, 0.020), P(22.05, 19.05, 0.020), P(21.95, 19.07, 0.020), P(21.86, 19.11, 0.020),
+     P(21.82, 19.19, 0.020), P(21.79, 19.26, 0.020), P(21.71, 19.30, 0.020),
+     // the canalised upper reach (the survey-map canal toward Alexandra) — a thin straight cut
+     P(21.64, 19.33, 0.012), P(21.56, 19.32, 0.012),
+     P(21.45, 19.30, 0.012), P(21.34, 19.30, 0.012), P(21.23, 19.32, 0.012), P(21.13, 19.32, 0.012), P(21.03, 19.32, 0.012),
+     P(20.93, 19.30, 0.012), P(20.83, 19.30, 0.012), P(20.73, 19.30, 0.012), P(20.63, 19.30, 0.012), P(20.53, 19.31, 0.012),
+     P(20.43, 19.33, 0.012), P(20.33, 19.34, 0.012), P(20.23, 19.33, 0.012), P(20.13, 19.34, 0.012), P(20.02, 19.34, 0.012),
+     P(19.96, 19.34, 0.012)],
   ];
   _rivSize = size;
   return _rivCache;

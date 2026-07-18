@@ -51,6 +51,13 @@ function demHeight(nx, ny) {
 const N = GRID_SIZE;
 const WORLD = WORLD_SIZE;     // island bounding box in world units — FIXED regardless of grid resolution
 const TILE = WORLD / N;       // size of one grid cell in world units (2.5 at a 640 grid)
+// Two mouth-area river decks FIXED by hand (the map owner marked their exact
+// start/end on the road) — the auto span detection misjudges these curvy
+// crossings. They ride the player-bridge pipeline (own their site, road snaps
+// straight across) but belong to the base map: not demolishable, no cost.
+// (empty since the _overWater half-cell frame fix — the auto spans land on the
+// visible water now; the hook stays for any future hand-tuned crossing)
+const BUILTIN_BRIDGES = [];
 // Building models are authored for the old ~10-unit cell; scale them to the live
 // cell so a building sits in roughly one cell on whatever grid resolution we use.
 const MODEL_SCALE = TILE / 10;
@@ -862,8 +869,15 @@ export class Scene3D {
     // keep the absolute tree count sane as the island grows: thin out the scatter
     // for larger grids (the forest reserve stays comparatively dense).
     const forestProb = 0.78 * (48 / N), openProb = 0.32 * (48 / N) * (48 / N);
+    // no tree may sprout on a built-in bridge deck
+    const onBuiltinDeck = (wx, wz) => BUILTIN_BRIDGES.some((b) => {
+      const ax = Math.sin(b.rot), az = Math.cos(b.rot), dx = wx - b.x, dz = wz - b.z;
+      return Math.abs(dx * ax + dz * az) < b.len / 2 + 2.2 && Math.abs(-dx * az + dz * ax) < b.w / 2 + 2.2;
+    });
     for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
       if (!this.land[y][x] || this.reserveMask?.[y]?.[x] || this.riverMask?.[y]?.[x] || this.airportMask?.[y]?.[x] || this.heritageMask?.[y]?.[x]) continue; // not on water / runway / heritage
+      const cw0 = cellToWorld(x, y);
+      if (onBuiltinDeck(cw0.x, cw0.z)) continue;
       const d = Math.hypot(x - ca.cx, y - ca.cy);
       const forest = d < ca.forestR;                                  // the nature reserve ring
       if (Math.random() > (forest ? forestProb : openProb)) continue;
@@ -5220,7 +5234,10 @@ export class Scene3D {
   }
   // Is a world point over the VISIBLE Singapore River water ribbon? `pad` in cells.
   _overWater(x, z, pad = 0) {
-    const gx = x / TILE + N / 2, gy = N / 2 - z / TILE;   // fractional grid cell
+    // -0.5: the ribbon is DRAWN through cellToWorld (cell CENTRES, a +half-cell
+    // shift); querying raw fractional cells put every detected crossing ~1.25
+    // world units south-west of the visible water — and its bridge with it
+    const gx = x / TILE + N / 2 - 0.5, gy = N / 2 - z / TILE - 0.5;
     const d = this._riverCenterline();
     if (gx < d.bx0 || gx > d.bx1 || gy < d.by0 || gy > d.by1) return false;   // far from the river — quick reject
     for (const line of d.lines) {
@@ -5242,10 +5259,14 @@ export class Scene3D {
   // and continues from there as another lane) is returned as a HALF crossing — the caller
   // stitches the two halves meeting at that junction into ONE bridge from the two lanes'
   // real bank anchors (never guessed). A true dead end in the water gets no bridge.
-  _riverCrossings(pts, contStart = false, contEnd = false) {
+  _riverCrossings(pts, contStart = false, contEnd = false, manualBridges = null) {
     const PAD = 0.18, n = pts.length;      // generous find-test: never miss a thin channel
     const res = { spans: [], halves: [], links: [] };
     if (n < 2) return res;
+    // a crossing owned by a player/built-in bridge is left ENTIRELY to that bridge:
+    // its own snap straightens the lane onto the placed deck — the auto straighten
+    // must not fight it with a different chord
+    const owned = (x, z) => !!manualBridges && manualBridges.some((b) => Math.hypot(b.x - x, b.z - z) < Math.max(5, b.hl + 2));
     const wetAt = (x, z) => this._overWater(x, z, PAD);
     const wet = pts.map((p) => wetAt(p.x, p.z));
     for (let i = 0; i < n - 1; i++) {                        // catch a thin channel crossed within one segment
@@ -5264,6 +5285,8 @@ export class Scene3D {
       // lane running along the water's edge — never straightened or bridged
       let runLen = 0; for (let k = Math.max(1, i); k <= j; k++) runLen += Math.hypot(pts[k].x - pts[k - 1].x, pts[k].z - pts[k - 1].z);
       if (runLen > 10) { i = j + 1; continue; }
+      const runMid = pts[(i + j) >> 1];
+      if (owned(runMid.x, runMid.z)) { i = j + 1; continue; }   // a placed bridge owns this crossing
       if (A && B) {
         if (!this._crossAngleOK(A, B)) { i = j + 1; continue; }   // along-the-bank dip, not a crossing
         // straighten the lane between the banks (the chain's own end points never move) and
@@ -5472,7 +5495,9 @@ export class Scene3D {
       const bi = i < builders.length ? i : 2 + ((i - 2) % (builders.length - 2));
       // a player bridge gets its own group so Demolish can pick and remove exactly it
       let g = this.roadGroup;
-      if (s.manual) { g = new THREE.Group(); g.userData.demo = { kind: 'bridge', index: s.bridgeIndex }; this.roadGroup.add(g); this._bridgeGroups.set(s.bridgeIndex, g); }
+      // player bridges get their own demolish-pickable group; BUILT-IN fixed decks
+      // (negative index) are part of the base map and stay plain scenery
+      if (s.manual && s.bridgeIndex >= 0) { g = new THREE.Group(); g.userData.demo = { kind: 'bridge', index: s.bridgeIndex }; this.roadGroup.add(g); this._bridgeGroups.set(s.bridgeIndex, g); }
       this._bridgeFrames.push({ ...f, manual: !!s.manual });
       builders[bi].call(this, g, f);
     });
@@ -5481,12 +5506,19 @@ export class Scene3D {
   // Each becomes an exact span chord (owning its site), and every lane passing over the
   // bridge is snapped STRAIGHT along its centreline at deck height.
   _manualBridges() {
+    // Two mouth-area decks are FIXED by hand (the map owner marked their exact start/end
+    // on the road) — the auto span detection misjudges these two curvy crossings. They
+    // behave like player bridges (own their site, road snaps straight across) but are
+    // part of the base map: negative index = not demolishable, no cost.
     const list = (this.state && Array.isArray(this.state.bridges)) ? this.state.bridges : [];
-    return list.map((b, i) => {
+    return [
+      ...BUILTIN_BRIDGES.map((b, i) => ({ ...b, index: -(i + 1) })),
+      ...list.map((b, i) => ({ ...b, index: i })),
+    ].map((b) => {
       const ax = Math.sin(b.rot || 0), az = Math.cos(b.rot || 0), hl = (b.len || 6) / 2;
       const A = { x: b.x - ax * hl, z: b.z - az * hl }, B = { x: b.x + ax * hl, z: b.z + az * hl };
       const deckY = Math.max(0.9, this._meshY(A.x, A.z) + 0.2, this._meshY(B.x, B.z) + 0.2);
-      return { ...b, ax, az, hl, A, B, deckY, index: i };
+      return { ...b, ax, az, hl, A, B, deckY };
     });
   }
   // Snap the stretch of a lane that passes over a player bridge onto the bridge's
@@ -5920,7 +5952,7 @@ export class Scene3D {
         const bp = this._bridgeProfile(this._densifyRoad(raw, 2.0, 0.10), true);
         const pts = bp.pts, hw = dirt ? HWD : (oneway ? HW1 : HW2);
         if (bp.bridged) {
-          const r = this._riverCrossings(pts, (tracedDeg.get(nodes[0]) || 0) > 1, (tracedDeg.get(nodes[nodes.length - 1]) || 0) > 1);
+          const r = this._riverCrossings(pts, (tracedDeg.get(nodes[0]) || 0) > 1, (tracedDeg.get(nodes[nodes.length - 1]) || 0) > 1, manualBridges);
           for (const c of r.spans) bridgeSpans.push({ pts: c, hw });
           for (const h of r.halves) halfSpans.push({ ...h, pts, hw });
           for (const l of r.links) halfLinks.push({ ...l, pts, hw });

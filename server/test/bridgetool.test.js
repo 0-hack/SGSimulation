@@ -19,8 +19,8 @@ try {
 
   // mid-river spots on the NEW map-extracted course (world coords):
   // the mouth basin (~base 23.17,18.81) and the Boat Quay stretch (~base 22.46,19.16)
-  const BASIN = { x: -27.7, z: 173.0 };
-  const MID = { x: -51.3, z: 162.0 };
+  const BASIN = { x: -26.5, z: 171.8 };
+  const MID = { x: -50.95, z: 160.95 };
 
   // 1) tool on + tap the river → pending deck auto-fits, both ends on the banks
   const t1 = await p.evaluate(({ BASIN }) => {
@@ -57,6 +57,11 @@ try {
   // 3) move to another river spot + rotate: the span re-fits each time; width slider works
   const t3 = await p.evaluate(({ MID }) => {
     const sg = window.__sg, v = window.__sgview;
+    // move onto a REAL road-water crossing: the nearest auto bridge frame mid
+    // (self-locating, so course tweaks don't stale the coordinate)
+    const fr = (v._bridgeFrames || []).filter((f) => !f.manual)
+      .sort((a, b) => Math.hypot(a.mid.x - MID.x, a.mid.z - MID.z) - Math.hypot(b.mid.x - MID.x, b.mid.z - MID.z))[0];
+    if (fr) MID = { x: fr.mid.x, z: fr.mid.z };
     sg.onTileTap(0, 0, MID);
     const moved = { ...sg.bridge.pending };
     sg.setBridgeRot((moved.rot || 0) + 0.35);

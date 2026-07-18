@@ -5290,7 +5290,7 @@ export class Scene3D {
   // tongue (terrain above it); that part must not be decked over, and a tongue between two
   // channels splits them into separate spans. Each span ends at the visible water's edge.
   _chordSpans(A, B, deckY) {
-    const FIT = 0.04, WIDE = 0.9, SEAT = 0.3;
+    const FIT = 0.04, WIDE = 0.10, SEAT = 0.25;   // pads in CELLS; seat in world units
     const cl = Math.hypot(B.x - A.x, B.z - A.z), st = Math.max(8, Math.ceil(cl / 0.25));
     const P = (t) => ({ x: A.x + (B.x - A.x) * t, y: deckY, z: A.z + (B.z - A.z) * t });
     const vis = (x, z) => this._overWater(x, z, FIT) && this._meshY(x, z) < 0.15;
@@ -5302,7 +5302,7 @@ export class Scene3D {
     const wide = (t) => { const x = A.x + (B.x - A.x) * t, z = A.z + (B.z - A.z) * t; return this._overWater(x, z, WIDE) && this._meshY(x, z) < 0.15; };
     const out = [];
     const push = (ta, tb) => {
-      const step = 0.2 / cl, cap = 2.8 / cl;
+      const step = 0.2 / cl, cap = 1.0 / cl;
       let a = ta, b = tb;
       while (a - step > 0 && ta - a < cap && wide(a - step)) a -= step;
       while (b + step < 1 && b - tb < cap && wide(b + step)) b += step;

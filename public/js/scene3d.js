@@ -5479,7 +5479,9 @@ export class Scene3D {
     for (const b of list) {
       if (!b || !b.pts || b.pts.length < 2) continue;
       const mid = b.pts[b.pts.length >> 1];
-      const host = sites.find((s) => Math.hypot(s.mid.x - mid.x, s.mid.z - mid.z) < 5);
+      // 2.5: just enough to merge the two direction-lanes of ONE road — two nearby
+      // PARALLEL roads (5u apart at the quays) each keep their own bridge
+      const host = sites.find((s) => Math.hypot(s.mid.x - mid.x, s.mid.z - mid.z) < 2.5);
       // a player-placed bridge OWNS its site — an automatic span nearby never displaces it
       if (host) { if (!host.manual && (b.manual || b.pts.length > host.pts.length)) { host.pts = b.pts; host.hw = b.hw; host.mid = mid; host.manual = !!b.manual; host.bridgeIndex = b.bridgeIndex; } }
       else sites.push({ pts: b.pts, hw: b.hw, mid, manual: !!b.manual, bridgeIndex: b.bridgeIndex });

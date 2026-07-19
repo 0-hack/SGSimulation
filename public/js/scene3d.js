@@ -5426,7 +5426,7 @@ export class Scene3D {
       if (this._overWater(x, z, 0.04) && this._meshY(x, z) < 0.15) { m = { x, z }; break; }
     }
     if (!m) return false;
-    const gx = m.x / TILE + N / 2, gy = N / 2 - m.z / TILE;
+    const gx = m.x / TILE + N / 2 - 0.5, gy = N / 2 - m.z / TILE - 0.5;   // ribbon frame (see _overWater)
     let dir = null, bd = 1e9;                                 // local flow direction at that point
     for (const line of this._riverCenterline().lines) for (let k = 0; k < line.length - 1; k++) {
       const a = line[k], b = line[k + 1], dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy || 1e-9;
@@ -5517,7 +5517,7 @@ export class Scene3D {
     ].map((b) => {
       const ax = Math.sin(b.rot || 0), az = Math.cos(b.rot || 0), hl = (b.len || 6) / 2;
       const A = { x: b.x - ax * hl, z: b.z - az * hl }, B = { x: b.x + ax * hl, z: b.z + az * hl };
-      const deckY = Math.max(0.9, this._meshY(A.x, A.z) + 0.2, this._meshY(B.x, B.z) + 0.2);
+      const deckY = Math.max(0.5, this._meshY(A.x, A.z) + 0.2, this._meshY(B.x, B.z) + 0.2);
       return { ...b, ax, az, hl, A, B, deckY };
     });
   }
@@ -5576,7 +5576,7 @@ export class Scene3D {
     const g = new THREE.Group();
     const rot = b.rot || 0, len = b.len || 8, w = b.w || 1.6;
     const ax = Math.sin(rot), az = Math.cos(rot), hl = len / 2;
-    const deckY = Math.max(0.9, this._meshY(b.x - ax * hl, b.z - az * hl) + 0.2, this._meshY(b.x + ax * hl, b.z + az * hl) + 0.2);
+    const deckY = Math.max(0.5, this._meshY(b.x - ax * hl, b.z - az * hl) + 0.2, this._meshY(b.x + ax * hl, b.z + az * hl) + 0.2);
     const mat = new THREE.MeshBasicMaterial({ color: 0x35d07f, transparent: true, opacity: 0.55, depthWrite: false });
     const deck = new THREE.Mesh(new THREE.BoxGeometry(w, 0.22, len), mat);
     deck.position.set(b.x, deckY, b.z); deck.rotation.y = rot; g.add(deck);
@@ -5700,7 +5700,7 @@ export class Scene3D {
     const n = pts.length;
     if (n < 2) return { pts, bridged: false };
     const RAIL_CLEAR = 2.6, WATER_CLEAR = 1.5, SEA_DECK = SEA_Y + 2.0, SLOPE = 0.16;
-    const RIVER_CLEAR = 0.55, RIVER_DECK = 0.9, RIVER_SLOPE = 0.32;   // a low, short-approach bridge over the thin river (deck sits just above the water)
+    const RIVER_CLEAR = 0.30, RIVER_DECK = 0.5, RIVER_SLOPE = 0.32;   // a LOW bridge: deck ~4 m over the water (0.9 towered ~11 m up)
     const ground = pts.map((p) => p.y), target = new Array(n).fill(-Infinity), obs = [];
     if (riverOnly) {
       // Lift only where the lane sits over the VISIBLE river. Sample every segment finely

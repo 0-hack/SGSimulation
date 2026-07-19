@@ -105,7 +105,7 @@ try {
     const sg = window.__sg, v = window.__sgview;
     const b = sg.state.bridges[0];
     const ax = Math.sin(b.rot), az = Math.cos(b.rot), hl = b.len / 2;
-    const deckY = Math.max(0.9, v._meshY(b.x - ax * hl, b.z - az * hl) + 0.2, v._meshY(b.x + ax * hl, b.z + az * hl) + 0.2);
+    const deckY = Math.max(0.5, v._meshY(b.x - ax * hl, b.z - az * hl) + 0.2, v._meshY(b.x + ax * hl, b.z + az * hl) + 0.2);
     let onDeck = 0, offAxis = 0, sunk = 0;
     for (const lane of v.edgePts) {
       for (const q of lane) {

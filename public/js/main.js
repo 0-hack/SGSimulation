@@ -149,6 +149,7 @@ function boot() {
   $('btn-new').onclick = startNew;
   $('btn-continue').onclick = continueGame;
   $('btn-browse').onclick = () => { showGameShell(false); openBrowser(); };
+  window.__sgBooted = true;   // the pre-boot click stub in index.html stops queueing now
 
   $('btn-menu').onclick = () => { saveLocal(); showMenu(); };
   $('sheet-close').onclick = closeSheet;
@@ -214,7 +215,16 @@ function boot() {
   fetchMapSig().then((s) => {
     mapSig = s;
     let pending = null; try { pending = sessionStorage.getItem('sg-newgame'); sessionStorage.removeItem('sg-newgame'); } catch {}
-    if (pending) { try { const p = JSON.parse(pending); if (p.name) $('m-nation').value = p.name; if (p.owner) $('m-owner').value = p.owner; } catch {} startNew(); }
+    if (pending) { try { const p = JSON.parse(pending); if (p.name) $('m-nation').value = p.name; if (p.owner) $('m-owner').value = p.owner; } catch {} startNew(); return; }
+    // Replay a menu tap made BEFORE this module graph finished loading (first visit,
+    // cold cache): the inline stub in index.html queued it and showed the loading
+    // overlay, so the button responded instantly — finish that action now.
+    const early = window.__sgPending; window.__sgPending = null;
+    if (m || !early || G.state) return;      // deep-link visit or a game already underway wins
+    if (early === 'new') startNew();
+    else if (early === 'continue' && localStorage.getItem(LS_SAVE)) continueGame();
+    else if (early === 'browse') { hideLoading(); showGameShell(false); openBrowser(); }
+    else hideLoading();                      // unknown/stale tap: never strand the overlay
   });
 
   requestAnimationFrame(loop);

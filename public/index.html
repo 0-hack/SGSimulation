@@ -8,6 +8,17 @@
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🇸🇬</text></svg>" />
   <link rel="stylesheet" href="/css/style.css" />
   <link rel="stylesheet" href="/css/pagenav.css" />
+  <!-- Pre-fetch the deep/heavy modules in parallel with main.js — without these the
+       browser only discovers three.module.js AFTER scene3d.js arrives, stretching
+       the window where the menu is visible but the game code hasn't booted yet. -->
+  <link rel="modulepreload" href="/js/vendor/three.module.js" />
+  <link rel="modulepreload" href="/js/scene3d.js" />
+  <link rel="modulepreload" href="/js/roads1966.js" />
+  <link rel="modulepreload" href="/js/heights1966.js" />
+  <link rel="modulepreload" href="/js/engine.js" />
+  <link rel="modulepreload" href="/js/data.js" />
+  <link rel="modulepreload" href="/js/shape.js" />
+  <link rel="modulepreload" href="/js/ui.js" />
 </head>
 <body>
 
@@ -145,6 +156,22 @@
     <div id="dc-actions" class="dc-actions"><button id="dc-build" class="dc-build">Build</button></div>
   </div>
 
+  <!-- Instant response for menu taps that land BEFORE the game modules finish
+       loading (first visit, cold cache): remember the tap and show the loading
+       overlay right away; boot() in main.js replays it the moment it's ready. -->
+  <script>
+    (function () {
+      function arm(id, act) {
+        document.getElementById(id).addEventListener('click', function () {
+          if (window.__sgBooted) return;
+          window.__sgPending = act;
+          document.getElementById('loading-msg').textContent = 'Loading the game…';
+          document.getElementById('loading').classList.remove('hidden');
+        });
+      }
+      arm('btn-new', 'new'); arm('btn-continue', 'continue'); arm('btn-browse', 'browse');
+    })();
+  </script>
   <script type="module" src="/js/pagenav.js"></script>
   <script type="module" src="/js/main.js"></script>
 </body>

@@ -207,13 +207,13 @@ export function riverBranches(size) {
     // it and the traced roads keep to its banks. First point reaches past the traced coast
     // so the channel joins the sea at the old harbour mouth (Anderson Bridge).
     [P(23.53, 18.62, 0.034), P(23.26, 18.76, 0.030), P(23.17, 18.81, 0.046), P(23.12, 18.90, 0.033), P(23.07, 18.99, 0.030),
-     P(22.99, 19.03, 0.020), P(22.91, 19.05, 0.020), P(22.82, 19.07, 0.020), P(22.74, 19.06, 0.020), P(22.66, 19.05, 0.021),
+     P(22.96, 18.995, 0.016), P(22.88, 19.020, 0.017), P(22.82, 19.07, 0.020), P(22.74, 19.06, 0.020), P(22.66, 19.05, 0.021),
      // bx 22.2-22.5 threads a ~3-unit corridor between the quay-lane ends on the north
      // bank and the main road on the south — centred and slimmed so neither gets wet
-     P(22.62, 19.12, 0.020), P(22.55, 19.18, 0.018), P(22.46, 19.14, 0.014), P(22.38, 19.13, 0.014), P(22.28, 19.13, 0.014),
+     P(22.62, 19.12, 0.020), P(22.55, 19.18, 0.018), P(22.46, 19.14, 0.014), P(22.38, 19.13, 0.014), P(22.28, 19.118, 0.014),
      // bx 21.9-22.2: the three quay stubs end AT the north bank here — the channel dips
      // just south of their tips and slims to clear the south-bank road too
-     P(22.20, 19.11, 0.012), P(22.17, 19.07, 0.012), P(22.13, 19.028, 0.012), P(22.09, 19.009, 0.012), P(22.05, 19.016, 0.012), P(22.00, 19.016, 0.012), P(21.95, 19.028, 0.012), P(21.86, 19.10, 0.016),
+     P(22.20, 19.096, 0.012), P(22.17, 19.058, 0.012), P(22.13, 19.028, 0.012), P(22.09, 19.000, 0.012), P(22.05, 19.008, 0.012), P(22.00, 19.010, 0.012), P(21.95, 19.028, 0.012), P(21.86, 19.10, 0.016),
      P(21.82, 19.19, 0.020), P(21.79, 19.26, 0.020), P(21.71, 19.30, 0.020),
      // the canalised upper reach (the survey-map canal toward Alexandra) — a thin straight cut
      P(21.64, 19.33, 0.012), P(21.56, 19.32, 0.012),

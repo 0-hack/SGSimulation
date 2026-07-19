@@ -5488,25 +5488,44 @@ export class Scene3D {
     }
     const mouth = { x: -18, z: 174 };
     sites.sort((a, b) => Math.hypot(a.mid.x - mouth.x, a.mid.z - mouth.z) - Math.hypot(b.mid.x - mouth.x, b.mid.z - mouth.z));
-    const builders = [this._bridgeAnderson, this._bridgeCavenagh, this._bridgeElgin, this._bridgeColeman, this._bridgeRead, this._bridgeOrd];
+    // The real 1965 bridge sequence up the river, each with its fraction of the way from
+    // the mouth to Kim Seng Road (measured off the survey map). Every WIDE auto crossing
+    // is matched to the nearest remaining design IN ORDER, so however many crossings the
+    // traced roads produce, the line-up reads like the period river — Anderson at the
+    // mouth, Kim Seng at the head, the rest at their true relative positions.
+    const HISTORY = [
+      [0.06, this._bridgeAnderson], [0.16, this._bridgeCavenagh], [0.25, this._bridgeElgin],
+      [0.34, this._bridgeColeman], [0.50, this._bridgeRead], [0.59, this._bridgeOrd],
+      [0.72, this._bridgeClemenceau], [1.00, this._bridgeKimSeng],
+    ];
+    const wide = sites.filter((s) => s.hw >= 0.3 && !s.manual);
+    const far = wide.length ? Math.hypot(wide[wide.length - 1].mid.x - mouth.x, wide[wide.length - 1].mid.z - mouth.z) : 1;
+    const design = new Map();
+    let hi = 0;
+    wide.forEach((s, k) => {
+      const fr = Math.hypot(s.mid.x - mouth.x, s.mid.z - mouth.z) / far;
+      const left = wide.length - 1 - k;      // crossings still waiting for a design
+      while (hi < HISTORY.length - 1 - left && Math.abs(HISTORY[hi + 1][0] - fr) <= Math.abs(HISTORY[hi][0] - fr)) hi++;
+      design.set(s, HISTORY[hi][1]);
+      hi = Math.min(hi + 1, HISTORY.length - 1);
+    });
     this._bridgeFrames = [];                 // introspection: every deck frame actually built
-    sites.forEach((s, i) => {
+    sites.forEach((s) => {
       const p = s.pts, A = p[0], B = p[p.length - 1];
       let ax = B.x - A.x, az = B.z - A.z; const L = Math.hypot(ax, az) || 1; ax /= L; az /= L;
       const f = { ax, az, px: -az, pz: ax, L, W: s.hw + 0.06, ang: Math.atan2(ax, az),   // barely wider than the carriageway
         deckY: Math.max(...p.map((q) => q.y)), mid: { x: (A.x + B.x) / 2, z: (A.z + B.z) / 2 } };
-      // first two sites get the iconic Anderson & Cavenagh; the upstream ones cycle through
-      // the arch/girder designs (Elgin, Coleman, Read, Ord) as the canal reaches inland.
-      const bi = i < builders.length ? i : 2 + ((i - 2) % (builders.length - 2));
       // a player bridge gets its own group so Demolish can pick and remove exactly it
       let g = this.roadGroup;
       // player bridges get their own demolish-pickable group; BUILT-IN fixed decks
       // (negative index) are part of the base map and stay plain scenery
       if (s.manual && s.bridgeIndex >= 0) { g = new THREE.Group(); g.userData.demo = { kind: 'bridge', index: s.bridgeIndex }; this.roadGroup.add(g); this._bridgeGroups.set(s.bridgeIndex, g); }
-      this._bridgeFrames.push({ ...f, manual: !!s.manual });
       // a NARROW crossing (single quay lane / kampong track) gets the humble timber
-      // footbridge of the period, not a grand civic design
-      (s.hw < 0.3 ? this._bridgeFoot : builders[bi]).call(this, g, f);
+      // footbridge of the period; a player's own crossing is built in the plain
+      // post-war municipal style rather than stealing a named design's slot
+      const builder = s.hw < 0.3 ? this._bridgeFoot : (design.get(s) || this._bridgeKimSeng);
+      this._bridgeFrames.push({ ...f, manual: !!s.manual, design: builder.name.replace('_bridge', '') });
+      builder.call(this, g, f);
     });
   }
   // Player-placed bridges from state.bridges: { x, z, len, w, rot } (world units, radians).
@@ -5593,6 +5612,50 @@ export class Scene3D {
       rail.rotation.y = rot; g.add(rail);
     }
     this.scene.add(g); this._bridgePrev = g;
+  }
+  // CLEMENCEAU BRIDGE (1940) — wide reinforced-concrete spans with art-deco lines:
+  // stepped block pylons with lamps at the ends, slender pier walls under the deck.
+  _bridgeClemenceau(g, f) {
+    const conc = toon(0xd6d2c8), dark = toon(0xb9b4a8), lampc = toon(0xf3ead0);
+    this._bridgeDeck(g, f, conc, conc, 0.26);
+    const endA = f.L / 2 * 0.9;
+    for (const s of [-1, 1]) for (const e of [-1, 1]) {
+      const c = this._bpt(f, endA * e, (f.W + 0.06) * s, 0);
+      this._bdeck(g, f, c.x, f.deckY + 0.3, c.z, 0.18, 0.6, 0.22, dark);      // deco pylon block
+      const lp = this._bpt(f, endA * e, (f.W + 0.06) * s, 0.85);
+      this._bdeck(g, f, lp.x, lp.y - 0.1, lp.z, 0.06, 0.5, 0.06, dark);       // lamp post
+      const cap = this._bpt(f, endA * e, (f.W + 0.06) * s, 1.12);
+      this._bdeck(g, f, cap.x, cap.y, cap.z, 0.12, 0.12, 0.12, lampc);        // lamp head
+    }
+    const nP = Math.max(1, Math.round(f.L / 2.2));
+    for (let k = 1; k <= nP; k++) {
+      const along = -f.L / 2 + (k / (nP + 1)) * f.L;
+      const c = this._bpt(f, along, 0, 0);
+      this._bdeck(g, f, c.x, f.deckY - 0.5, c.z, 2 * f.W * 0.8, 0.85, 0.16, conc);   // slender pier wall
+    }
+  }
+  // KIM SENG BRIDGE (1955) — the post-war municipal crossing at the river's head:
+  // clean flat concrete deck, slim steel railing on regular posts, paired round piers.
+  _bridgeKimSeng(g, f) {
+    const conc = toon(0xcfd2d1), steel = toon(0x707880);
+    this._bridgeDeck(g, f, conc, steel, 0.16);
+    const nR = Math.max(2, Math.round(f.L / 0.9));
+    for (const s of [-1, 1]) {
+      for (let k = 0; k <= nR; k++) {
+        const along = -f.L / 2 + (k / nR) * f.L;
+        const c = this._bpt(f, along, (f.W + 0.04) * s, 0.17);
+        this._bdeck(g, f, c.x, c.y, c.z, 0.04, 0.3, 0.04, steel);             // railing post
+      }
+      this._strut(g, this._bpt(f, -f.L / 2, (f.W + 0.04) * s, 0.34), this._bpt(f, f.L / 2, (f.W + 0.04) * s, 0.34), 0.03, steel);
+    }
+    const nP = Math.max(1, Math.round(f.L / 2.4));
+    for (let k = 1; k <= nP; k++) {
+      const along = -f.L / 2 + (k / (nP + 1)) * f.L;
+      for (const s of [-1, 1]) {
+        const c = this._bpt(f, along, f.W * 0.55 * s, 0);
+        this._bdeck(g, f, c.x, f.deckY - 0.5, c.z, 0.16, 0.85, 0.16, conc);   // round-ish pier pair
+      }
+    }
   }
   // FOOTBRIDGE — the plain timber crossings of the upper reaches: plank deck on
   // wooden piles, low timber rails. The narrow quay lanes and kampong tracks

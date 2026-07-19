@@ -5288,7 +5288,10 @@ export class Scene3D {
       const runMid = pts[(i + j) >> 1];
       if (owned(runMid.x, runMid.z)) { i = j + 1; continue; }   // a placed bridge owns this crossing
       if (A && B) {
-        if (!this._crossAngleOK(A, B)) { i = j + 1; continue; }   // along-the-bank dip, not a crossing
+        // an oblique SHORT hop bank-to-bank is still a real crossing (the small quay
+        // lanes cross the upper reaches at shallow angles) — only a LONG oblique run
+        // is a lane riding the water's edge, which must not be decked
+        if (!this._crossAngleOK(A, B) && runLen > 7) { i = j + 1; continue; }
         // straighten the lane between the banks (the chain's own end points never move) and
         // FLATTEN it at deck height so the carriageway rides ON the deck, not under it
         const kS = A.idx + 1, kE = B.idx - 1;
@@ -5336,10 +5339,10 @@ export class Scene3D {
     for (let s = 0; s <= st; s++) {
       const t = s / st, w = vis(A.x + (B.x - A.x) * t, A.z + (B.z - A.z) * t);
       if (w && t0 < 0) t0 = t;
-      if (!w && t0 >= 0) { if ((tPrev - t0) * cl >= 0.8) push(t0, tPrev); t0 = -1; }
+      if (!w && t0 >= 0) { if ((tPrev - t0) * cl >= 0.45) push(t0, tPrev); t0 = -1; }   // 0.45: the thin upper canal is only ~0.8 wide
       tPrev = t;
     }
-    if (t0 >= 0 && (1 - t0) * cl >= 0.8) push(t0, 1);
+    if (t0 >= 0 && (1 - t0) * cl >= 0.45) push(t0, 1);
     return out;
   }
   // Stitch crossings that no single lane sees whole: lanes that STOP at a junction in the
@@ -5499,7 +5502,9 @@ export class Scene3D {
       // (negative index) are part of the base map and stay plain scenery
       if (s.manual && s.bridgeIndex >= 0) { g = new THREE.Group(); g.userData.demo = { kind: 'bridge', index: s.bridgeIndex }; this.roadGroup.add(g); this._bridgeGroups.set(s.bridgeIndex, g); }
       this._bridgeFrames.push({ ...f, manual: !!s.manual });
-      builders[bi].call(this, g, f);
+      // a NARROW crossing (single quay lane / kampong track) gets the humble timber
+      // footbridge of the period, not a grand civic design
+      (s.hw < 0.3 ? this._bridgeFoot : builders[bi]).call(this, g, f);
     });
   }
   // Player-placed bridges from state.bridges: { x, z, len, w, rot } (world units, radians).
@@ -5586,6 +5591,21 @@ export class Scene3D {
       rail.rotation.y = rot; g.add(rail);
     }
     this.scene.add(g); this._bridgePrev = g;
+  }
+  // FOOTBRIDGE — the plain timber crossings of the upper reaches: plank deck on
+  // wooden piles, low timber rails. The narrow quay lanes and kampong tracks
+  // crossed the river on these long before the iron bridges came.
+  _bridgeFoot(g, f) {
+    const wood = toon(0x8a6a48), dark = toon(0x66503a);
+    this._bridgeDeck(g, f, wood, dark, 0.22);
+    const nP = Math.max(1, Math.round(f.L / 1.5));
+    for (let k = 0; k <= nP; k++) {                          // paired pile posts down into the water
+      const along = -f.L / 2 + (k / nP) * f.L;
+      for (const s of [-1, 1]) {
+        const c = this._bpt(f, along, (f.W + 0.03) * s, 0);
+        this._bdeck(g, f, c.x, f.deckY - 0.42, c.z, 0.09, 1.0, 0.09, dark);
+      }
+    }
   }
   // ANDERSON BRIDGE — three shallow steel arches springing above the roadway.
   _bridgeAnderson(g, f) {
@@ -5696,7 +5716,7 @@ export class Scene3D {
   // a small low hump — rail is crossed at grade (level crossings, as it really was) and
   // the coastal lanes never span open sea. Player roads (riverOnly=false) bridge rail,
   // sea and river alike onto a full deck.
-  _bridgeProfile(pts, riverOnly = false) {
+  _bridgeProfile(pts, riverOnly = false, contStart = true, contEnd = true) {
     const n = pts.length;
     if (n < 2) return { pts, bridged: false };
     const RAIL_CLEAR = 2.6, WATER_CLEAR = 1.5, SEA_DECK = SEA_Y + 2.0, SLOPE = 0.16;
@@ -5712,6 +5732,12 @@ export class Scene3D {
         const a = pts[i], b = pts[i + 1], d = Math.hypot(b.x - a.x, b.z - a.z), steps = Math.ceil(d / 1.0);
         for (let s = 1; s < steps; s++) { const t = s / steps; if (this._overWater(a.x + (b.x - a.x) * t, a.z + (b.z - a.z) * t, 0.25)) { wet[i] = true; wet[i + 1] = true; break; } }
       }
+      // a wet stretch running into a DEAD END is not a crossing — the lane simply
+      // stops at the bank; ramping its tip into the air left odd floating stubs.
+      // (A chain that continues past its end as another lane keeps the lift: the
+      // half-crossing stitcher bridges those.)
+      if (!contStart) { let k = 0; while (k < n && wet[k]) wet[k++] = false; }
+      if (!contEnd) { let k = n - 1; while (k >= 0 && wet[k]) wet[k--] = false; }
       for (let i = 0; i < n; i++) if (wet[i]) { target[i] = Math.max(RIVER_DECK, pts[i].y + RIVER_CLEAR); obs.push(i); }
     } else {
       for (let i = 0; i < n; i++) {
@@ -5949,7 +5975,8 @@ export class Scene3D {
       for (const { nodes, oneway, dirt } of this._tracedChains(roads)) {
         const raw = nodes.map((ni) => { const nd = roads.nodes[ni]; return nd && { x: nd.x, z: nd.z }; }).filter(Boolean);
         if (raw.length < 2) continue;
-        const bp = this._bridgeProfile(this._densifyRoad(raw, 2.0, 0.10), true);
+        const bp = this._bridgeProfile(this._densifyRoad(raw, 2.0, 0.10), true,
+          (tracedDeg.get(nodes[0]) || 0) > 1, (tracedDeg.get(nodes[nodes.length - 1]) || 0) > 1);
         const pts = bp.pts, hw = dirt ? HWD : (oneway ? HW1 : HW2);
         if (bp.bridged) {
           const r = this._riverCrossings(pts, (tracedDeg.get(nodes[0]) || 0) > 1, (tracedDeg.get(nodes[nodes.length - 1]) || 0) > 1, manualBridges);

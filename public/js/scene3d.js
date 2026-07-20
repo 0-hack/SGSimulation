@@ -1206,11 +1206,16 @@ export class Scene3D {
       // 1966 survey map shows — shophouses smallest, big works (port/power/factory)
       // a touch larger — rather than looming oversized over the island.
       const heritageLandmark = BUILDINGS[key] && BUILDINGS[key].cat === 'heritage';
+      // On this compressed island the named landmarks & civic works were looming far too
+      // large once packed into the true downtown, so their aggregate models are reined in
+      // (LM = 0.7) to sit in proportion with the shophouse town and the island around them;
+      // shophouses stay at the player-built size so the seeded town matches what you build.
+      const LM = 0.7;
       const sc = key === 'shophouse' ? MODEL_SCALE   // same size as a player-built shophouse (the build-menu size)
         : key === 'kampong' ? 0.42
-        : heritageLandmark ? (HERITAGE_SCALE[key] || 0.4)   // named landmarks: sized to their REAL storey height vs a shophouse (see HERITAGE_SCALE)
-        : (key === 'port' || key === 'power_station' || key === 'factory' || key === 'processing') ? 0.62
-        : 0.5;
+        : heritageLandmark ? (HERITAGE_SCALE[key] || 0.4) * LM   // named landmarks: real relative storey height, reined to island proportion
+        : (key === 'port' || key === 'power_station' || key === 'factory' || key === 'processing') ? 0.46
+        : 0.36;
       m.scale.setScalar(sc);
       // footprint radius (in cells) from the scaled model's ground extent, so bigger
       // landmarks reserve more room and no two buildings are seeded overlapping.

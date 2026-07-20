@@ -383,6 +383,7 @@ export class Scene3D {
     // other building. _buildLandmarks() is kept for any auto-placed world fixtures.
     this._buildSands(CUSTOM_SANDS);       // sandy coast sections (hand-traced)
     this._buildNature();     // scatter rural greenery across the undeveloped island
+    this._buildRiverBoats(); // the tongkang/bumboat fleet moored gunwale-to-gunwale along Boat Quay
     this._buildRailways(CUSTOM_RAILWAYS); // railway lines (hand-traced) — after nature so the track clears its own trees
     this._buildNavGraph();   // traffic graph (freeform roads only; added on setState)
     this._initBoats();
@@ -861,6 +862,53 @@ export class Scene3D {
 
   // Rural greenery scattered across the undeveloped island (the 1965 look),
   // denser in the Central Catchment forest ring. Hidden under any building.
+  // The 1965 Singapore River as it really looked: tongkang & bumboat lighters moored
+  // gunwale-to-gunwale in packed rows along both banks of the downtown reach (Boat
+  // Quay / the river mouth), bows to the quay, leaving a slim navigation channel down
+  // the middle. Purely decorative scenery — they sit on the water ribbon, on the river
+  // cells (already unbuildable), so they never block building.
+  _buildRiverBoats() {
+    if (this.riverBoatGroup) this.scene.remove(this.riverBoatGroup);
+    this.riverBoatGroup = new THREE.Group(); this.scene.add(this.riverBoatGroup);
+    const rc = this._riverCenterline && this._riverCenterline();
+    if (!rc) return;
+    const WY = 0.12;                    // ride the water ribbon (drawn at y=0.18)
+    // The game river is a slim ribbon (half-width ~0.5-1.5 world), so the lighters moor
+    // PARALLEL to the flow, hugging each bank in tight files (a second file out where the
+    // channel is wide enough), leaving a thread of clear water down the middle.
+    const ALONG = 0.82, BSCALE = 0.3, BW = 1.8 * BSCALE; // boat length-spacing; scale; a boat's beam
+    let count = 0; const CAP = 420;
+    for (const line of rc.lines) {
+      let acc = 1e9, prev = null;
+      for (let i = 0; i < line.length && count < CAP; i++) {
+        const hw = line[i].w * TILE, c = cellToWorld(line[i].x, line[i].y);
+        // only the downtown reach with a little water to moor against (skip the thin tip)
+        if (hw < 0.55 || c.z < 120) { prev = c; acc = 1e9; continue; }
+        const a = line[Math.max(0, i - 1)], b = line[Math.min(line.length - 1, i + 1)];
+        const ca = cellToWorld(a.x, a.y), cb = cellToWorld(b.x, b.y);
+        let tx = cb.x - ca.x, tz = cb.z - ca.z; const tl = Math.hypot(tx, tz) || 1; tx /= tl; tz /= tl;
+        const px = -tz, pz = tx;         // unit perpendicular (across the river)
+        if (prev) acc += Math.hypot(c.x - prev.x, c.z - prev.z);
+        prev = c;
+        if (acc < ALONG) continue; acc = 0;
+        const rows = hw > 0.95 ? 2 : 1;                // a second file where there's room
+        for (const side of [1, -1]) for (let r = 0; r < rows && count < CAP; r++) {
+          const off = hw - BW * 0.5 - 0.05 - r * (BW * 0.95);   // hug the bank, files stacked inward
+          if (off < BW * 0.4) break;                    // keep a thread of open channel
+          if (Math.random() < 0.12) continue;           // the odd gap in the line
+          const jt = (Math.random() - 0.5) * 0.4, jo = (Math.random() - 0.5) * 0.18;
+          const bx = c.x + px * side * (off + jo) + tx * jt;
+          const bz = c.z + pz * side * (off + jo) + tz * jt;
+          const boat = makeBoat(Math.random() < 0.6 ? 'bumboat' : 'sampan');
+          boat.scale.setScalar(BSCALE * (0.85 + Math.random() * 0.3));
+          boat.position.set(bx, WY, bz);
+          boat.rotation.y = Math.atan2(tx, tz) + (Math.random() - 0.5) * 0.22;   // lie along the current
+          boat.traverse((m) => { if (m.isMesh) m.castShadow = false; });   // many boats — skip their shadows
+          this.riverBoatGroup.add(boat); count++;
+        }
+      }
+    }
+  }
   _buildNature() {
     if (this.natureGroup) this.scene.remove(this.natureGroup);
     this.natureGroup = new THREE.Group(); this.scene.add(this.natureGroup);
@@ -1211,7 +1259,7 @@ export class Scene3D {
       // (LM = 0.7) to sit in proportion with the shophouse town and the island around them;
       // shophouses stay at the player-built size so the seeded town matches what you build.
       const LM = 0.7;
-      const sc = key === 'shophouse' ? MODEL_SCALE   // same size as a player-built shophouse (the build-menu size)
+      const sc = key === 'shophouse' ? MODEL_SCALE * 0.7   // the 1965 town's tiny 2-3 storey shophouses — smaller than a modern player build
         : key === 'kampong' ? 0.42
         : heritageLandmark ? (HERITAGE_SCALE[key] || 0.4) * LM   // named landmarks: real relative storey height, reined to island proportion
         : (key === 'port' || key === 'power_station' || key === 'factory' || key === 'processing') ? 0.46
@@ -1344,7 +1392,10 @@ export class Scene3D {
     // terraces end-to-end on both kerbs, fronts to the road. Each terrace reuses the
     // proper `makeBuilding('shophouse')` model, collapsed per-material so it stays a
     // single, individually-demolishable object without a swarm of meshes.
-    const SC = MODEL_SCALE, TW = 4 * 2.05 * SC, DEP = 4.6 * SC;   // terrace width/depth — matches a player-built shophouse
+    // Terrace footprint/stride stay at full cell size so each terrace books a DISTINCT
+    // grid cell into the economy (tighter strides collide on the same cell and lose homes);
+    // only the rendered MODEL is shrunk (MSCALE) to the small 1965 shophouse look.
+    const SC = MODEL_SCALE, MSCALE = MODEL_SCALE * 0.7, TW = 4 * 2.05 * SC, DEP = 4.6 * SC;
     // Total kept ~150 (these decorative shophouses also carry homes/jobs, so the count
     // is tuned to the 1965 economy); the CORE gets the lion's share so the packed
     // commercial heart reads dense, and the suburbs share what's left.
@@ -1366,7 +1417,7 @@ export class Scene3D {
       const ctr = w2c(wx, wz);
       const built = makeBuilding('shophouse', null);
       const m = this._mergeGroupByMaterial(built);          // ~15 meshes instead of ~60
-      m.scale.setScalar(SC);
+      m.scale.setScalar(MSCALE);
       m.position.set(wx, this.terrainHeight(ctr[0], ctr[1]), wz);
       m.rotation.y = faceAng;                                // facade (+Z) faces the road
       this.heritageGroup.add(m);

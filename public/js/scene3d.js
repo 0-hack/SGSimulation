@@ -1302,10 +1302,16 @@ export class Scene3D {
   // Shares materials so hundreds of them stay cheap, and is an individual mesh so the
   // player can DEMOLISH each one. (Built via the heritage system; not in the economy.)
   _fillUrbanDensity() {
-    // [cx, cy, normalised radius] — the dense built-up areas of the 1966 town.
-    const districts = [
-      [0.444, 0.354, 0.034], // Chinatown / Raffles Place / the CBD river mouth
-      [0.463, 0.352, 0.020], // Collyer Quay waterfront
+    // [cx, cy, normalised radius] — the dense built-up areas of the 1966 town. The
+    // CORE (the packed commercial heart) is centred on the named SEED_1965 spots and
+    // filled FIRST, so Raffles Place, Boat Quay, Chinatown and Telok Ayer read as the
+    // wall-to-wall shophouse quarters they were before the cap is spent on the suburbs.
+    const core = [
+      [0.434, 0.373, 0.028], // Chinatown / Kreta Ayer (South Bridge Rd, Sri Mariamman)
+      [0.470, 0.386, 0.026], // Raffles Place & Boat Quay (the river-mouth trading heart)
+      [0.456, 0.362, 0.028], // Telok Ayer / Collyer Quay / Tanjong Pagar waterfront
+    ];
+    const outer = [
       [0.476, 0.398, 0.030], // Beach Road & Bugis
       [0.491, 0.420, 0.028], // Kampong Glam / Rochor / Jalan Besar
       [0.518, 0.434, 0.030], // Kallang
@@ -1316,8 +1322,8 @@ export class Scene3D {
     ];
     // Lamp/heritage placement needs to know where the shophouse town is.
     this._shopMask = Array.from({ length: N }, () => new Uint8Array(N));
-    const inDistrict = (wx, wz) => {
-      for (const [dcx, dcy, rad] of districts) {
+    const inList = (wx, wz, list) => {
+      for (const [dcx, dcy, rad] of list) {
         if (Math.hypot(wx - (dcx - 0.5) * WORLD, wz - (0.5 - dcy) * WORLD) <= rad * WORLD) return true;
       }
       return false;
@@ -1329,7 +1335,10 @@ export class Scene3D {
     // proper `makeBuilding('shophouse')` model, collapsed per-material so it stays a
     // single, individually-demolishable object without a swarm of meshes.
     const SC = MODEL_SCALE, TW = 4 * 2.05 * SC, DEP = 4.6 * SC;   // terrace width/depth — matches a player-built shophouse
-    const STEP = TW + 0.3, SETBACK = 2.25, MAX = 150;
+    // Total kept ~150 (these decorative shophouses also carry homes/jobs, so the count
+    // is tuned to the 1965 economy); the CORE gets the lion's share so the packed
+    // commercial heart reads dense, and the suburbs share what's left.
+    const STEP = TW + 0.3, SETBACK = 2.25, CORE_MAX = 100, MAX = 150;
     const w2c = (wx, wz) => [Math.round(wx / TILE + N / 2), Math.round(N / 2 - wz / TILE)];
     const okCell = (gx, gy) => gx >= 2 && gy >= 2 && gx < N - 2 && gy < N - 2 &&
       this._solidLand(gx, gy) && !this.heritageMask[gy][gx] && !(this._roadMask && this._roadMask[gy][gx]) &&
@@ -1358,22 +1367,29 @@ export class Scene3D {
       count++;
       return true;
     };
-    for (const e of (ROADS_LIVE.edges || [])) {
-      if (count >= MAX) break;
-      const a = ROADS_LIVE.nodes[e[0]], b = ROADS_LIVE.nodes[e[1]]; if (!a || !b) continue;
-      const ax = a[0], az = a[1], bx = b[0], bz = b[1];
-      if (!inDistrict((ax + bx) / 2, (az + bz) / 2)) continue;
-      const L = Math.hypot(bx - ax, bz - az); if (L < STEP) continue;
-      const dx = (bx - ax) / L, dz = (bz - az) / L, perpx = -dz, perpz = dx;
-      for (let s = STEP * 0.5; s <= L - STEP * 0.4 && count < MAX; s += STEP) {
-        const cx = ax + dx * s, cz = az + dz * s;
-        for (const side of [1, -1]) {
-          if (count >= MAX) break;
-          const wx = cx + perpx * side * SETBACK, wz = cz + perpz * side * SETBACK;
-          placeTerrace(wx, wz, Math.atan2(-perpx * side, -perpz * side));   // facade back toward the road
+    // March every town street, tiling terraces on both kerbs. Two passes: the CORE
+    // districts first (up to CORE_MAX) so the commercial heart is packed, then the
+    // outer estates fill whatever's left up to MAX.
+    const fillPass = (list, capTo) => {
+      for (const e of (ROADS_LIVE.edges || [])) {
+        if (count >= capTo) break;
+        const a = ROADS_LIVE.nodes[e[0]], b = ROADS_LIVE.nodes[e[1]]; if (!a || !b) continue;
+        const ax = a[0], az = a[1], bx = b[0], bz = b[1];
+        if (!inList((ax + bx) / 2, (az + bz) / 2, list)) continue;
+        const L = Math.hypot(bx - ax, bz - az); if (L < STEP) continue;
+        const dx = (bx - ax) / L, dz = (bz - az) / L, perpx = -dz, perpz = dx;
+        for (let s = STEP * 0.5; s <= L - STEP * 0.4 && count < capTo; s += STEP) {
+          const cx = ax + dx * s, cz = az + dz * s;
+          for (const side of [1, -1]) {
+            if (count >= capTo) break;
+            const wx = cx + perpx * side * SETBACK, wz = cz + perpz * side * SETBACK;
+            placeTerrace(wx, wz, Math.atan2(-perpx * side, -perpz * side));   // facade back toward the road
+          }
         }
       }
-    }
+    };
+    fillPass(core, CORE_MAX);
+    fillPass(outer, MAX);
     this._urbanFillCount = count;
   }
   // Nearest land cell that's free for heritage AND clear of the rendered roads.

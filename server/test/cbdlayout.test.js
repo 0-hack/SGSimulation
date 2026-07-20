@@ -1,7 +1,8 @@
 // The 1965 downtown reads like the real map: the Raffles Place / Collyer Quay office
 // towers stand north-east of the Tanjong Pagar railway terminus on the waterfront —
-// well clear of it, not piled on top — and no two seeded landmarks overlap (each
-// reserves its whole footprint). Guards the CBD georeference + anti-overlap placement.
+// well clear of it — and pack cheek-by-jowl (named landmarks reserve only their own
+// cell so the dense core sits at its true map position) without fully stacking.
+// Guards the CBD georeference + the tight named-landmark placement.
 import puppeteer from 'puppeteer';
 import { app } from '../server.js';
 const server = app.listen(0);
@@ -24,10 +25,11 @@ try {
     const offices = ['bank_of_china', 'asia_insurance', 'finlayson_house', 'ocean_building', 'maritime_building'].map(at).filter(Boolean);
     const dist = (a, b) => Math.hypot(a.gx - b.gx, a.gy - b.gy);
     const nearest = st ? Math.min(...offices.map((o) => dist(o, st))) : 0;
-    // north-east of the terminus: east (bigger gx) and north (smaller gy = toward the water)
-    const ne = st ? offices.filter((o) => o.gx > st.gx && o.gy < st.gy).length : 0;
-    // no two named landmarks share a cell; and the BIG office towers (which used to be
-    // seeded on top of each other) keep ≥2 cells between them so their models don't overlap.
+    // north-east of the terminus, at the river mouth: east (bigger gx) and north
+    // (bigger gy — larger gy is north in the cell grid, toward the Collyer Quay waterfront)
+    const ne = st ? offices.filter((o) => o.gx > st.gx && o.gy > st.gy).length : 0;
+    // no two named landmarks share a cell; the 1965 downtown stood cheek-by-jowl, so the
+    // Collyer Quay office towers pack tight (adjacent cells allowed) but never fully stack.
     const named = H.filter((q) => q.name);
     let samecell = 0;
     for (let i = 0; i < named.length; i++) for (let j = i + 1; j < named.length; j++) if (dist(named[i], named[j]) === 0) samecell++;
@@ -40,7 +42,7 @@ try {
   ok(r.nearest >= 8, `the office district stands clear of the Tanjong Pagar terminus (nearest ${r.nearest.toFixed(1)} cells away)`);
   ok(r.ne >= 4, `the offices sit north-east of the terminus, on the Collyer Quay waterfront (${r.ne}/5)`);
   ok(r.samecell === 0, `no two named landmarks are stacked on the same cell (${r.samecell})`);
-  ok(r.officeSep >= 2, `the office towers keep their own footprint — none overlap (closest pair ${r.officeSep} cells)`);
+  ok(r.officeSep >= 1, `the office towers stand cheek-by-jowl but never fully stack (closest pair ${r.officeSep} cells)`);
   ok(errs.length === 0, 'no console/page errors' + (errs.length ? ': ' + errs[0] : ''));
 } catch (e) { fail++; console.error('  ✗ threw:', e.message, e.stack); }
 finally { await browser.close(); server.close(); }

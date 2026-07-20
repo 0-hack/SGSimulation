@@ -1197,7 +1197,7 @@ export class Scene3D {
     this.heritageMask = Array.from({ length: N }, () => Array(N).fill(false));
     this.heritageInfo = new Map();
     this.heritagePlacements = []; // {key,gx,gy,name} — seeded into state.grid so they FUNCTION
-    const place = (key, cx, cy, name, noeco) => {
+    const place = (key, cx, cy, name, noeco, tight) => {
       const wx = (cx - 0.5) * WORLD, wz = (0.5 - cy) * WORLD;
       let gx = Math.round(wx / TILE + N / 2), gy = Math.round(N / 2 - wz / TILE);
       const m = makeBuilding(key, null);
@@ -1215,7 +1215,11 @@ export class Scene3D {
       // footprint radius (in cells) from the scaled model's ground extent, so bigger
       // landmarks reserve more room and no two buildings are seeded overlapping.
       const bb = new THREE.Box3().setFromObject(m);
-      const fp = Math.max(0, Math.min(2, Math.round(Math.max(bb.max.x - bb.min.x, bb.max.z - bb.min.z) / (2 * TILE))));
+      // `tight` = a NAMED single landmark: the real 1965 downtown stood cheek-by-jowl,
+      // so it reserves only its OWN cell and merely steps off a road/water/exact-overlap
+      // (a 1-2 cell nudge) instead of demanding a clear block and snapping far. Cluster
+      // rows (n>1) and the plain works keep a size-based footprint so they don't pile up.
+      const fp = tight ? 0 : Math.max(0, Math.min(2, Math.round(Math.max(bb.max.x - bb.min.x, bb.max.z - bb.min.z) / (2 * TILE))));
       if (!this._footprintFree(gx, gy, fp)) { const s = this._nearestFreeFootprint(gx, gy, fp, SNAP_R); if (!s) return; gx = s.x; gy = s.y; }
       const c = cellToWorld(gx, gy);
       const rd = this._roadDir && this._roadDir[gy][gx];
@@ -1237,9 +1241,10 @@ export class Scene3D {
     };
     for (const s of (list || [])) {
       const n = s.n || 1, sp = s.spread || 0.012;
+      const tight = n === 1 && !!s.name;   // a single named landmark places precisely, packed tight
       for (let i = 0; i < n; i++) {
         const a = n > 1 ? (i / n) * Math.PI * 2 + 0.6 : 0, r = n > 1 ? sp * (0.55 + 0.45 * (i % 2)) : 0;
-        place(s.key, s.cx + Math.cos(a) * r, s.cy + Math.sin(a) * r, s.name, s.noeco);
+        place(s.key, s.cx + Math.cos(a) * r, s.cy + Math.sin(a) * r, s.name, s.noeco, tight);
       }
     }
   }
@@ -1307,9 +1312,9 @@ export class Scene3D {
     // filled FIRST, so Raffles Place, Boat Quay, Chinatown and Telok Ayer read as the
     // wall-to-wall shophouse quarters they were before the cap is spent on the suburbs.
     const core = [
-      [0.434, 0.373, 0.028], // Chinatown / Kreta Ayer (South Bridge Rd, Sri Mariamman)
-      [0.470, 0.386, 0.026], // Raffles Place & Boat Quay (the river-mouth trading heart)
-      [0.456, 0.362, 0.028], // Telok Ayer / Collyer Quay / Tanjong Pagar waterfront
+      [0.468, 0.383, 0.026], // Chinatown / Kreta Ayer (South Bridge Rd, Sri Mariamman)
+      [0.481, 0.390, 0.024], // Raffles Place & Boat Quay (the river-mouth trading heart)
+      [0.487, 0.384, 0.022], // Telok Ayer / Collyer Quay waterfront
     ];
     const outer = [
       [0.476, 0.398, 0.030], // Beach Road & Bugis

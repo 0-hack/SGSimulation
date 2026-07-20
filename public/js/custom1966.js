@@ -34,22 +34,24 @@ export const SEED_1965 = [
   //      mostly 2–5 storeys, with only a handful of taller blocks (the Asia
   //      Insurance and Bank of China buildings, ~18 storeys); the high-rise office
   //      CBD only rose in the 1970s–80s. Packed into the blocks between the streets ----
-  { key: 'godown',       cx: 0.466, cy: 0.393, n: 1, spread: 0.011, name: 'Singapore River godowns' },   // lining the river's south bank (Boat Quay warehouses)
-  { key: 'shophouse',    cx: 0.434, cy: 0.373, n: 6, spread: 0.010, name: 'Chinatown (Kreta Ayer)' },
-  { key: 'shophouse',    cx: 0.475, cy: 0.389, n: 5, spread: 0.010, name: 'Raffles Place & Boat Quay' },   // the curved shophouse row along the south bank
-  { key: 'shophouse',    cx: 0.462, cy: 0.372, n: 3, spread: 0.009, name: 'Collyer Quay' },
-  { key: 'shophouse',    cx: 0.423, cy: 0.367, n: 3, spread: 0.010, name: 'Tanjong Pagar' },
-  { key: 'lau_pa_sat',   cx: 0.460, cy: 0.362, name: 'Lau Pa Sat (Telok Ayer Market)' },
+  // Positions re-derived from the 1966 survey map (base-48 grid). The trading heart
+  // fronts the river's SOUTH bank at the mouth and the Collyer Quay seafront, with
+  // Chinatown up South Bridge Rd to the south-west (named landmarks place cheek-by-jowl).
+  { key: 'godown',       cx: 0.476, cy: 0.392, n: 1, spread: 0.011, name: 'Singapore River godowns' },   // Boat Quay warehouses on the river's south bank
+  { key: 'shophouse',    cx: 0.468, cy: 0.383, n: 6, spread: 0.010, name: 'Chinatown (Kreta Ayer)' },     // South Bridge Rd / Kreta Ayer
+  { key: 'shophouse',    cx: 0.479, cy: 0.390, n: 5, spread: 0.010, name: 'Raffles Place & Boat Quay' },   // the trading square just south of the river mouth
+  { key: 'shophouse',    cx: 0.487, cy: 0.385, n: 3, spread: 0.009, name: 'Collyer Quay' },                // the seafront quay east of Raffles Place
+  { key: 'shophouse',    cx: 0.458, cy: 0.375, n: 3, spread: 0.010, name: 'Tanjong Pagar' },
+  { key: 'lau_pa_sat',   cx: 0.480, cy: 0.381, name: 'Lau Pa Sat (Telok Ayer Market)' },                  // Telok Ayer market square
   // The pioneer skyscrapers already standing over Raffles Place / Collyer Quay by 1965 —
   // a handful of tall bank, insurance and shipping offices poking above the low-rise mass
   // (the dense high-rise CBD only rose from the 1970s). Buildable & demolishable (Heritage).
-  // Sited on the Collyer Quay waterfront, north-east of Tanjong Pagar station (where Raffles
-  // Place actually sits — well clear of the railway terminus), spaced so none overlap.
-  { key: 'finlayson_house',  cx: 0.463, cy: 0.359, name: 'Finlayson House' },
-  { key: 'asia_insurance',   cx: 0.470, cy: 0.359, name: 'Asia Insurance Building' },
-  { key: 'ocean_building',   cx: 0.476, cy: 0.359, name: 'Ocean Building' },
-  { key: 'bank_of_china',    cx: 0.466, cy: 0.362, name: 'Bank of China Building' },
-  { key: 'maritime_building',cx: 0.473, cy: 0.362, name: 'Maritime Building' },
+  // Ranged along the Collyer Quay / Raffles Quay seafront at the river mouth.
+  { key: 'finlayson_house',  cx: 0.481, cy: 0.382, name: 'Finlayson House' },        // spaced along the seafront (big models keep ~2 cells apart)
+  { key: 'asia_insurance',   cx: 0.484, cy: 0.384, name: 'Asia Insurance Building' },
+  { key: 'bank_of_china',    cx: 0.487, cy: 0.386, name: 'Bank of China Building' },
+  { key: 'ocean_building',   cx: 0.490, cy: 0.388, name: 'Ocean Building' },
+  { key: 'maritime_building',cx: 0.492, cy: 0.390, name: 'Maritime Building' },
   // The Malayan Railway's grand southern terminus at Keppel Road, at the end of the KTM
   // line (it snaps to solid ground right beside the terminal throat, not onto the track).
   { key: 'tanjong_pagar_station', cx: 0.444, cy: 0.363, name: 'Tanjong Pagar Railway Station' },
@@ -58,32 +60,32 @@ export const SEED_1965 = [
   { key: 'diesel',       cx: 0.432, cy: 0.338, name: 'St James Power Station' },
   { key: 'power_station', cx: 0.314, cy: 0.300, name: 'Pasir Panjang Power Station' },
   { key: 'power_station', cx: 0.298, cy: 0.330, name: 'Pasir Panjang ‘B’ Station' },
-  { key: 'sewage',       cx: 0.430, cy: 0.358, name: 'Singapore River sewerage works' },
-  // ---- Civic & administrative core, just behind the quays (City Hall / Padang) ----
-  { key: 'colonial',     cx: 0.492, cy: 0.404, name: 'Supreme Court & City Hall (the Padang)' },   // north of the river mouth, facing the Padang
-  { key: 'colonial',     cx: 0.483, cy: 0.396, name: 'Empress Place Building' },                    // on the river's north bank at the mouth
-  { key: 'colonial',     cx: 0.486, cy: 0.399, name: 'Old Parliament House' },                      // beside Empress Place on the north bank
-  { key: 'police',       cx: 0.456, cy: 0.382, name: 'Hill Street Police Station' },
-  { key: 'fire_station', cx: 0.460, cy: 0.388, name: 'Central Fire Station' },
-  { key: 'cinema',       cx: 0.450, cy: 0.392, name: 'Cathay Cinema' },
-  { key: 'hospital',     cx: 0.418, cy: 0.378, name: 'Singapore General Hospital' },
+  { key: 'sewage',       cx: 0.474, cy: 0.390, name: 'Singapore River sewerage works' },
+  // ---- Civic & administrative core, on the river's NORTH bank around the Padang ----
+  { key: 'colonial',     cx: 0.483, cy: 0.398, name: 'Supreme Court & City Hall (the Padang)' },   // west side of the Padang, north of the river mouth
+  { key: 'colonial',     cx: 0.484, cy: 0.393, name: 'Empress Place Building' },                    // on the river's north bank at the mouth
+  { key: 'colonial',     cx: 0.485, cy: 0.395, name: 'Old Parliament House' },                      // beside Empress Place on the north bank
+  { key: 'police',       cx: 0.478, cy: 0.394, name: 'Hill Street Police Station' },                // Hill Street, by the river
+  { key: 'fire_station', cx: 0.476, cy: 0.396, name: 'Central Fire Station' },                      // Hill Street
+  { key: 'cinema',       cx: 0.472, cy: 0.401, name: 'Cathay Cinema' },                             // Handy Rd / Dhoby Ghaut
+  { key: 'hospital',     cx: 0.450, cy: 0.386, name: 'Singapore General Hospital' },                // Outram, south-west
   // ---- Named heritage landmarks of the central area, standing at independence and
   //      modelled close to their real 1950s–60s exteriors. Buildable & demolishable
   //      from the build menu (Heritage), so the player can keep or reshape the old
   //      district. Placed at their real sites; they snap to the nearest free cell if a
   //      street or shophouse already sits on the exact spot ----
-  { key: 'fullerton',        cx: 0.481, cy: 0.384, name: 'Fullerton Building' },                    // on the south bank by the river mouth, clear of the Anderson Bridge crossing
-  { key: 'victoria_theatre', cx: 0.477, cy: 0.400, name: 'Victoria Theatre & Concert Hall' },       // north bank, beside Empress Place
-  { key: 'shophouse',        cx: 0.456, cy: 0.399, n: 1, spread: 0.008, name: 'Clarke Quay' },        // trading shophouses along the upriver (west) bank
-  { key: 'raffles_hotel',    cx: 0.470, cy: 0.405, name: 'Raffles Hotel' },
-  { key: 'sri_mariamman',    cx: 0.437, cy: 0.374, name: 'Sri Mariamman Temple' },
-  { key: 'sultan_mosque',    cx: 0.482, cy: 0.417, name: 'Sultan Mosque' },
+  { key: 'fullerton',        cx: 0.486, cy: 0.389, name: 'Fullerton Building' },                    // the GPO at the river mouth, south end of Anderson Bridge
+  { key: 'victoria_theatre', cx: 0.483, cy: 0.392, name: 'Victoria Theatre & Concert Hall' },       // Memorial Hall on the north bank, beside Empress Place
+  { key: 'shophouse',        cx: 0.472, cy: 0.395, n: 1, spread: 0.008, name: 'Clarke Quay' },        // trading shophouses along the upriver (west) bank
+  { key: 'raffles_hotel',    cx: 0.487, cy: 0.399, name: 'Raffles Hotel' },                          // Beach Rd, north-east near the seafront
+  { key: 'sri_mariamman',    cx: 0.470, cy: 0.384, name: 'Sri Mariamman Temple' },                   // South Bridge Rd, Chinatown
+  { key: 'sultan_mosque',    cx: 0.492, cy: 0.404, name: 'Sultan Mosque' },                          // Kampong Glam, north-east
   // ---- The most crowded part of 1966: from City Hall the built-up town runs
   //      NORTH-EAST and EAST in an almost-unbroken mass of shophouses — Beach Road,
   //      Bugis, Kampong Glam, Rochor, Jalan Besar, Lavender, Kallang, Geylang and
   //      Katong. This is the real dense belt, weighted east of the civic core ----
   { key: 'shophouse',    cx: 0.476, cy: 0.396, n: 7, spread: 0.011, name: 'Beach Road & Bugis' },
-  { key: 'community_centre', cx: 0.470, cy: 0.392, name: 'People’s Association centre' },
+  { key: 'community_centre', cx: 0.481, cy: 0.394, name: 'People’s Association centre' },
   { key: 'shophouse',    cx: 0.488, cy: 0.410, n: 6, spread: 0.011, name: 'Kampong Glam & Rochor' },
   { key: 'clinic',       cx: 0.481, cy: 0.404, name: 'Kandang Kerbau Hospital' },
   { key: 'shophouse',    cx: 0.498, cy: 0.424, n: 6, spread: 0.011, name: 'Jalan Besar & Lavender' },
@@ -131,15 +133,15 @@ export const SEED_1965 = [
   // so these great landmarks don't flood 1965's tiny job market and erase its
   // historical ~10% unemployment (the functional city is the seeds above).
   // ---- Civic, religious & cultural core, ringing the Padang / Fort Canning ----
-  { key: 'colonial',      cx: 0.489, cy: 0.408, noeco: true, name: "St Andrew's Cathedral" },                 // 1861 — Anglican cathedral by the Padang
-  { key: 'colonial',      cx: 0.480, cy: 0.406, noeco: true, name: 'Armenian Church of St Gregory' },         // 1835 — the oldest church, Hill Street
-  { key: 'colonial',      cx: 0.485, cy: 0.412, noeco: true, name: 'Cathedral of the Good Shepherd' },        // 1846 — Catholic cathedral, Bras Basah
-  { key: 'park',          cx: 0.478, cy: 0.412, noeco: true, name: 'Fort Canning' },                          // colonial hill fort, reservoir & barracks
-  { key: 'colonial',      cx: 0.468, cy: 0.421, noeco: true, name: 'The Istana (Government House)' },          // 1869 — head of state's residence, Orchard
-  { key: 'cinema',        cx: 0.462, cy: 0.408, noeco: true, name: 'National Theatre' },                       // opened Aug 1963 — the crown-fronted people's theatre
-  { key: 'colonial',      cx: 0.456, cy: 0.367, noeco: true, name: 'Thian Hock Keng Temple' },                // 1842 — the Hokkien temple, Telok Ayer
-  { key: 'ferry_terminal', cx: 0.481, cy: 0.377, noeco: true, name: 'Clifford Pier' },                        // 1933 — the harbour's passenger landing
-  { key: 'community_centre', cx: 0.469, cy: 0.380, noeco: true, name: 'Singapore Conference Hall' },          // opened 1965 — Trade Union House, Shenton Way
+  { key: 'colonial',      cx: 0.484, cy: 0.399, noeco: true, name: "St Andrew's Cathedral" },                 // 1861 — Anglican cathedral, north edge of the Padang
+  { key: 'colonial',      cx: 0.480, cy: 0.396, noeco: true, name: 'Armenian Church of St Gregory' },         // 1835 — the oldest church, Hill Street
+  { key: 'colonial',      cx: 0.486, cy: 0.401, noeco: true, name: 'Cathedral of the Good Shepherd' },        // 1846 — Catholic cathedral, Bras Basah
+  { key: 'park',          cx: 0.474, cy: 0.404, noeco: true, name: 'Fort Canning' },                          // colonial hill fort, reservoir & barracks
+  { key: 'colonial',      cx: 0.466, cy: 0.410, noeco: true, name: 'The Istana (Government House)' },          // 1869 — head of state's residence, Orchard/Dhoby Ghaut
+  { key: 'cinema',        cx: 0.470, cy: 0.402, noeco: true, name: 'National Theatre' },                       // opened Aug 1963 — River Valley / Clemenceau Ave
+  { key: 'colonial',      cx: 0.476, cy: 0.383, noeco: true, name: 'Thian Hock Keng Temple' },                // 1842 — the Hokkien temple, Telok Ayer St
+  { key: 'ferry_terminal', cx: 0.489, cy: 0.384, noeco: true, name: 'Clifford Pier' },                        // 1933 — the harbour's passenger landing, Collyer Quay
+  { key: 'community_centre', cx: 0.484, cy: 0.383, noeco: true, name: 'Singapore Conference Hall' },          // opened 1965 — Trade Union House, Shenton Way
   // ---- The great outer installations of 1965 (the British were still here) ----
   { key: 'naval_base',    cx: 0.470, cy: 0.618, noeco: true, name: 'Sembawang Naval Base' },                  // the vast Royal Navy dockyard on the Johor Strait
   { key: 'air_base',      cx: 0.505, cy: 0.578, noeco: true, name: 'RAF Seletar' },                           // 1928 — RAF station, north

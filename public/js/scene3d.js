@@ -1197,7 +1197,7 @@ export class Scene3D {
     this.heritageMask = Array.from({ length: N }, () => Array(N).fill(false));
     this.heritageInfo = new Map();
     this.heritagePlacements = []; // {key,gx,gy,name} — seeded into state.grid so they FUNCTION
-    const place = (key, cx, cy, name) => {
+    const place = (key, cx, cy, name, noeco) => {
       const wx = (cx - 0.5) * WORLD, wz = (0.5 - cy) * WORLD;
       let gx = Math.round(wx / TILE + N / 2), gy = Math.round(N / 2 - wz / TILE);
       const m = makeBuilding(key, null);
@@ -1228,7 +1228,10 @@ export class Scene3D {
       g.add(m);
       this._claimFootprint(gx, gy, fp);   // reserve the whole footprint so nothing overlaps it
       if (name) this.heritageInfo.set(`${gx},${gy}`, name);
-      const pl = { key, gx, gy, name: name || null, mesh: m };
+      // noeco: a pure MONUMENT — rendered, named, footprint-reserved and demolishable,
+      // but NOT booked into the economy (so the great civic/religious/military landmarks
+      // don't flood the tiny 1965 job market and erase its historical ~10% unemployment)
+      const pl = { key, gx, gy, name: name || null, mesh: m, noeco: !!noeco };
       m.userData.demo = { kind: 'heritage', placement: pl };   // pickable: the real shophouse/landmark model
       this.heritagePlacements.push(pl);
     };
@@ -1236,7 +1239,7 @@ export class Scene3D {
       const n = s.n || 1, sp = s.spread || 0.012;
       for (let i = 0; i < n; i++) {
         const a = n > 1 ? (i / n) * Math.PI * 2 + 0.6 : 0, r = n > 1 ? sp * (0.55 + 0.45 * (i % 2)) : 0;
-        place(s.key, s.cx + Math.cos(a) * r, s.cy + Math.sin(a) * r, s.name);
+        place(s.key, s.cx + Math.cos(a) * r, s.cy + Math.sin(a) * r, s.name, s.noeco);
       }
     }
   }
@@ -1427,6 +1430,7 @@ export class Scene3D {
   applyHeritageToGrid(state) {
     if (!state || !state.grid || state.heritageSeeded) return;
     for (const p of (this.heritagePlacements || [])) {
+      if (p.noeco) continue;                               // monuments reserve their cell but stay out of the economy
       const row = state.grid[p.gy];
       if (row && !row[p.gx]) row[p.gx] = { k: p.key, heritage: true, name: p.name || null, w: heritageWeight(p.key) };
     }

@@ -121,4 +121,32 @@ export const SEED_1965 = [
   { key: 'kampong',      cx: 0.560, cy: 0.560, n: 3, spread: 0.04 },
   { key: 'kampong',      cx: 0.255, cy: 0.485, n: 2, spread: 0.035 },
   { key: 'kampong',      cx: 0.620, cy: 0.505, n: 2, spread: 0.035 },
+  // ================= NAMED LANDMARKS ALREADY STANDING AT INDEPENDENCE ==================
+  // Iconic buildings, monuments and installations that a Singaporean of 1965 would
+  // know by name, added so the historic city reads true. Each uses the closest model
+  // in the set (no bespoke mesh) but carries its REAL name (shown on inspect/demolish)
+  // and sits at its real georeferenced spot; it snaps to the nearest free block if a
+  // street or another building already holds the exact cell. (Years in comments.)
+  // They are `noeco` MONUMENTS — reserved & demolishable, but kept OUT of the economy
+  // so these great landmarks don't flood 1965's tiny job market and erase its
+  // historical ~10% unemployment (the functional city is the seeds above).
+  // ---- Civic, religious & cultural core, ringing the Padang / Fort Canning ----
+  { key: 'colonial',      cx: 0.489, cy: 0.408, noeco: true, name: "St Andrew's Cathedral" },                 // 1861 — Anglican cathedral by the Padang
+  { key: 'colonial',      cx: 0.480, cy: 0.406, noeco: true, name: 'Armenian Church of St Gregory' },         // 1835 — the oldest church, Hill Street
+  { key: 'colonial',      cx: 0.485, cy: 0.412, noeco: true, name: 'Cathedral of the Good Shepherd' },        // 1846 — Catholic cathedral, Bras Basah
+  { key: 'park',          cx: 0.478, cy: 0.412, noeco: true, name: 'Fort Canning' },                          // colonial hill fort, reservoir & barracks
+  { key: 'colonial',      cx: 0.468, cy: 0.421, noeco: true, name: 'The Istana (Government House)' },          // 1869 — head of state's residence, Orchard
+  { key: 'cinema',        cx: 0.462, cy: 0.408, noeco: true, name: 'National Theatre' },                       // opened Aug 1963 — the crown-fronted people's theatre
+  { key: 'colonial',      cx: 0.456, cy: 0.367, noeco: true, name: 'Thian Hock Keng Temple' },                // 1842 — the Hokkien temple, Telok Ayer
+  { key: 'ferry_terminal', cx: 0.481, cy: 0.377, noeco: true, name: 'Clifford Pier' },                        // 1933 — the harbour's passenger landing
+  { key: 'community_centre', cx: 0.469, cy: 0.380, noeco: true, name: 'Singapore Conference Hall' },          // opened 1965 — Trade Union House, Shenton Way
+  // ---- The great outer installations of 1965 (the British were still here) ----
+  { key: 'naval_base',    cx: 0.470, cy: 0.618, noeco: true, name: 'Sembawang Naval Base' },                  // the vast Royal Navy dockyard on the Johor Strait
+  { key: 'air_base',      cx: 0.505, cy: 0.578, noeco: true, name: 'RAF Seletar' },                           // 1928 — RAF station, north
+  { key: 'air_base',      cx: 0.235, cy: 0.545, noeco: true, name: 'RAF Tengah' },                            // 1939 — RAF fighter station, west-central
+  { key: 'tech_school',   cx: 0.130, cy: 0.500, noeco: true, name: 'Nanyang University' },                    // 1955 — the Chinese-language university, Jurong Road
+  { key: 'park',          cx: 0.306, cy: 0.303, noeco: true, name: 'Haw Par Villa (Tiger Balm Gardens)' },    // 1937 — the Aw brothers' garden, Pasir Panjang
+  { key: 'park',          cx: 0.215, cy: 0.600, noeco: true, name: 'Kranji War Memorial' },                   // 1957 — the war dead of the north-west
+  { key: 'reservoir',     cx: 0.430, cy: 0.500, noeco: true, name: 'MacRitchie Reservoir' },                  // 1868 — the island's first impounding reservoir
+  { key: 'forest',        cx: 0.350, cy: 0.520, noeco: true, name: 'Bukit Timah Nature Reserve' },            // the primeval forest on Singapore's highest hill
 ];

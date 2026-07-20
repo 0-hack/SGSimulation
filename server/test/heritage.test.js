@@ -26,12 +26,17 @@ try {
     const placements = all.filter(p=>!p.decor);
     const fill = all.filter(p=>p.decor).length;       // real, demolishable town shophouses
     const placed = placements.length;
-    let onLand=0, inGrid=0, blocked=0, dup=0;
+    // `noeco` monuments (great civic/religious/military landmarks) are reserved &
+    // demolishable but kept OUT of the economy, so they don't flood the 1965 job market
+    const econ = placements.filter(p=>!p.noeco);      // the functional heritage city
+    const mon = placements.filter(p=>p.noeco);        // the pure monuments
+    let onLand=0, inGrid=0, blocked=0, dup=0, monBlocked=0;
     for(const pl of placements){
       if(v.land[pl.gy][pl.gx]) onLand++;
       if(!v.isLand(pl.gx, pl.gy)) blocked++;     // heritage cells must read as NOT buildable
+      if(pl.noeco && !v.isLand(pl.gx, pl.gy)) monBlocked++;
       const c=v.state.grid[pl.gy][pl.gx];
-      if(c && c.heritage) inGrid++;
+      if(!pl.noeco && c && c.heritage) inGrid++;
       if(v.buildings.has(`${pl.gx},${pl.gy}`)) dup++;  // not double-drawn by the grid pass
     }
     const named = placements.filter(pl=>v.heritageAt(pl.gx,pl.gy)).length;
@@ -48,7 +53,7 @@ try {
     // nothing seeded on the railway (buildings must not sit on the KTM track)
     const onRail = (v.heritagePlacements || []).filter(pl => v._railMask && v._railMask[pl.gy] && v._railMask[pl.gy][pl.gx]).length;
     const d = derive(v.state);
-    return { placed, masked, fill, onLand, blocked, inGrid, named, dup, demolished, landmarkKeys, landmarksInGrid, onRail,
+    return { placed, econ:econ.length, mon:mon.length, monBlocked, masked, fill, onLand, blocked, inGrid, named, dup, demolished, landmarkKeys, landmarksInGrid, onRail,
       homes:d.homes, jobs:Math.round(d.jobs), powerRatio:+d.powerRatio.toFixed(2), waterRatio:+d.waterRatio.toFixed(2),
       pressure:+d.housingPressure.toFixed(2), unemp:+d.unemployment.toFixed(3), pop:v.state.population };
   });
@@ -56,7 +61,8 @@ try {
   ok(r.onLand === r.placed, `every landmark sits on land (${r.onLand}/${r.placed})`);
   ok(r.blocked === r.placed, `heritage cells are unbuildable (${r.blocked}/${r.placed})`);
   ok(r.named >= 18, `landmarks carry names for inspection (${r.named} named)`);
-  ok(r.inGrid === r.placed, `every landmark is a real grid cell (${r.inGrid}/${r.placed})`);
+  ok(r.inGrid === r.econ, `every functional landmark is a real grid cell (${r.inGrid}/${r.econ})`);
+  ok(r.mon > 0 && r.monBlocked === r.mon, `named monuments are reserved but out of the economy (${r.mon} monuments, all unbuildable)`);
   ok(r.landmarkKeys.length === 12, `all 12 named central-area landmarks (office towers + railway terminus) stand downtown from the start (${r.landmarkKeys.join(', ')})`);
   ok(r.landmarksInGrid === 12, `the named landmarks are booked into the economy (${r.landmarksInGrid}/12)`);
   ok(r.dup === 0, 'heritage is drawn once — not duplicated by the grid mesh pass');

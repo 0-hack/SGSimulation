@@ -876,8 +876,8 @@ export class Scene3D {
     // The game river is a slim ribbon (half-width ~0.5-1.5 world), so the lighters moor
     // PARALLEL to the flow, hugging each bank in tight files (a second file out where the
     // channel is wide enough), leaving a thread of clear water down the middle.
-    const ALONG = 0.82, BSCALE = 0.3, BW = 1.8 * BSCALE; // boat length-spacing; scale; a boat's beam
-    let count = 0; const CAP = 420;
+    const ALONG = 0.6, BSCALE = 0.17, BW = 1.8 * BSCALE; // boat length-spacing; scale; a boat's beam (small, packed)
+    let count = 0; const CAP = 460;
     for (const line of rc.lines) {
       let acc = 1e9, prev = null;
       for (let i = 0; i < line.length && count < CAP; i++) {
@@ -1221,7 +1221,15 @@ export class Scene3D {
   }
   // Is the cell free for a heritage building: on land, not already taken, not a street.
   _heritageFree(gx, gy) {
-    return this.isLand(gx, gy) && !(this.heritageMask && this.heritageMask[gy][gx]) && !(this._roadMask && this._roadMask[gy][gx]) && !(this._railMask && this._railMask[gy][gx]);
+    return this.isLand(gx, gy) && !this._nearWater(gx, gy) && !(this.heritageMask && this.heritageMask[gy][gx]) && !(this._roadMask && this._roadMask[gy][gx]) && !(this._railMask && this._railMask[gy][gx]);
+  }
+  // A cell whose CENTRE sits over (or within `pad` cells of) the VISIBLE river ribbon —
+  // the cell riverMask is deliberately tight and narrower than the drawn water, so a
+  // building on a cell just outside it still overhangs the water. Tie "keep off the
+  // river" to the ribbon itself so quay buildings LINE the bank without touching it.
+  _nearWater(gx, gy, pad = 0.5) {
+    const c = cellToWorld(gx, gy);
+    return this._overWater(c.x, c.z, pad);
   }
   // Angle so a building's facade (local +Z) turns to FACE the nearest road cell.
   // Returns null if no road is within reach (caller falls back to a default bearing).
@@ -1403,7 +1411,8 @@ export class Scene3D {
     const w2c = (wx, wz) => [Math.round(wx / TILE + N / 2), Math.round(N / 2 - wz / TILE)];
     const okCell = (gx, gy) => gx >= 2 && gy >= 2 && gx < N - 2 && gy < N - 2 &&
       this._solidLand(gx, gy) && !this.heritageMask[gy][gx] && !(this._roadMask && this._roadMask[gy][gx]) &&
-      !(this._railMask && this._railMask[gy][gx]) && !this.reserveMask?.[gy]?.[gx] && !this.riverMask?.[gy]?.[gx];
+      !(this._railMask && this._railMask[gy][gx]) && !this.reserveMask?.[gy]?.[gx] && !this.riverMask?.[gy]?.[gx] &&
+      !this._nearWater(gx, gy);   // keep the quay shophouses off the visible water, not just the tight cell mask
     let count = 0;
     const placeTerrace = (wx, wz, faceAng) => {
       const lenx = Math.cos(faceAng), lenz = -Math.sin(faceAng);   // local +X (terrace length) in world

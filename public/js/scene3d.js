@@ -6316,11 +6316,29 @@ export class Scene3D {
     // node. A loose tolerance used to fuse two SEPARATE nearby roads into one node,
     // so cars teleported across the gap between them; keep it well under a tile (2.5).
     const nodes = [], adj = [], MERGE = 1.4;
+    // Merge coincident endpoints via a spatial hash (bucket = MERGE), not a linear
+    // scan of every node — the old O(n²) search cost ~4s on a 15k-edge map. A node
+    // within MERGE of the query must fall in the 3×3 bucket neighbourhood, so this
+    // returns the exact same nearest-within-MERGE node the linear scan did.
+    const IMS = 1 / MERGE, HB = 8192, HW = 16384, hash = new Map();
     const nodeAt = (x, z, y) => {
+      const bx = Math.floor(x * IMS), bz = Math.floor(z * IMS);
       let best = -1, bestD = MERGE * MERGE;
-      for (let i = 0; i < nodes.length; i++) { const n = nodes[i]; if (Math.abs(n.y - y) >= 3) continue; const d = (n.x - x) * (n.x - x) + (n.z - z) * (n.z - z); if (d < bestD) { bestD = d; best = i; } }
+      for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) {
+        const bucket = hash.get((bx + dx + HB) * HW + (bz + dz + HB));
+        if (!bucket) continue;
+        for (let k = 0; k < bucket.length; k++) {
+          const i = bucket[k], n = nodes[i];
+          if (Math.abs(n.y - y) >= 3) continue;
+          const d = (n.x - x) * (n.x - x) + (n.z - z) * (n.z - z);
+          // match the old linear scan exactly: nearest wins, lowest index breaks ties
+          if (d < bestD || (d === bestD && i < best)) { bestD = d; best = i; }
+        }
+      }
       if (best >= 0) return best;
-      nodes.push({ x, z, y }); adj.push([]); return nodes.length - 1;
+      const idx = nodes.length; nodes.push({ x, z, y }); adj.push([]);
+      const key = (bx + HB) * HW + (bz + HB); let b = hash.get(key); if (!b) hash.set(key, b = []); b.push(idx);
+      return idx;
     };
     const add = (pts, lanes, type, elevated, walk, traced, oneway, dirt) => {
       if (pts.length < 2) return;

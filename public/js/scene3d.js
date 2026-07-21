@@ -862,51 +862,66 @@ export class Scene3D {
 
   // Rural greenery scattered across the undeveloped island (the 1965 look),
   // denser in the Central Catchment forest ring. Hidden under any building.
-  // The 1965 Singapore River as it really looked: tongkang & bumboat lighters moored
-  // gunwale-to-gunwale in packed rows along both banks of the downtown reach (Boat
-  // Quay / the river mouth), bows to the quay, leaving a slim navigation channel down
-  // the middle. Purely decorative scenery — they sit on the water ribbon, on the river
-  // cells (already unbuildable), so they never block building.
+  // Order the main river channel (mouth -> inland) into a world-space path with a
+  // cumulative arc length + per-point half-width, and mark the NAVIGABLE reach (from
+  // the mouth up to where the channel pinches out) that the sampans patrol.
+  _buildRiverPath() {
+    const rc = this._riverCenterline && this._riverCenterline();
+    if (!rc || !rc.lines.length) { this._riverPath = null; return; }
+    let main = null; for (const l of rc.lines) if (!main || l.length > main.length) main = l;   // the trunk
+    const pts = main.map((p) => { const c = cellToWorld(p.x, p.y); return { x: c.x, z: c.z, w: p.w * TILE, s: 0 }; });
+    let L = 0; for (let i = 1; i < pts.length; i++) { L += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].z - pts[i - 1].z); pts[i].s = L; }
+    // navigable from the mouth (s=0) up to where it stays wide enough to float a sampan
+    let sMax = L; for (let i = 0; i < pts.length; i++) { if (pts[i].w < 0.4) { sMax = pts[i].s; break; } }
+    this._riverPath = { pts, len: L, sMax: Math.max(6, sMax) };
+  }
+  // Interpolate the river path at arc length s -> world point, half-width and unit tangent.
+  _riverPointAt(s) {
+    const P = this._riverPath.pts; s = Math.max(0, Math.min(this._riverPath.len, s));
+    let i = 1; while (i < P.length && P[i].s < s) i++;
+    const a = P[i - 1], b = P[Math.min(P.length - 1, i)];
+    const seg = (b.s - a.s) || 1e-6, t = (s - a.s) / seg;
+    let tx = b.x - a.x, tz = b.z - a.z; const tl = Math.hypot(tx, tz) || 1; tx /= tl; tz /= tl;
+    return { x: a.x + (b.x - a.x) * t, z: a.z + (b.z - a.z) * t, w: a.w + (b.w - a.w) * t, tx, tz };
+  }
+  // The Singapore River fleet: only the SMALLEST craft (sampans) plied the narrow
+  // channel, so a scatter of little sampans motor up and down the navigable reach —
+  // keeping to their side of the channel and turning about at each end — the same way
+  // the harbour ships circle the island. Each faces its own direction of travel.
   _buildRiverBoats() {
     if (this.riverBoatGroup) this.scene.remove(this.riverBoatGroup);
     this.riverBoatGroup = new THREE.Group(); this.scene.add(this.riverBoatGroup);
-    const rc = this._riverCenterline && this._riverCenterline();
-    if (!rc) return;
-    const WY = 0.12;                    // ride the water ribbon (drawn at y=0.18)
-    // The game river is a slim ribbon (half-width ~0.5-1.5 world), so the lighters moor
-    // PARALLEL to the flow, hugging each bank in tight files (a second file out where the
-    // channel is wide enough), leaving a thread of clear water down the middle.
-    const ALONG = 0.6, BSCALE = 0.17, BW = 1.8 * BSCALE; // boat length-spacing; scale; a boat's beam (small, packed)
-    let count = 0; const CAP = 460;
-    for (const line of rc.lines) {
-      let acc = 1e9, prev = null;
-      for (let i = 0; i < line.length && count < CAP; i++) {
-        const hw = line[i].w * TILE, c = cellToWorld(line[i].x, line[i].y);
-        // only the downtown reach with a little water to moor against (skip the thin tip)
-        if (hw < 0.55 || c.z < 120) { prev = c; acc = 1e9; continue; }
-        const a = line[Math.max(0, i - 1)], b = line[Math.min(line.length - 1, i + 1)];
-        const ca = cellToWorld(a.x, a.y), cb = cellToWorld(b.x, b.y);
-        let tx = cb.x - ca.x, tz = cb.z - ca.z; const tl = Math.hypot(tx, tz) || 1; tx /= tl; tz /= tl;
-        const px = -tz, pz = tx;         // unit perpendicular (across the river)
-        if (prev) acc += Math.hypot(c.x - prev.x, c.z - prev.z);
-        prev = c;
-        if (acc < ALONG) continue; acc = 0;
-        const rows = hw > 0.95 ? 2 : 1;                // a second file where there's room
-        for (const side of [1, -1]) for (let r = 0; r < rows && count < CAP; r++) {
-          const off = hw - BW * 0.5 - 0.05 - r * (BW * 0.95);   // hug the bank, files stacked inward
-          if (off < BW * 0.4) break;                    // keep a thread of open channel
-          if (Math.random() < 0.12) continue;           // the odd gap in the line
-          const jt = (Math.random() - 0.5) * 0.4, jo = (Math.random() - 0.5) * 0.18;
-          const bx = c.x + px * side * (off + jo) + tx * jt;
-          const bz = c.z + pz * side * (off + jo) + tz * jt;
-          const boat = makeBoat(Math.random() < 0.6 ? 'bumboat' : 'sampan');
-          boat.scale.setScalar(BSCALE * (0.85 + Math.random() * 0.3));
-          boat.position.set(bx, WY, bz);
-          boat.rotation.y = Math.atan2(tx, tz) + (Math.random() - 0.5) * 0.22;   // lie along the current
-          boat.traverse((m) => { if (m.isMesh) m.castShadow = false; });   // many boats — skip their shadows
-          this.riverBoatGroup.add(boat); count++;
-        }
-      }
+    this.riverBoats = [];
+    this._buildRiverPath();
+    if (!this._riverPath) return;
+    const S = this._riverPath.sMax, N_BOATS = Math.max(10, Math.round(S / 3.4));   // lively but not a jam
+    for (let i = 0; i < N_BOATS; i++) {
+      const b = makeBoat('sampan');                          // the smallest boat only
+      b.scale.setScalar(0.16 * (0.85 + Math.random() * 0.3));
+      b.traverse((m) => { if (m.isMesh) m.castShadow = false; });
+      this.riverBoatGroup.add(b);
+      this.riverBoats.push({
+        mesh: b, s: Math.random() * S, dir: Math.random() < 0.5 ? 1 : -1,
+        speed: KMH(4) + Math.random() * KMH(4),              // a slow ~4-8 km/h river crawl
+        lane: (Math.random() < 0.5 ? 1 : -1) * (0.25 + Math.random() * 0.25),   // keep to one side
+      });
+    }
+  }
+  // Motor the sampans along the river path, turning about at the ends, each keeping to
+  // its lane and facing the way it's going.
+  _updateRiverBoats(dt) {
+    if (!this.riverBoats || !this._riverPath) return;
+    const S = this._riverPath.sMax;
+    for (const bo of this.riverBoats) {
+      bo.s += bo.dir * bo.speed * dt;
+      if (bo.s > S) { bo.s = 2 * S - bo.s; bo.dir = -1; }    // come about at the head of navigation
+      if (bo.s < 0) { bo.s = -bo.s; bo.dir = 1; }            // and at the mouth
+      const p = this._riverPointAt(bo.s);
+      const off = Math.max(-(p.w - 0.18), Math.min(p.w - 0.18, bo.lane * p.w));   // stay inside the banks
+      const nx = -p.tz, nz = p.tx;
+      const bob = Math.sin(this.clock.elapsedTime * 1.1 + bo.s * 0.3) * 0.03;
+      bo.mesh.position.set(p.x + nx * off, 0.14 + bob, p.z + nz * off);
+      bo.mesh.rotation.y = Math.atan2(p.tx * bo.dir, p.tz * bo.dir);   // bow points the way it travels
     }
   }
   _buildNature() {
@@ -6809,6 +6824,7 @@ export class Scene3D {
     this._updateDevelopment(adt);
     this._updatePeople(adt);
     this._updateBoats(adt);
+    this._updateRiverBoats(adt);   // sampans plying the Singapore River
     if (!this.frozen) this._updateAirportPlanes(adt);   // airliners circling the built-in airport
     if (!this.frozen) this._updateAirstripPlanes(dt);   // taxiing/landing aircraft on drawn runways
     if (!this.frozen) this._updateTrains(dt);           // trains shuttling along every railway & MRT line

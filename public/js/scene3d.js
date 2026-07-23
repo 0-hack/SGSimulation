@@ -359,10 +359,10 @@ export class Scene3D {
     // Sea
     const seaGeo = new THREE.PlaneGeometry(WORLD * 4, WORLD * 4, 1, 1);
     // ONE water material shared by the sea, the Singapore River & the reservoirs, so
-    // every body of water reads as the exact same colour (and shimmers together). The
-    // river used to have its own material + received shadows, so it looked brighter and
-    // shadow-patchy next to the smooth, shadowless sea.
-    const seaMat = new THREE.MeshToonMaterial({ color: SEA_COLOR, transparent: true, opacity: 0.95, side: THREE.DoubleSide, gradientMap: toonGradient() });
+    // every body of water reads as the exact same colour. It is OPAQUE: a translucent
+    // river ribbon sitting over the sea at the river mouth used to double up and read as
+    // a brighter patch, so the joint looked a different tone from the open sea.
+    const seaMat = new THREE.MeshToonMaterial({ color: SEA_COLOR, gradientMap: toonGradient(), side: THREE.DoubleSide });
     this._waterMat = seaMat;
     const sea = new THREE.Mesh(seaGeo, seaMat);
     sea.rotation.x = -Math.PI / 2;
@@ -2398,8 +2398,8 @@ export class Scene3D {
       const ux = (b[0] - a[0]) / segL, uz = (b[1] - a[1]) / segL;
       while (nextAt <= dist + segL) {
         const s = nextAt - dist, x = a[0] + ux * s, z = a[1] + uz * s;
-        const post = new THREE.Mesh(new THREE.BoxGeometry(0.32, 1.5, 0.32), toon(0xff7a3c)); post.position.set(x, 0.75, z); group.add(post);
-        const light = new THREE.Mesh(new THREE.SphereGeometry(0.3, 8, 6), new THREE.MeshBasicMaterial({ color: 0xffd23a, transparent: true })); light.position.set(x, 1.7, z); light.userData.blink = true; group.add(light);
+        const post = new THREE.Mesh(new THREE.BoxGeometry(0.24, 1.2, 0.24), toon(0xff7a3c)); post.position.set(x, 0.6, z); group.add(post);
+        const light = new THREE.Mesh(new THREE.SphereGeometry(0.15, 8, 6), new THREE.MeshBasicMaterial({ color: 0xffd23a, transparent: true })); light.position.set(x, 1.32, z); light.userData.blink = true; group.add(light);
         nextAt += SPACE;
       }
       dist += segL;
@@ -2414,8 +2414,8 @@ export class Scene3D {
     const m = new THREE.Mesh(new THREE.BoxGeometry(TILE, H, TILE), toon(0x8a7c54)); // wet, under-construction fill
     m.position.set(c.x, -2.15, c.z); m.receiveShadow = true; // starts submerged, rises with progress
     // a marine works buoy with a blinking light marks the reclamation zone
-    const buoy = new THREE.Mesh(new THREE.BoxGeometry(0.3, 1.1, 0.3), toon(0xff7a3c)); buoy.position.set(TILE * 0.34, H / 2 + 0.55, TILE * 0.34); m.add(buoy);
-    const blink = new THREE.Mesh(new THREE.SphereGeometry(0.28, 8, 6), new THREE.MeshBasicMaterial({ color: 0xffd23a, transparent: true })); blink.position.set(TILE * 0.34, H / 2 + 1.2, TILE * 0.34); blink.userData.blink = true; m.add(blink);
+    const buoy = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.85, 0.22), toon(0xff7a3c)); buoy.position.set(TILE * 0.34, H / 2 + 0.42, TILE * 0.34); m.add(buoy);
+    const blink = new THREE.Mesh(new THREE.SphereGeometry(0.15, 8, 6), new THREE.MeshBasicMaterial({ color: 0xffd23a, transparent: true })); blink.position.set(TILE * 0.34, H / 2 + 0.92, TILE * 0.34); blink.userData.blink = true; m.add(blink);
     this.reclaimSiteGroup.add(m); this.reclaimSites.set(id, m);
     this._spawnDust(c.x, c.z, 0x9fb6c9, 8); // sea spray as filling begins
     const g = this.natureCells && this.natureCells.get(id); if (g) g.visible = false;
@@ -3399,7 +3399,7 @@ export class Scene3D {
     const H = Math.max(3, box.max.y - box.min.y);
     b.scale.set(1, 0.02, 1); wrap.add(b);
     const poleMat = toon(0xcaa94e);
-    const hw = sx / 2 + 0.3, hd = sz / 2 + 0.3;
+    const hw = sx / 2 + 0.1, hd = sz / 2 + 0.1;   // hug the building footprint closely
     // slim scaffold poles that RISE WITH the build (see _setSiteProgress) rather than
     // standing full-height & bare over a barely-risen structure — keeps the barrier
     // proportional to what's actually there, especially in a dense cluster of sites.
@@ -5209,13 +5209,13 @@ export class Scene3D {
     const sides = [[], []];                                  // collect post tops per side to string a rail
     const post = (x, z, side) => {
       const y = this._roadY(x, z);
-      const p = new THREE.Mesh(new THREE.BoxGeometry(0.4, 1.7, 0.4), toon(0xff7a3c));      // tall orange post
-      p.position.set(x, y + 0.85, z); group.add(p);
-      const band = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.3, 0.46), toon(0xf4f4f4));  // white reflective band
-      band.position.set(x, y + 1.2, z); group.add(band);
-      const light = new THREE.Mesh(new THREE.SphereGeometry(0.34, 8, 6), new THREE.MeshBasicMaterial({ color: 0xffd23a, transparent: true }));
-      light.position.set(x, y + 1.85, z); light.userData.blink = true; group.add(light);
-      sides[side].push(new THREE.Vector3(x, y + 1.05, z));
+      const p = new THREE.Mesh(new THREE.BoxGeometry(0.28, 1.25, 0.28), toon(0xff7a3c));      // slim orange post
+      p.position.set(x, y + 0.62, z); group.add(p);
+      const band = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.22, 0.34), toon(0xf4f4f4));  // white reflective band
+      band.position.set(x, y + 0.9, z); group.add(band);
+      const light = new THREE.Mesh(new THREE.SphereGeometry(0.15, 8, 6), new THREE.MeshBasicMaterial({ color: 0xffd23a, transparent: true }));  // small amber warning light
+      light.position.set(x, y + 1.36, z); light.userData.blink = true; group.add(light);
+      sides[side].push(new THREE.Vector3(x, y + 0.8, z));
     };
     // place posts every ~6 units of ARC LENGTH along the whole route (even spacing,
     // independent of how many points the smoothed polyline has)
@@ -6851,9 +6851,6 @@ export class Scene3D {
       this._ensureVehicles(target);
       this._advanceNet(this.vehicles, dt);
     }
-
-    // sea shimmer (held still while editing)
-    if (this.sea && !this.frozen) this.sea.material.opacity = 0.9 + Math.sin(this.clock.elapsedTime * 1.5) * 0.03;
 
     this._updateDayNight();
     this._updateWeather(adt);

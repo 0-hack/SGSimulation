@@ -358,7 +358,12 @@ export class Scene3D {
 
     // Sea
     const seaGeo = new THREE.PlaneGeometry(WORLD * 4, WORLD * 4, 1, 1);
-    const seaMat = new THREE.MeshToonMaterial({ color: SEA_COLOR, transparent: true, opacity: 0.95, gradientMap: toonGradient() });
+    // ONE water material shared by the sea, the Singapore River & the reservoirs, so
+    // every body of water reads as the exact same colour (and shimmers together). The
+    // river used to have its own material + received shadows, so it looked brighter and
+    // shadow-patchy next to the smooth, shadowless sea.
+    const seaMat = new THREE.MeshToonMaterial({ color: SEA_COLOR, transparent: true, opacity: 0.95, side: THREE.DoubleSide, gradientMap: toonGradient() });
+    this._waterMat = seaMat;
     const sea = new THREE.Mesh(seaGeo, seaMat);
     sea.rotation.x = -Math.PI / 2;
     sea.position.y = SEA_Y;
@@ -613,7 +618,7 @@ export class Scene3D {
     if (this.catchGroup) this.scene.remove(this.catchGroup);
     this.catchGroup = new THREE.Group(); this.scene.add(this.catchGroup);
     const sMat = toon(0x8aa15a, { side: THREE.DoubleSide });            // muddy/grassy bank
-    const wMat = new THREE.MeshToonMaterial({ color: SEA_COLOR, transparent: true, opacity: 0.95, side: THREE.DoubleSide, gradientMap: toonGradient() });
+    const wMat = this._waterMat;   // the one shared water material (same colour as the sea)
     for (const poly of SG_RESERVOIRS) this._reservoirLake(poly, sMat, wMat);
     const branches = riverBranches(N);
     // The Singapore River is part of the sea (a tidal inlet), not a distinct river:
@@ -827,7 +832,7 @@ export class Scene3D {
     const bank = mk(0.08, bankMat);                                     // wider muddy rim
     const bs = 1.06; bank.scale.set(bs, 1, bs); bank.position.set((1 - bs) * cx, 0.08, (1 - bs) * cz);
     this.catchGroup.add(bank);
-    this.catchGroup.add(mk(0.2, waterMat));                            // water surface on top
+    const water = mk(0.2, waterMat); water.receiveShadow = false; this.catchGroup.add(water);   // shadowless, like the sea
   }
 
   // Build one smooth water ribbon from a branch (polyline of {x,y,w} cell coords),
@@ -857,7 +862,7 @@ export class Scene3D {
     for (let i = 0; i < STEPS; i++) { const a = i * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setIndex(idx); g.computeVertexNormals();
-    const m = new THREE.Mesh(g, mat); m.receiveShadow = true; this.catchGroup.add(m);
+    const m = new THREE.Mesh(g, mat); m.receiveShadow = false; this.catchGroup.add(m);   // shadowless, like the sea
   }
 
   // Rural greenery scattered across the undeveloped island (the 1965 look),
@@ -3394,20 +3399,29 @@ export class Scene3D {
     const H = Math.max(3, box.max.y - box.min.y);
     b.scale.set(1, 0.02, 1); wrap.add(b);
     const poleMat = toon(0xcaa94e);
-    const hw = sx / 2 + 0.5, hd = sz / 2 + 0.5;
+    const hw = sx / 2 + 0.3, hd = sz / 2 + 0.3;
+    // slim scaffold poles that RISE WITH the build (see _setSiteProgress) rather than
+    // standing full-height & bare over a barely-risen structure — keeps the barrier
+    // proportional to what's actually there, especially in a dense cluster of sites.
+    const poles = [];
     for (const [px, pz] of [[-hw, -hd], [hw, -hd], [hw, hd], [-hw, hd]]) {
-      const pole = new THREE.Mesh(new THREE.BoxGeometry(0.18, H, 0.18), poleMat);
-      pole.position.set(px, H / 2, pz); wrap.add(pole);
+      const pole = new THREE.Mesh(new THREE.BoxGeometry(0.12, H, 0.12), poleMat);
+      pole.position.set(px, H / 2, pz); pole.userData.h = H; wrap.add(pole); poles.push(pole);
     }
     // translucent yellow work platform marks the part being built right now
-    const plat = new THREE.Mesh(new THREE.BoxGeometry(sx + 1.0, 0.25, sz + 1.0), toon(0xffd23f, { transparent: true, opacity: 0.5 }));
+    const plat = new THREE.Mesh(new THREE.BoxGeometry(sx + 0.6, 0.22, sz + 0.6), toon(0xffd23f, { transparent: true, opacity: 0.5 }));
     plat.position.y = 0.3; wrap.add(plat);
-    // a tower crane beside the site
-    const mast = new THREE.Mesh(new THREE.BoxGeometry(0.3, H + 6, 0.3), poleMat);
-    mast.position.set(hw + 1.2, (H + 6) / 2, hd + 1.2); wrap.add(mast);
-    const jib = new THREE.Mesh(new THREE.BoxGeometry(sx + 3, 0.22, 0.22), poleMat);
-    jib.position.set(hw + 1.2 - (sx + 3) / 2 + 0.3, H + 5.6, hd + 1.2); wrap.add(jib);
-    this.sites.set(id, { group: wrap, b, plat, H, found: siteFound });
+    // a small tower crane beside the site — only for a genuine tower, and it grows
+    // with the build too, so a low shophouse doesn't get a crane towering over it.
+    let crane = null;
+    if (H > 11) {
+      const mast = new THREE.Mesh(new THREE.BoxGeometry(0.2, H, 0.2), poleMat);
+      mast.position.set(hw + 0.8, H / 2, hd + 0.8); mast.userData.h = H; wrap.add(mast);
+      const jib = new THREE.Mesh(new THREE.BoxGeometry(sx + 1.2, 0.18, 0.18), poleMat);
+      jib.position.set(hw + 0.8 - (sx + 1.2) / 2 + 0.3, H, hd + 0.8); wrap.add(jib);
+      crane = { mast, jib };
+    }
+    this.sites.set(id, { group: wrap, b, plat, H, poles, crane, found: siteFound });
     const dg = this.natureCells && this.natureCells.get(id); if (dg) dg.visible = false;
     this._spawnDust(c.x, c.z, 0xcab98a, 10);
   }
@@ -3417,6 +3431,11 @@ export class Scene3D {
     s.b.scale.y = p;                       // building rises from its base
     s.plat.position.y = p * s.H + 0.2;     // platform rides the construction front
     s.plat.visible = p < 0.98;
+    // scaffold poles & crane grow with the construction front (a touch above it) so
+    // the barrier is only ever as tall as the structure it's wrapping.
+    const front = Math.max(0.14, Math.min(1, p + 0.12));
+    for (const pole of (s.poles || [])) { pole.scale.y = front; pole.position.y = front * pole.userData.h / 2; }
+    if (s.crane) { const mh = front * s.crane.mast.userData.h; s.crane.mast.scale.y = front; s.crane.mast.position.y = mh / 2; s.crane.jib.position.y = mh; }
   }
   _removeSite(id) {
     const s = this.sites.get(id); if (!s) return;

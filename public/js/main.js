@@ -1714,15 +1714,19 @@ async function cloudSave(isPublic) {
   refreshSummary(G.state);
   try {
     const packed = packState(G.state); // store the grid sparsely (a 640² grid is ~2.7 MB dense)
+    const payload = { name: G.state.name, owner: G.state.owner, state: packed, isPublic };
+    const create = async () => { const res = await api.createWorld(payload); G.cloud = { id: res.id, token: res.token }; };
     if (G.cloud) {
-      await api.updateWorld(G.cloud.id, G.cloud.token, {
-        name: G.state.name, owner: G.state.owner, state: packed, isPublic,
-      });
+      try {
+        await api.updateWorld(G.cloud.id, G.cloud.token, payload);
+      } catch (e) {
+        // the cloud world is gone (server DB was reset) or its edit token no longer
+        // matches — re-create it instead of failing forever on a dead id.
+        if (/not found|edit token|\b40[34]\b/i.test(e.message || '')) await create();
+        else throw e;
+      }
     } else {
-      const res = await api.createWorld({
-        name: G.state.name, owner: G.state.owner, state: packed, isPublic,
-      });
-      G.cloud = { id: res.id, token: res.token };
+      await create();
     }
     G.dirty = false;
     saveLocal();
@@ -1752,7 +1756,14 @@ async function cloudSync() {
   try {
     G.state.landmarks = loadLibrary();
     refreshSummary(G.state);
-    await api.updateWorld(G.cloud.id, G.cloud.token, { name: G.state.name, owner: G.state.owner, state: packState(G.state) });
+    const payload = { name: G.state.name, owner: G.state.owner, state: packState(G.state) };
+    try {
+      await api.updateWorld(G.cloud.id, G.cloud.token, payload);
+    } catch (e) {
+      // dead cloud id / stale token — re-create so the nation keeps syncing
+      if (/not found|edit token|\b40[34]\b/i.test(e.message || '')) { const res = await api.createWorld({ ...payload, isPublic: true }); G.cloud = { id: res.id, token: res.token }; }
+      else throw e;
+    }
     G.dirty = false;
   } catch { /* transient network hiccup — the next cycle retries */ }
   finally { _cloudSyncBusy = false; }

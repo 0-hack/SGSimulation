@@ -621,10 +621,34 @@ export class Scene3D {
     const wMat = this._waterMat;   // the one shared water material (same colour as the sea)
     for (const poly of SG_RESERVOIRS) this._reservoirLake(poly, sMat, wMat);
     const branches = riverBranches(N);
+    this._riverBranches = branches;   // kept so the ribbon can be re-swept when the channel is filled in
     // The Singapore River is part of the sea (a tidal inlet), not a distinct river:
     // render it as pure sea-coloured water with no muddy bank, so it reads as the sea
     // reaching inland rather than a separate channel.
     for (const br of branches) this._waterRibbon(br, 0, 0.18, wMat);
+    this._buildRiverFillMask();   // which cells the player may reclaim (fill) the tidal river over
+  }
+  // Cells sitting UNDER the visible Singapore River ribbon — the tidal channel the
+  // player may reclaim into land (unlike the protected freshwater reservoirs). Built
+  // once over the river's bounding box, so canReclaim() stays O(1) per cell.
+  _buildRiverFillMask() {
+    this._riverFillMask = Array.from({ length: N }, () => Array(N).fill(false));
+    const d = this._riverCenterline && this._riverCenterline(); if (!d) return;
+    const x0 = Math.max(0, Math.floor(d.bx0)), x1 = Math.min(N - 1, Math.ceil(d.bx1));
+    const y0 = Math.max(0, Math.floor(d.by0)), y1 = Math.min(N - 1, Math.ceil(d.by1));
+    for (let gy = y0; gy <= y1; gy++) for (let gx = x0; gx <= x1; gx++) {
+      if (this.reserveMask && this.reserveMask[gy][gx]) continue;   // reservoirs stay protected
+      const c = cellToWorld(gx, gy);
+      if (this._overWater(c.x, c.z, 0.2)) this._riverFillMask[gy][gx] = true;   // small pad -> include the near banks
+    }
+  }
+  // Re-sweep just the river ribbon (leaving the reservoirs) so filled-in cells lose
+  // their water — _waterRibbon pinches the ribbon to nothing over any reclaimed cell.
+  _refreshRiverRibbon() {
+    if (!this.catchGroup || !this._riverBranches) return;
+    const old = []; this.catchGroup.traverse((o) => { if (o.userData && o.userData.riverRibbon) old.push(o); });
+    for (const m of old) { this.catchGroup.remove(m); if (m.geometry) m.geometry.dispose(); }
+    for (const br of this._riverBranches) this._waterRibbon(br, 0, 0.18, this._waterMat);
   }
 
   // Multi-source BFS distance (in cells) from every cell to the nearest water
@@ -855,6 +879,8 @@ export class Scene3D {
       const u = i / STEPS;                                   // sharpen the tip at the branch end
       if (u > 1 - tipFrac) hw *= Math.max(0, (1 - u) / tipFrac);
       const p = samples[i], a = samples[Math.max(0, i - 1)], b = samples[Math.min(STEPS, i + 1)];
+      // pinch the ribbon to nothing over any cell the player has reclaimed (filled in)
+      if (this.reclaimedMask) { const sgx = Math.round(p.x / TILE + N / 2 - 0.5), sgy = Math.round(N / 2 - p.z / TILE - 0.5); if (this.reclaimedMask[sgy] && this.reclaimedMask[sgy][sgx]) hw = 0; }
       let tx = b.x - a.x, tz = b.z - a.z; const tl = Math.hypot(tx, tz) || 1; tx /= tl; tz /= tl;
       const nx = -tz, nz = tx;
       pos.push(p.x + nx * hw, yy, p.z + nz * hw, p.x - nx * hw, yy, p.z - nz * hw);
@@ -862,7 +888,7 @@ export class Scene3D {
     for (let i = 0; i < STEPS; i++) { const a = i * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setIndex(idx); g.computeVertexNormals();
-    const m = new THREE.Mesh(g, mat); m.receiveShadow = false; this.catchGroup.add(m);   // shadowless, like the sea
+    const m = new THREE.Mesh(g, mat); m.receiveShadow = false; m.userData.riverRibbon = true; this.catchGroup.add(m);   // shadowless, like the sea
   }
 
   // Rural greenery scattered across the undeveloped island (the 1965 look),
@@ -2311,13 +2337,16 @@ export class Scene3D {
   // and not over the foreign (Johor) landmass.
   canReclaim(x, y) {
     if (x < 0 || y < 0 || x >= N || y >= N) return false;
-    if (this.land[y] && this.land[y][x]) return false;                 // already SG land
     if (this.reclaimedMask && this.reclaimedMask[y] && this.reclaimedMask[y][x]) return false;
     if (this.reclaimingMask && this.reclaimingMask[y] && this.reclaimingMask[y][x]) return false; // already rising
-    if ((this.reserveMask && this.reserveMask[y][x]) || (this.riverMask && this.riverMask[y][x])) return false; // protected freshwater
+    if (this.reserveMask && this.reserveMask[y][x]) return false;       // protected reservoir/catchment
     const nx = (x + 0.5) / N, ny = (y + 0.5) / N;
     if (SG_FOREIGN.some((poly) => pointInPolygon(nx, ny, poly))) return false; // Johor, not Singapore
-    return true;
+    // fill OPEN SEA, or the tidal Singapore River channel (drawn over land, so allow it
+    // even though the cell reads as land — filling covers the ribbon into buildable land)
+    const water = !(this.land[y] && this.land[y][x]);
+    const riverFill = !!(this._riverFillMask && this._riverFillMask[y] && this._riverFillMask[y][x]);
+    return water || riverFill;
   }
   _ensureReclaimGroups() {
     if (!this.reclaimedMask) this.reclaimedMask = Array.from({ length: N }, () => Array(N).fill(false));
@@ -2353,6 +2382,7 @@ export class Scene3D {
       this._finishReclaim(x, y);
     }
     this._syncReclaimAreas(state);             // free-shaped (polygon) reclamations
+    if (this._riverFillDirty) { this._riverFillDirty = false; this._refreshRiverRibbon(); }   // a river cell filled -> re-sweep the ribbon so its water is gone
   }
   // Render free-shaped reclamations: finished areas as smooth permanent land, and
   // in-progress areas as the same shape rising from the sea with works buoys.
@@ -2360,7 +2390,7 @@ export class Scene3D {
     if (!this.reclaimedMask) return;
     if (this._reclaimAreaGroup) this.scene.remove(this._reclaimAreaGroup);
     const grp = new THREE.Group(); this.scene.add(grp); this._reclaimAreaGroup = grp;
-    const markCells = (cells, mask) => { for (const [x, y] of (cells || [])) if (x >= 0 && y >= 0 && x < N && y < N) { mask[y][x] = true; const g = this.natureCells?.get(x + ',' + y); if (g) g.visible = false; } };
+    const markCells = (cells, mask) => { for (const [x, y] of (cells || [])) if (x >= 0 && y >= 0 && x < N && y < N) { if (!mask[y][x] && mask === this.reclaimedMask && this._riverFillMask && this._riverFillMask[y] && this._riverFillMask[y][x]) this._riverFillDirty = true; mask[y][x] = true; const g = this.natureCells?.get(x + ',' + y); if (g) g.visible = false; } };
     for (const a of (state.reclaimedAreas || [])) {                 // finished -> permanent buildable land
       const m = this._reclaimLandMesh(a.poly); m.position.y = 0.05; grp.add(m);
       markCells(a.cells, this.reclaimedMask);
@@ -2436,6 +2466,7 @@ export class Scene3D {
     const id = x + ',' + y;
     if (this.reclaimSlabs.has(id)) return;
     this.reclaimedMask[y][x] = true;
+    if (this._riverFillMask && this._riverFillMask[y] && this._riverFillMask[y][x]) this._riverFillDirty = true;   // dry up the ribbon here
     const m = this._reclaimSlab(x, y); this.reclaimGroup.add(m); this.reclaimSlabs.set(id, m);
     const c = cellToWorld(x, y); this._spawnDust(c.x, c.z, 0xd9c79a, 12); // land secured
     const g = this.natureCells && this.natureCells.get(id); if (g) g.visible = false;
@@ -5368,6 +5399,7 @@ export class Scene3D {
     // shift); querying raw fractional cells put every detected crossing ~1.25
     // world units south-west of the visible water — and its bridge with it
     const gx = x / TILE + N / 2 - 0.5, gy = N / 2 - z / TILE - 0.5;
+    if (this.reclaimedMask) { const rx = Math.round(gx), ry = Math.round(gy); if (this.reclaimedMask[ry] && this.reclaimedMask[ry][rx]) return false; }   // filled-in channel: no longer water
     const d = this._riverCenterline();
     if (gx < d.bx0 || gx > d.bx1 || gy < d.by0 || gy > d.by1) return false;   // far from the river — quick reject
     for (const line of d.lines) {

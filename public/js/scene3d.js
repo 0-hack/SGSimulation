@@ -3408,8 +3408,9 @@ export class Scene3D {
       const pole = new THREE.Mesh(new THREE.BoxGeometry(0.12, H, 0.12), poleMat);
       pole.position.set(px, H / 2, pz); pole.userData.h = H; wrap.add(pole); poles.push(pole);
     }
-    // translucent yellow work platform marks the part being built right now
-    const plat = new THREE.Mesh(new THREE.BoxGeometry(sx + 0.6, 0.22, sz + 0.6), toon(0xffd23f, { transparent: true, opacity: 0.5 }));
+    // translucent yellow work platform marks the part being built right now — kept
+    // INSIDE the footprint so it never bleeds over onto the neighbouring building
+    const plat = new THREE.Mesh(new THREE.BoxGeometry(Math.max(1.4, sx - 0.5), 0.2, Math.max(1.4, sz - 0.5)), toon(0xffd23f, { transparent: true, opacity: 0.35 }));
     plat.position.y = 0.3; wrap.add(plat);
     // a small tower crane beside the site — only for a genuine tower, and it grows
     // with the build too, so a low shophouse doesn't get a crane towering over it.
@@ -5244,11 +5245,16 @@ export class Scene3D {
     };
     railRibbon(sides[0]); railRibbon(sides[1]);
   }
+  // A small mini-excavator parked in the work zone — tracks, a boxy cab and a boom
+  // arm reaching to the ground — instead of a road-wide block that buried the path.
   _roadworkMarker() {
     const grp = new THREE.Group();
-    const body = new THREE.Mesh(new THREE.BoxGeometry(2.4, 1.6, 2.4), toon(0xf6c945)); body.position.y = 0.9; grp.add(body);
-    const cab = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.0, 1.2), toon(0x444b55)); cab.position.y = 2.0; grp.add(cab);
-    for (const dx of [-2.2, 2.2]) { const cone = new THREE.Mesh(new THREE.ConeGeometry(0.5, 1.3, 7), toon(0xff7a3c)); cone.position.set(dx, 0.65, 0); grp.add(cone); }
+    const tracks = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.32, 0.7), toon(0x2f333a)); tracks.position.y = 0.16; grp.add(tracks);
+    const body = new THREE.Mesh(new THREE.BoxGeometry(0.85, 0.55, 0.82), toon(0xf6c945)); body.position.set(-0.12, 0.6, 0); grp.add(body);
+    const cab = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 0.56), toon(0x2b3038)); cab.position.set(0.16, 1.02, 0); grp.add(cab);
+    const boom = new THREE.Mesh(new THREE.BoxGeometry(1.25, 0.13, 0.13), toon(0xf6c945)); boom.position.set(0.72, 0.68, 0); boom.rotation.z = -0.55; grp.add(boom);
+    const dip = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.11, 0.11), toon(0xf6c945)); dip.position.set(1.28, 0.28, 0); dip.rotation.z = -1.35; grp.add(dip);
+    for (const dx of [-1.15, 1.5]) { const cone = new THREE.Mesh(new THREE.ConeGeometry(0.28, 0.72, 7), toon(0xff7a3c)); cone.position.set(dx, 0.36, 0.55); grp.add(cone); }
     return grp;
   }
 

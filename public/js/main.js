@@ -67,6 +67,32 @@ async function downloadCommunity(build) {
 
 const LS_SAVE = 'sg_save_v1';
 const LS_NAME = 'sg_owner';
+// The cloud is the save of record, so the OWNER credentials for the nation
+// ({id, token}) are kept in their own slot: the local game snapshot can be cleared,
+// overwritten or missing (another browser / device) and you can still reconnect to
+// your nation on the server. Exposed to the player as a "recovery code" (id:token).
+const LS_CLOUD = 'sg_cloud_v1';
+
+function rememberCloud(cloud, state) {
+  if (!cloud || !cloud.id || !cloud.token) return;
+  try {
+    localStorage.setItem(LS_CLOUD, JSON.stringify({
+      id: cloud.id, token: cloud.token,
+      name: state?.name || '', owner: state?.owner || '', at: Date.now(),
+    }));
+  } catch { /* quota */ }
+}
+function rememberedCloud() {
+  try { const c = JSON.parse(localStorage.getItem(LS_CLOUD) || 'null'); return (c && c.id && c.token) ? c : null; } catch { return null; }
+}
+// Accepts "id:token", a bare "id token", or a shared link plus token — so a player can
+// paste whatever they copied.
+function parseRecoveryCode(raw) {
+  const s = String(raw || '').trim(); if (!s) return null;
+  const parts = s.split(/[\s:|,]+/).filter(Boolean).map((p) => p.replace(/^.*\/world\//, ''));
+  if (parts.length < 2) return null;
+  return { id: parts[0], token: parts[parts.length - 1] };
+}
 
 // Time speed. The player picks a base rate in IN-GAME DAYS PER REAL SECOND
 // (G.dayRate); Play / Fast / Hyper multiply it. Day/night is locked to the
@@ -148,6 +174,9 @@ function boot() {
 
   $('btn-new').onclick = startNew;
   $('btn-continue').onclick = continueGame;
+  // Reconnect to the nation on the cloud. With credentials remembered on this device
+  // it goes straight in; otherwise it asks for the recovery code.
+  $('btn-cloud-resume').onclick = () => { if (rememberedCloud()) resumeFromCloud(); else promptResumeFromCloud(); };
   $('btn-browse').onclick = () => { showGameShell(false); openBrowser(); };
   window.__sgBooted = true;   // the pre-boot click stub in index.html stops queueing now
 
@@ -223,6 +252,7 @@ function boot() {
     if (m || !early || G.state) return;      // deep-link visit or a game already underway wins
     if (early === 'new') startNew();
     else if (early === 'continue' && localStorage.getItem(LS_SAVE)) continueGame();
+    else if (early === 'cloud-resume') { hideLoading(); if (rememberedCloud()) resumeFromCloud(); else promptResumeFromCloud(); }
     else if (early === 'browse') { hideLoading(); showGameShell(false); openBrowser(); }
     else hideLoading();                      // unknown/stale tap: never strand the overlay
   });
@@ -382,6 +412,57 @@ async function continueGame() {
     hideLoading();
     toast('Could not load saved game.');
   }
+}
+
+// Reconnect to YOUR nation on the cloud — the save of record — as its owner. Works
+// with no local snapshot at all (fresh browser, new device, cleared storage), which
+// is the whole point: the game lives on the server, the browser copy is a cache.
+// `cred` = { id, token }; falls back to the remembered credentials.
+async function resumeFromCloud(cred) {
+  const c = cred || rememberedCloud();
+  if (!c) { toast('No cloud nation remembered on this device — paste your recovery code.'); return false; }
+  try {
+    showLoading('Reconnecting to your nation…');
+    await nextPaint();
+    const world = await api.loadWorld(c.id);
+    G.state = world.state;
+    G.cloud = { id: c.id, token: c.token };
+    G.readOnly = false;                      // owner, not a visitor
+    $('visit-banner').classList.add('hidden');
+    restoreCatalogue();                      // drop anything a previous visit registered
+    showGameShell();
+    await nextPaint();
+    attachState();
+    // Prove the token really owns this world by writing once. A wrong code loads the
+    // nation but can never save, so fail loudly here instead of at the first autosave.
+    refreshSummary(G.state);
+    await api.updateWorld(c.id, c.token, { name: G.state.name, owner: G.state.owner, state: packState(G.state) });
+    rememberCloud(G.cloud, G.state);
+    saveLocal();
+    hideLoading();
+    toast('Welcome back, Prime Minister — reconnected to your nation.');
+    return true;
+  } catch (err) {
+    hideLoading();
+    const bad = /not found|edit token|\b40[34]\b/i.test(err.message || '');
+    G.state = null; G.cloud = null; G.readOnly = false;
+    showMenu();
+    toast(bad ? 'That recovery code does not match a nation on the cloud.' : 'Could not reconnect: ' + err.message);
+    return false;
+  }
+}
+
+// Ask for a recovery code and reconnect with it.
+async function promptResumeFromCloud() {
+  const remembered = rememberedCloud();
+  const code = prompt(
+    'Reconnect to your nation on the cloud.\n\nPaste your recovery code (shown in Save & Share as "id:token"):',
+    remembered ? `${remembered.id}:${remembered.token}` : '',
+  );
+  if (code == null) return;
+  const cred = parseRecoveryCode(code);
+  if (!cred) { toast('That does not look like a recovery code (expected id:token).'); return; }
+  await resumeFromCloud(cred);
 }
 
 function attachState() {
@@ -1682,6 +1763,17 @@ function renderCloud() {
     copy.onclick = () => { navigator.clipboard?.writeText(link); toast('Link copied!'); };
     share.append(input, copy);
     wrap.append(share);
+    // The RECOVERY CODE: the cloud is the save of record, so this is what lets the
+    // owner reconnect to this nation from any browser or device. Keep it private —
+    // it is the edit token; the share link above is the read-only visitor view.
+    wrap.append(el('div', 'cloud-info', '🔑 <b>Recovery code</b> — keep this private. Paste it into “Reconnect My Cloud Nation” on the menu to resume this nation on any device:'));
+    const code = `${G.cloud.id}:${G.cloud.token}`;
+    const rec = el('div', 'share-row');
+    const rinput = el('input'); rinput.value = code; rinput.readOnly = true;
+    const rcopy = el('button', 'btn tiny', 'Copy');
+    rcopy.onclick = () => { navigator.clipboard?.writeText(code); toast('Recovery code copied — store it somewhere safe.'); };
+    rec.append(rinput, rcopy);
+    wrap.append(rec);
   } else {
     info.innerHTML = 'Save your nation to <b>the cloud server</b> — the game\'s save of record. After the first save it <b>auto-syncs</b> as you play, and other players can visit it.';
     wrap.append(info);
@@ -1708,14 +1800,17 @@ function renderCloud() {
 }
 
 async function cloudSave(isPublic) {
-  if (G.readOnly) return;
+  // Saving used to return SILENTLY here, so pressing Save while visiting another
+  // nation looked like "saving is broken". Say what's wrong and how to get back.
+  if (G.readOnly) { toast('👁️ You are visiting another nation — tap Leave to return to yours, then save.'); return; }
+  if (!G.state) { toast('No nation loaded to save.'); return; }
   toast('Saving to cloud…');
   G.state.landmarks = loadLibrary(); // bundle your designs so visitors can see them
   refreshSummary(G.state);
   try {
     const packed = packState(G.state); // store the grid sparsely (a 640² grid is ~2.7 MB dense)
     const payload = { name: G.state.name, owner: G.state.owner, state: packed, isPublic };
-    const create = async () => { const res = await api.createWorld(payload); G.cloud = { id: res.id, token: res.token }; };
+    const create = async () => { const res = await api.createWorld(payload); G.cloud = { id: res.id, token: res.token }; rememberCloud(G.cloud, G.state); };
     if (G.cloud) {
       try {
         await api.updateWorld(G.cloud.id, G.cloud.token, payload);
@@ -1729,6 +1824,7 @@ async function cloudSave(isPublic) {
       await create();
     }
     G.dirty = false;
+    rememberCloud(G.cloud, G.state);   // keep the recovery code current
     saveLocal();
     toast('Saved to cloud');
     if (G.currentPanel === 'cloud') refreshPanel();
@@ -1761,7 +1857,7 @@ async function cloudSync() {
       await api.updateWorld(G.cloud.id, G.cloud.token, payload);
     } catch (e) {
       // dead cloud id / stale token — re-create so the nation keeps syncing
-      if (/not found|edit token|\b40[34]\b/i.test(e.message || '')) { const res = await api.createWorld({ ...payload, isPublic: true }); G.cloud = { id: res.id, token: res.token }; }
+      if (/not found|edit token|\b40[34]\b/i.test(e.message || '')) { const res = await api.createWorld({ ...payload, isPublic: true }); G.cloud = { id: res.id, token: res.token }; rememberCloud(G.cloud, G.state); }
       else throw e;
     }
     G.dirty = false;
@@ -1861,8 +1957,12 @@ function leaveVisit() {
   // Drop the visited state BEFORE clearing read-only: with no local save to restore,
   // the old order left someone else's nation live with autosave armed — 15s later it
   // was written into YOUR save slot.
-  if (localStorage.getItem(LS_SAVE)) { G.readOnly = false; continueGame(); }
-  else { G.state = null; G.cloud = null; G.readOnly = false; showMenu(); }
+  if (localStorage.getItem(LS_SAVE)) { G.readOnly = false; continueGame(); return; }
+  // No local snapshot — but the nation lives on the CLOUD, so reconnect to it there
+  // rather than dumping the player on the menu with no way back into their game.
+  G.state = null; G.cloud = null; G.readOnly = false;
+  if (rememberedCloud()) { resumeFromCloud(); return; }
+  showMenu();
 }
 // Roll BUILDINGS back to the pre-visit snapshot (removes added keys, restores overwritten ones).
 function restoreCatalogue() {

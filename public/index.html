@@ -40,6 +40,7 @@
 
       <button id="btn-new" class="btn btn-primary big">Start New Nation</button>
       <button id="btn-continue" class="btn big hidden">Continue Saved Game</button>
+      <button id="btn-cloud-resume" class="btn big"><span class="bi" data-icon="globe"></span>Reconnect My Cloud Nation</button>
       <button id="btn-browse" class="btn ghost big"><span class="bi" data-icon="globe"></span>Visit Other Nations</button>
 
       <p class="version">A society simulation · save &amp; share on the cloud</p>
@@ -77,7 +78,7 @@
     <!-- Visiting banner -->
     <div id="visit-banner" class="visit-banner hidden">
       <span class="vb-ico" data-icon="pin"></span> Viewing <b id="visit-name"></b>
-      <button id="btn-leave-visit" class="btn tiny">Leave</button>
+      <button id="btn-leave-visit" class="btn tiny">← Back to my nation</button>
     </div>
 
     <!-- City canvas -->
@@ -169,7 +170,7 @@
           document.getElementById('loading').classList.remove('hidden');
         });
       }
-      arm('btn-new', 'new'); arm('btn-continue', 'continue'); arm('btn-browse', 'browse');
+      arm('btn-new', 'new'); arm('btn-continue', 'continue'); arm('btn-browse', 'browse'); arm('btn-cloud-resume', 'cloud-resume');
     })();
   </script>
   <script type="module" src="/js/pagenav.js"></script>

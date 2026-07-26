@@ -277,6 +277,15 @@ function showMenu() {
   $('toolbar').classList.add('hidden');
   $('tool-banner')?.classList.add('hidden');
   closeSheet();
+  // In-game overlays that live at BODY level (outside #game, so hiding the game
+  // doesn't take them with it) were left floating over the main menu — the pending
+  // decision briefings most visibly. Clear them all down on the way out.
+  const dec = $('decisions');
+  if (dec) { dec.classList.add('hidden'); dec.innerHTML = ''; dec.dataset.sig = ''; }
+  $('draw-confirm')?.classList.add('hidden');
+  $('toast')?.classList.add('hidden');
+  hideHoverInfo();
+  document.body.classList.remove('edit-mode');
   $('menu').classList.remove('hidden');
   if (localStorage.getItem(LS_SAVE)) $('btn-continue').classList.remove('hidden');
   refreshAccount();   // keep the account panel + nation list current
@@ -1776,6 +1785,11 @@ function closeSheet() {
 const _decFxSeen = new Set();
 function renderDecisions() {
   const panel = $('decisions'); if (!panel) return;
+  // This runs every FRAME, and the render loop keeps going after the player exits to
+  // the main menu — so a still-pending briefing was re-drawn on top of the homepage.
+  // Only ever show it while the game itself is on screen.
+  const inGame = !$('game')?.classList.contains('hidden');
+  if (!inGame || !G.state) { if (!panel.classList.contains('hidden')) { panel.classList.add('hidden'); panel.innerHTML = ''; panel.dataset.sig = ''; } return; }
   const q = (G.state && G.state.pendingDecisions) || [];
   // announce each briefing once as it appears: play its FX + a gentle toast (the
   // panel no longer steals the screen, so the toast tells the player to look right)

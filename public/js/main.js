@@ -133,6 +133,7 @@ const G = {
   prevSpeed: 1,
   dayRate: 0.1,          // in-game days per real second at Play speed (~10s per day; player-adjustable)
   readOnly: false,
+  user: null,            // signed-in account { id, username } — owns the player's nations
   cloud: null,           // { id, token } for the player's own world
   acc: 0,
   lastFrame: 0,
@@ -171,6 +172,12 @@ function boot() {
 
   // continue button if a local save exists
   if (localStorage.getItem(LS_SAVE)) $('btn-continue').classList.remove('hidden');
+
+  $('btn-login').onclick = () => doSignIn(false);
+  $('btn-signup').onclick = () => doSignIn(true);
+  $('btn-logout').onclick = doSignOut;
+  $('acct-pass').addEventListener('keydown', (e) => { if (e.key === 'Enter') doSignIn(false); });
+  refreshAccount();   // are we already signed in on this device?
 
   $('btn-new').onclick = startNew;
   $('btn-continue').onclick = continueGame;
@@ -272,6 +279,7 @@ function showMenu() {
   closeSheet();
   $('menu').classList.remove('hidden');
   if (localStorage.getItem(LS_SAVE)) $('btn-continue').classList.remove('hidden');
+  refreshAccount();   // keep the account panel + nation list current
 }
 
 // Probe each WebGL flavour on a FRESH canvas (a canvas locks to one context type
@@ -412,6 +420,99 @@ async function continueGame() {
     hideLoading();
     toast('Could not load saved game.');
   }
+}
+
+// ---- accounts --------------------------------------------------------------
+// A nation belongs to a signed-in player, so getting back into your game is just
+// "sign in" — on any device, with nothing to copy around. (The old per-world
+// recovery code still works for nations made before accounts existed.)
+async function refreshAccount() {
+  try { const r = await api.me(); G.user = r.user || null; } catch { G.user = null; }
+  renderAccount();
+  if (G.user) await refreshMyWorlds();
+  return G.user;
+}
+function renderAccount() {
+  const out = $('acct-signed-out'), inn = $('acct-signed-in');
+  if (!out || !inn) return;
+  const on = !!G.user;
+  out.classList.toggle('hidden', on);
+  inn.classList.toggle('hidden', !on);
+  if (on) $('acct-name').textContent = G.user.username;
+  // the recovery-code path is only for pre-account nations — keep it out of the way
+  const rc = $('btn-cloud-resume');
+  if (rc) rc.classList.toggle('hidden', on || !rememberedCloud());
+}
+async function refreshMyWorlds() {
+  const box = $('acct-worlds'); if (!box) return;
+  box.innerHTML = '';
+  let worlds = [];
+  try { worlds = (await api.myWorlds()).worlds || []; } catch { /* not signed in */ }
+  // A nation started before signing in is still only on this device — offer to
+  // move it onto the account so it is reachable from anywhere.
+  const rem = rememberedCloud();
+  if (rem && !worlds.some((w) => w.id === rem.id)) {
+    const btn = el('button', 'acct-world', `<b>Add “${rem.name || 'my nation'}” to this account</b><span>Started before you signed in — claim it so you can load it anywhere</span>`);
+    btn.onclick = async () => {
+      try { await api.claimWorld(rem.id, rem.token); toast('Nation added to your account.'); await refreshMyWorlds(); }
+      catch (e) { toast('Could not claim it: ' + e.message); }
+    };
+    box.append(btn);
+  }
+  if (!worlds.length && !rem) { box.append(el('div', 'acct-empty', 'No nations yet — start one and it saves to your account.')); return; }
+  for (const w of worlds) {
+    const when = new Date(w.updatedAt).toLocaleDateString();
+    const btn = el('button', 'acct-world', `<b>${w.name}</b><span>${w.year} · pop ${num(w.population)} · saved ${when}</span>`);
+    btn.onclick = () => loadMyWorld(w.id);
+    box.append(btn);
+  }
+}
+// Open one of MY nations from the account (owner, fully editable).
+async function loadMyWorld(id) {
+  try {
+    showLoading('Loading your nation…');
+    await nextPaint();
+    const world = await api.loadWorld(id);
+    G.state = world.state;
+    G.cloud = { id, token: (rememberedCloud()?.id === id ? rememberedCloud().token : null) };
+    G.readOnly = false;
+    $('visit-banner').classList.add('hidden');
+    restoreCatalogue();
+    showGameShell();
+    await nextPaint();
+    attachState();
+    saveLocal();
+    hideLoading();
+    toast('Welcome back, Prime Minister.');
+  } catch (err) {
+    hideLoading();
+    toast('Could not load that nation: ' + err.message);
+    showMenu();
+  }
+}
+async function doSignIn(create) {
+  const username = ($('acct-user')?.value || '').trim();
+  const password = $('acct-pass')?.value || '';
+  if (!username || !password) { toast('Enter a username and password.'); return; }
+  try {
+    const r = create ? await api.signup(username, password) : await api.login(username, password);
+    G.user = r.user;
+    if ($('acct-pass')) $('acct-pass').value = '';
+    localStorage.setItem(LS_NAME, G.user.username);
+    const om = $('m-owner'); if (om && !om.value.trim()) om.value = G.user.username;
+    renderAccount();
+    // a nation made before signing in follows the player onto the account
+    const rem = rememberedCloud();
+    if (rem) { try { await api.claimWorld(rem.id, rem.token); } catch { /* already owned elsewhere */ } }
+    await refreshMyWorlds();
+    toast(create ? `Welcome, ${G.user.username}.` : `Signed in as ${G.user.username}.`);
+  } catch (e) { toast(e.message); }
+}
+async function doSignOut() {
+  try { await api.logout(); } catch { /* ignore */ }
+  G.user = null; renderAccount();
+  const box = $('acct-worlds'); if (box) box.innerHTML = '';
+  toast('Signed out.');
 }
 
 // Reconnect to YOUR nation on the cloud — the save of record — as its owner. Works
@@ -1763,17 +1864,20 @@ function renderCloud() {
     copy.onclick = () => { navigator.clipboard?.writeText(link); toast('Link copied!'); };
     share.append(input, copy);
     wrap.append(share);
-    // The RECOVERY CODE: the cloud is the save of record, so this is what lets the
-    // owner reconnect to this nation from any browser or device. Keep it private —
-    // it is the edit token; the share link above is the read-only visitor view.
-    wrap.append(el('div', 'cloud-info', '🔑 <b>Recovery code</b> — keep this private. Paste it into “Reconnect My Cloud Nation” on the menu to resume this nation on any device:'));
-    const code = `${G.cloud.id}:${G.cloud.token}`;
-    const rec = el('div', 'share-row');
-    const rinput = el('input'); rinput.value = code; rinput.readOnly = true;
-    const rcopy = el('button', 'btn tiny', 'Copy');
-    rcopy.onclick = () => { navigator.clipboard?.writeText(code); toast('Recovery code copied — store it somewhere safe.'); };
-    rec.append(rinput, rcopy);
-    wrap.append(rec);
+    if (G.user) {
+      // Signed in: the account IS the way back. Nothing for the player to keep.
+      wrap.append(el('div', 'cloud-info', `🔐 This nation belongs to <b>${G.user.username}</b>. Sign in on any device and it will be waiting on the menu — nothing to copy or write down.`));
+    } else if (G.cloud.token) {
+      // No account: fall back to the per-world recovery code.
+      wrap.append(el('div', 'cloud-info', '🔑 <b>Recovery code</b> — keep this private; it is the edit key for this nation. Better: <b>create an account</b> on the menu and this nation moves onto it, so signing in is all you need.'));
+      const code = `${G.cloud.id}:${G.cloud.token}`;
+      const rec = el('div', 'share-row');
+      const rinput = el('input'); rinput.value = code; rinput.readOnly = true;
+      const rcopy = el('button', 'btn tiny', 'Copy');
+      rcopy.onclick = () => { navigator.clipboard?.writeText(code); toast('Recovery code copied — store it somewhere safe.'); };
+      rec.append(rinput, rcopy);
+      wrap.append(rec);
+    }
   } else {
     info.innerHTML = 'Save your nation to <b>the cloud server</b> — the game\'s save of record. After the first save it <b>auto-syncs</b> as you play, and other players can visit it.';
     wrap.append(info);

@@ -2,7 +2,8 @@
 const JSON_HEADERS = { 'content-type': 'application/json' };
 
 async function req(url, opts = {}) {
-  const res = await fetch(url, opts);
+  // same-origin credentials so the HttpOnly session cookie rides along on every call
+  const res = await fetch(url, { credentials: 'same-origin', ...opts });
   let data = null;
   try { data = await res.json(); } catch { /* empty body */ }
   if (!res.ok) throw new Error(data?.error || `Request failed (${res.status})`);
@@ -10,6 +11,21 @@ async function req(url, opts = {}) {
 }
 
 export const api = {
+  // ---- accounts: the nation belongs to a signed-in player ----
+  signup(username, password) {
+    return req('/api/auth/signup', { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ username, password }) });
+  },
+  login(username, password) {
+    return req('/api/auth/login', { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ username, password }) });
+  },
+  logout() { return req('/api/auth/logout', { method: 'POST' }); },
+  me() { return req('/api/auth/me'); },
+  myWorlds() { return req('/api/auth/worlds'); },
+  // Adopt a pre-accounts nation (proved with its edit token) into this account.
+  claimWorld(id, token) {
+    return req(`/api/worlds/${id}/claim`, { method: 'POST', headers: { ...JSON_HEADERS, 'x-world-token': token || '' }, body: JSON.stringify({}) });
+  },
+
   // Create a new world. Returns { id, token, ... }.
   createWorld({ name, owner, state, isPublic = true }) {
     return req('/api/worlds', {

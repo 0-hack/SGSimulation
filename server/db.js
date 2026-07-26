@@ -48,12 +48,36 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_builds_downloads ON builds (downloads DESC, updated_at DESC);
   CREATE INDEX IF NOT EXISTS idx_builds_func ON builds (func, downloads DESC);
+
+  -- Player accounts. A nation belongs to an ACCOUNT, so signing in on any device is
+  -- what gets you back into your game — the per-world edit token stays only as the
+  -- legacy path for nations created before accounts existed.
+  CREATE TABLE IF NOT EXISTS users (
+    id          TEXT PRIMARY KEY,
+    username    TEXT NOT NULL,
+    uname_lc    TEXT NOT NULL UNIQUE,   -- case-insensitive uniqueness
+    pass        TEXT NOT NULL,          -- scrypt, stored as salt:derivedKey (never the password)
+    created_at  INTEGER NOT NULL
+  );
+  -- Login sessions. Only the HASH of the session token is stored, so a database
+  -- leak cannot be replayed as a login.
+  CREATE TABLE IF NOT EXISTS sessions (
+    token_hash  TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL,
+    created_at  INTEGER NOT NULL,
+    expires_at  INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions (user_id);
 `);
+
+// Attach worlds to accounts (added after launch — older databases lack the column).
+try { db.exec('ALTER TABLE worlds ADD COLUMN user_id TEXT'); } catch { /* already there */ }
+try { db.exec('CREATE INDEX IF NOT EXISTS idx_worlds_user ON worlds (user_id, updated_at DESC)'); } catch { /* ignore */ }
 
 const stmts = {
   insert: db.prepare(`
-    INSERT INTO worlds (id, name, owner, token, state, is_public, year, population, approval, treasury, created_at, updated_at)
-    VALUES (@id, @name, @owner, @token, @state, @is_public, @year, @population, @approval, @treasury, @created_at, @updated_at)
+    INSERT INTO worlds (id, name, owner, token, state, is_public, year, population, approval, treasury, created_at, updated_at, user_id)
+    VALUES (@id, @name, @owner, @token, @state, @is_public, @year, @population, @approval, @treasury, @created_at, @updated_at, @user_id)
   `),
   update: db.prepare(`
     UPDATE worlds
@@ -86,11 +110,11 @@ function summarize(state) {
 }
 
 export const dbApi = {
-  create({ id, name, owner, token, state, isPublic }) {
+  create({ id, name, owner, token, state, isPublic, userId = null }) {
     const now = Date.now();
     const sum = summarize(state);
     stmts.insert.run({
-      id, name, owner, token,
+      id, name, owner, token, user_id: userId,
       state: JSON.stringify(state),
       is_public: isPublic ? 1 : 0,
       ...sum,
@@ -233,6 +257,53 @@ export const buildsApi = {
     }
     return { total, builds: rows.map((r) => buildMeta(r)) };
   },
+};
+
+// ---- Accounts & sessions -----------------------------------------------------
+const ustmts = {
+  insert: db.prepare('INSERT INTO users (id, username, uname_lc, pass, created_at) VALUES (@id, @username, @uname_lc, @pass, @created_at)'),
+  byName: db.prepare('SELECT * FROM users WHERE uname_lc = ?'),
+  byId: db.prepare('SELECT * FROM users WHERE id = ?'),
+  setPass: db.prepare('UPDATE users SET pass = @pass WHERE id = @id'),
+  newSession: db.prepare('INSERT INTO sessions (token_hash, user_id, created_at, expires_at) VALUES (@token_hash, @user_id, @created_at, @expires_at)'),
+  getSession: db.prepare('SELECT * FROM sessions WHERE token_hash = ?'),
+  dropSession: db.prepare('DELETE FROM sessions WHERE token_hash = ?'),
+  dropUserSessions: db.prepare('DELETE FROM sessions WHERE user_id = ?'),
+  sweep: db.prepare('DELETE FROM sessions WHERE expires_at < ?'),
+  myWorlds: db.prepare(`SELECT id, name, owner, is_public, year, population, approval, treasury, created_at, updated_at
+                          FROM worlds WHERE user_id = ? ORDER BY updated_at DESC LIMIT 50`),
+  claim: db.prepare('UPDATE worlds SET user_id = @user_id WHERE id = @id'),
+};
+
+export const usersApi = {
+  create({ id, username, pass }) {
+    ustmts.insert.run({ id, username, uname_lc: username.toLowerCase(), pass, created_at: Date.now() });
+    return { id, username };
+  },
+  byName(username) { return ustmts.byName.get(String(username || '').toLowerCase()); },
+  byId(id) { return ustmts.byId.get(id); },
+  setPassword(id, pass) { ustmts.setPass.run({ id, pass }); },
+  startSession({ tokenHash, userId, ttlMs }) {
+    const now = Date.now();
+    ustmts.sweep.run(now);                                   // drop anything expired
+    ustmts.newSession.run({ token_hash: tokenHash, user_id: userId, created_at: now, expires_at: now + ttlMs });
+  },
+  session(tokenHash) {
+    const row = ustmts.getSession.get(tokenHash);
+    if (!row) return null;
+    if (row.expires_at < Date.now()) { ustmts.dropSession.run(tokenHash); return null; }
+    return row;
+  },
+  endSession(tokenHash) { ustmts.dropSession.run(tokenHash); },
+  endAllSessions(userId) { ustmts.dropUserSessions.run(userId); },
+  worldsOf(userId) {
+    return ustmts.myWorlds.all(userId).map((row) => ({
+      id: row.id, name: row.name, owner: row.owner, isPublic: !!row.is_public,
+      year: row.year, population: row.population, approval: row.approval, treasury: row.treasury,
+      createdAt: row.created_at, updatedAt: row.updated_at,
+    }));
+  },
+  claimWorld(id, userId) { ustmts.claim.run({ id, user_id: userId }); },
 };
 
 export default db;

@@ -2,11 +2,11 @@
 // Serves the static game client and exposes a small REST API for saving,
 // loading, browsing, and visiting other players' worlds.
 import express from 'express';
-import { randomUUID, randomBytes, createHash, timingSafeEqual } from 'crypto';
+import { randomUUID, randomBytes, createHash, timingSafeEqual, scryptSync } from 'crypto';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { writeFileSync } from 'fs';
-import { dbApi, buildsApi } from './db.js';
+import { dbApi, buildsApi, usersApi } from './db.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = join(__dirname, '..', 'public');
@@ -48,6 +48,64 @@ function rateLimit(req, res, next) {
   next();
 }
 
+// ---- accounts ---------------------------------------------------------------
+// Passwords are stored as scrypt(salt, password) — never the password itself, and
+// never a bare hash (scrypt is deliberately slow + memory-hard, so a stolen table
+// can't be run through a GPU dictionary). Node ships it, so no new dependency.
+const SESSION_TTL = 1000 * 60 * 60 * 24 * 120;    // 120 days signed in
+const SESSION_COOKIE = 'sg_sess';
+
+function hashPassword(pw) {
+  const salt = randomBytes(16).toString('hex');
+  return salt + ':' + scryptSync(String(pw), salt, 64).toString('hex');
+}
+function passwordMatches(pw, stored) {
+  const [salt, key] = String(stored || '').split(':');
+  if (!salt || !key) return false;
+  const a = Buffer.from(key, 'hex');
+  const b = scryptSync(String(pw), salt, a.length);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+// Tiny cookie reader — avoids pulling in cookie-parser for one header.
+function readCookie(req, name) {
+  const raw = req.headers.cookie; if (!raw) return null;
+  for (const part of raw.split(';')) {
+    const i = part.indexOf('=');
+    if (i > 0 && part.slice(0, i).trim() === name) return decodeURIComponent(part.slice(i + 1).trim());
+  }
+  return null;
+}
+function setSessionCookie(req, res, token) {
+  const secure = req.secure || req.get('x-forwarded-proto') === 'https';
+  // HttpOnly: script can't read it, so an XSS can't lift the login the way it could
+  // lift a token kept in localStorage. Lax: sent on normal navigation, not cross-site posts.
+  res.setHeader('Set-Cookie', `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; Max-Age=${Math.floor(SESSION_TTL / 1000)}; HttpOnly; SameSite=Lax${secure ? '; Secure' : ''}`);
+}
+function clearSessionCookie(res) {
+  res.setHeader('Set-Cookie', `${SESSION_COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax`);
+}
+// The signed-in user for this request, or null.
+function currentUser(req) {
+  const tok = readCookie(req, SESSION_COOKIE); if (!tok) return null;
+  const sess = usersApi.session(hash(tok)); if (!sess) return null;
+  const u = usersApi.byId(sess.user_id);
+  return u ? { id: u.id, username: u.username } : null;
+}
+// May this request edit this world? An ACCOUNT that owns it, or — for nations made
+// before accounts existed, which have no user_id — the world's original edit token.
+function mayEdit(req, row) {
+  const u = currentUser(req);
+  if (u && row.user_id && row.user_id === u.id) return { ok: true, user: u };
+  if (row.user_id) {
+    // owned by an account: the legacy token alone must NOT be enough any more
+    return { ok: false, user: u, reason: 'This nation belongs to an account — sign in as its owner.' };
+  }
+  const token = req.get('x-world-token') || req.body?.token;
+  if (tokenMatches(token, row.token)) return { ok: true, user: u, viaToken: true };
+  return { ok: false, user: u, reason: 'Invalid edit token for this world.' };
+}
+const VALID_NAME = /^[a-zA-Z0-9_.-]{3,24}$/;
+
 function clampName(s, fallback) {
   const v = (typeof s === 'string' ? s : '').trim().slice(0, 60);
   return v || fallback;
@@ -62,20 +120,80 @@ function validState(state) {
 
 const api = express.Router();
 
+// ---- auth: sign up / sign in / who am I / my nations -------------------------
+const authOk = (res, user) => res.json({ user });
+
+api.post('/auth/signup', rateLimit, (req, res) => {
+  const username = String(req.body?.username || '').trim();
+  const password = String(req.body?.password || '');
+  if (!VALID_NAME.test(username)) return res.status(400).json({ error: 'Username must be 3–24 characters: letters, numbers, . _ or -' });
+  if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
+  if (usersApi.byName(username)) return res.status(409).json({ error: 'That username is taken.' });
+  const user = usersApi.create({ id: randomUUID(), username, pass: hashPassword(password) });
+  const tok = newToken();
+  usersApi.startSession({ tokenHash: hash(tok), userId: user.id, ttlMs: SESSION_TTL });
+  setSessionCookie(req, res, tok);
+  authOk(res, user);
+});
+
+api.post('/auth/login', rateLimit, (req, res) => {
+  const username = String(req.body?.username || '').trim();
+  const password = String(req.body?.password || '');
+  const row = usersApi.byName(username);
+  // Same message either way, so this can't be used to enumerate who has an account.
+  if (!row || !passwordMatches(password, row.pass)) return res.status(401).json({ error: 'Wrong username or password.' });
+  const tok = newToken();
+  usersApi.startSession({ tokenHash: hash(tok), userId: row.id, ttlMs: SESSION_TTL });
+  setSessionCookie(req, res, tok);
+  authOk(res, { id: row.id, username: row.username });
+});
+
+api.post('/auth/logout', (req, res) => {
+  const tok = readCookie(req, SESSION_COOKIE);
+  if (tok) usersApi.endSession(hash(tok));
+  clearSessionCookie(res);
+  res.json({ ok: true });
+});
+
+api.get('/auth/me', (req, res) => res.json({ user: currentUser(req) }));
+
+// Every nation on this account — this is how a player gets back into their game.
+api.get('/auth/worlds', (req, res) => {
+  const u = currentUser(req);
+  if (!u) return res.status(401).json({ error: 'Not signed in.' });
+  res.json({ worlds: usersApi.worldsOf(u.id) });
+});
+
+// Adopt a pre-accounts nation into this account, proving ownership with its token.
+api.post('/worlds/:id/claim', rateLimit, (req, res) => {
+  const u = currentUser(req);
+  if (!u) return res.status(401).json({ error: 'Sign in first.' });
+  const row = dbApi.getRaw(req.params.id);
+  if (!row) return res.status(404).json({ error: 'World not found.' });
+  if (row.user_id && row.user_id !== u.id) return res.status(403).json({ error: 'That nation already belongs to another account.' });
+  if (!row.user_id && !tokenMatches(req.get('x-world-token') || req.body?.token, row.token)) {
+    return res.status(403).json({ error: 'Invalid edit token for this world.' });
+  }
+  usersApi.claimWorld(row.id, u.id);
+  res.json({ ok: true, id: row.id });
+});
+
 // Create a new world. Returns the world id + a secret edit token.
 api.post('/worlds', rateLimit, (req, res) => {
   const { name, owner, state, isPublic } = req.body || {};
   if (!validState(state)) return res.status(400).json({ error: 'Invalid game state.' });
 
+  const me = currentUser(req);
   const id = randomUUID();
   const token = newToken();
   const world = dbApi.create({
     id,
     name: clampName(name, 'New Singapore'),
-    owner: clampName(owner, 'Anonymous'),
+    owner: clampName(owner, me ? me.username : 'Anonymous'),
     token: hash(token),
     state,
     isPublic: isPublic !== false,
+    userId: me ? me.id : null,
   });
   res.json({ ...world, token }); // token returned once, only to the creator
 });
@@ -85,10 +203,8 @@ api.put('/worlds/:id', rateLimit, (req, res) => {
   const row = dbApi.getRaw(req.params.id);
   if (!row) return res.status(404).json({ error: 'World not found.' });
 
-  const token = req.get('x-world-token') || req.body?.token;
-  if (!tokenMatches(token, row.token)) {
-    return res.status(403).json({ error: 'Invalid edit token for this world.' });
-  }
+  const perm = mayEdit(req, row);
+  if (!perm.ok) return res.status(403).json({ error: perm.reason });
   const { name, owner, state, isPublic } = req.body || {};
   if (!validState(state)) return res.status(400).json({ error: 'Invalid game state.' });
 
@@ -121,10 +237,8 @@ api.get('/worlds/:id', (req, res) => {
 api.delete('/worlds/:id', rateLimit, (req, res) => {
   const row = dbApi.getRaw(req.params.id);
   if (!row) return res.status(404).json({ error: 'World not found.' });
-  const token = req.get('x-world-token') || req.body?.token;
-  if (!tokenMatches(token, row.token)) {
-    return res.status(403).json({ error: 'Invalid edit token for this world.' });
-  }
+  const perm = mayEdit(req, row);
+  if (!perm.ok) return res.status(403).json({ error: perm.reason });
   dbApi.delete(req.params.id);
   res.json({ ok: true });
 });

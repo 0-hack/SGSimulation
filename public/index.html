@@ -38,9 +38,28 @@
         </label>
       </div>
 
+      <!-- Account: your nations live on the server against this login -->
+      <div id="acct" class="acct">
+        <div id="acct-signed-out">
+          <div class="acct-row">
+            <input id="acct-user" type="text" maxlength="24" placeholder="Username" autocomplete="username" />
+            <input id="acct-pass" type="password" maxlength="72" placeholder="Password" autocomplete="current-password" />
+          </div>
+          <div class="acct-row">
+            <button id="btn-login" class="btn big">Sign In</button>
+            <button id="btn-signup" class="btn ghost big">Create Account</button>
+          </div>
+          <p class="acct-hint">Sign in to keep your nation on the cloud and pick it up on any device.</p>
+        </div>
+        <div id="acct-signed-in" class="hidden">
+          <p class="acct-who">Signed in as <b id="acct-name"></b> · <button id="btn-logout" class="linkish">sign out</button></p>
+          <div id="acct-worlds" class="acct-worlds"></div>
+        </div>
+      </div>
+
       <button id="btn-new" class="btn btn-primary big">Start New Nation</button>
       <button id="btn-continue" class="btn big hidden">Continue Saved Game</button>
-      <button id="btn-cloud-resume" class="btn big"><span class="bi" data-icon="globe"></span>Reconnect My Cloud Nation</button>
+      <button id="btn-cloud-resume" class="btn big hidden"><span class="bi" data-icon="globe"></span>Reconnect With Recovery Code</button>
       <button id="btn-browse" class="btn ghost big"><span class="bi" data-icon="globe"></span>Visit Other Nations</button>
 
       <p class="version">A society simulation · save &amp; share on the cloud</p>

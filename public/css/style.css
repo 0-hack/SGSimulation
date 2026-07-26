@@ -80,6 +80,26 @@ svg { display: block; width: 100%; height: 100%; }
 }
 .menu-form input:focus, .field input:focus { outline: none; border-color: var(--teal); box-shadow: 0 0 0 3px rgba(17,163,156,0.14); }
 .version { color: var(--muted); font-size: 11px; margin-top: 18px; }
+
+/* ---- account panel on the menu ------------------------------------------- */
+.acct { text-align: left; margin: 0 0 18px; padding: 14px; border-radius: 14px;
+  background: var(--surface-2); border: 1px solid var(--line-2); }
+.acct-row { display: flex; gap: 8px; margin-bottom: 8px; }
+.acct-row:last-of-type { margin-bottom: 0; }
+.acct-row input { flex: 1 1 0; min-width: 0; padding: 12px 13px; border-radius: 11px;
+  border: 1px solid var(--line-2); background: var(--surface); color: var(--ink); font-size: 15px; }
+.acct-row input:focus { outline: none; border-color: var(--teal); box-shadow: 0 0 0 3px rgba(17,163,156,0.14); }
+.acct-row .btn { flex: 1 1 0; margin: 0; }
+.acct-hint { color: var(--muted); font-size: 11.5px; margin: 9px 2px 0; line-height: 1.45; }
+.acct-who { font-size: 13px; margin: 0 0 10px; color: var(--ink); }
+.linkish { background: none; border: none; padding: 0; color: var(--teal); font: inherit; cursor: pointer; text-decoration: underline; }
+.acct-worlds { display: grid; gap: 7px; }
+.acct-world { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 11px;
+  background: var(--surface); border: 1px solid var(--line-2); cursor: pointer; text-align: left; width: 100%; }
+.acct-world:hover { border-color: var(--teal); }
+.acct-world b { font-size: 14px; }
+.acct-world span { display: block; color: var(--muted); font-size: 11.5px; margin-top: 1px; }
+.acct-empty { color: var(--muted); font-size: 12px; margin: 2px; }
 /* Edit-mode tool banner — a frosted dark-glass card (modern, not a flat pill). */
 .tool-banner { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(96px + var(--safe-b));
   z-index: 60; display: flex; gap: 10px; align-items: center;

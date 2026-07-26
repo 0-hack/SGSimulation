@@ -911,8 +911,16 @@ export class Scene3D {
     let main = null; for (const l of rc.lines) if (!main || l.length > main.length) main = l;   // the trunk
     const pts = main.map((p) => { const c = cellToWorld(p.x, p.y); return { x: c.x, z: c.z, w: p.w * TILE, s: 0 }; });
     let L = 0; for (let i = 1; i < pts.length; i++) { L += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].z - pts[i - 1].z); pts[i].s = L; }
-    // navigable from the mouth (s=0) up to where it stays wide enough to float a sampan
-    let sMax = L; for (let i = 0; i < pts.length; i++) { if (pts[i].w < 0.4) { sMax = pts[i].s; break; } }
+    // Navigable from the mouth (s=0) up to where the channel stops being water: either
+    // it narrows past floating a sampan, or the player has RECLAIMED it — filled-in
+    // river is dry land, so the sampans must turn about there instead of motoring
+    // straight through it (anything upstream of the fill is cut off from the sea).
+    let sMax = L;
+    for (let i = 0; i < pts.length; i++) {
+      const gx = Math.round(pts[i].x / TILE + N / 2 - 0.5), gy = Math.round(N / 2 - pts[i].z / TILE - 0.5);
+      const filled = this.reclaimedMask && this.reclaimedMask[gy] && this.reclaimedMask[gy][gx];
+      if (pts[i].w < 0.4 || filled) { sMax = Math.max(0, pts[i].s - (filled ? 2 : 0)); break; }   // stop short of the new bank
+    }
     this._riverPath = { pts, len: L, sMax: Math.max(6, sMax) };
   }
   // Interpolate the river path at arc length s -> world point, half-width and unit tangent.
@@ -952,10 +960,17 @@ export class Scene3D {
   _updateRiverBoats(dt) {
     if (!this.riverBoats || !this._riverPath) return;
     const S = this._riverPath.sMax;
+    // reclaimed the whole channel? there is nothing left to sail — pull the fleet
+    const sailable = S > 8;
+    if (this.riverBoatGroup) this.riverBoatGroup.visible = sailable;
+    if (!sailable) return;
     for (const bo of this.riverBoats) {
       bo.s += bo.dir * bo.speed * dt;
-      if (bo.s > S) { bo.s = 2 * S - bo.s; bo.dir = -1; }    // come about at the head of navigation
-      if (bo.s < 0) { bo.s = -bo.s; bo.dir = 1; }            // and at the mouth
+      // come about at the head of navigation (a narrowing, or new reclaimed land) and
+      // at the mouth. Clamped, so a boat left beyond a freshly shortened stretch is put
+      // back on the water instead of sitting on the fill.
+      if (bo.s > S) { bo.s = Math.max(0, 2 * S - bo.s); bo.dir = -1; }
+      if (bo.s < 0) { bo.s = Math.min(S, -bo.s); bo.dir = 1; }
       const p = this._riverPointAt(bo.s);
       const off = Math.max(-(p.w - 0.18), Math.min(p.w - 0.18, bo.lane * p.w));   // stay inside the banks
       const nx = -p.tz, nz = p.tx;
@@ -1778,7 +1793,9 @@ export class Scene3D {
     const BINS = 240; this._coastR = new Float32Array(BINS); this._coastRSG = new Float32Array(BINS);
     const bin = (wx, wz) => { const a = Math.atan2(wz, wx); return ((Math.floor(((a + Math.PI) / (2 * Math.PI)) * BINS) % BINS) + BINS) % BINS; };
     const upd = (arr, wx, wz) => { const r = Math.hypot(wx, wz), b = bin(wx, wz); if (r > arr[b]) arr[b] = r; };
-    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) if (this.land[y][x]) { const w = cellToWorld(x, y); upd(this._coastR, w.x, w.z); upd(this._coastRSG, w.x, w.z); }
+    // reclaimed cells are shoreline too — otherwise the harbour boats keep sailing the
+    // OLD coastline and cruise straight over land the player has filled in
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) if (this.land[y][x] || (this.reclaimedMask && this.reclaimedMask[y] && this.reclaimedMask[y][x])) { const w = cellToWorld(x, y); upd(this._coastR, w.x, w.z); upd(this._coastRSG, w.x, w.z); }
     for (const poly of (SG_FOREIGN || [])) for (const [nx, ny] of poly) upd(this._coastR, (nx - 0.5) * WORLD, (0.5 - ny) * WORLD);
   }
   _coastRadiusAt(ang) { return this._sampleCoast(this._coastR, ang); }
@@ -2513,6 +2530,10 @@ export class Scene3D {
   // Recolour reclaimed land so the new coastline reads correctly: a sandy beach
   // on cells that still front open sea, earthy-green reclaimed land inland.
   _refreshCoast() {
+    // the shoreline moved: re-ring it so the harbour boats sail around the NEW coast
+    // rather than over the reclaimed land, and re-cut the river's navigable stretch
+    this._buildCoastRadius();
+    this._buildRiverPath();
     if (!this.reclaimSlabs) return;
     for (const [id, mesh] of this.reclaimSlabs) {
       const [x, y] = id.split(',').map(Number);

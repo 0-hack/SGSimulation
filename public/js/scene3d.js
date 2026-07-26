@@ -2421,6 +2421,34 @@ export class Scene3D {
     this._syncReclaimAreas(state);             // free-shaped (polygon) reclamations
     if (this._riverFillDirty) { this._riverFillDirty = false; this._refreshRiverRibbon(); }   // a river cell filled -> re-sweep the ribbon so its water is gone
   }
+  // Every grid cell a reclaim polygon actually COVERS (its square overlaps the shape),
+  // not just the ones whose centre is inside — so the usable land matches the land the
+  // player can see. Cached per polygon: this runs from the per-tick area sync.
+  _cellsUnderPoly(poly) {
+    if (!poly || poly.length < 3) return [];
+    if (!this._polyCellCache) this._polyCellCache = new Map();
+    const key = poly.length + ':' + poly[0][0].toFixed(1) + ',' + poly[0][1].toFixed(1) + ':' + poly[poly.length - 1][0].toFixed(1);
+    const hit = this._polyCellCache.get(key); if (hit) return hit;
+    const inside = (x, z) => {
+      let h = false;
+      for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+        const xi = poly[i][0], zi = poly[i][1], xj = poly[j][0], zj = poly[j][1];
+        if (((zi > z) !== (zj > z)) && (x < (xj - xi) * (z - zi) / (zj - zi) + xi)) h = !h;
+      }
+      return h;
+    };
+    let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+    for (const [x, z] of poly) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (z < z0) z0 = z; if (z > z1) z1 = z; }
+    const gx0 = Math.max(0, Math.floor(x0 / TILE + N / 2 - 1)), gx1 = Math.min(N - 1, Math.ceil(x1 / TILE + N / 2 + 1));
+    const gy0 = Math.max(0, Math.floor(N / 2 - z1 / TILE - 1)), gy1 = Math.min(N - 1, Math.ceil(N / 2 - z0 / TILE + 1));
+    const H = TILE / 2, out = [];
+    for (let gy = gy0; gy <= gy1; gy++) for (let gx = gx0; gx <= gx1; gx++) {
+      const c = cellToWorld(gx, gy);
+      if (inside(c.x, c.z) || inside(c.x - H, c.z - H) || inside(c.x + H, c.z - H) || inside(c.x + H, c.z + H) || inside(c.x - H, c.z + H)) out.push([gx, gy]);
+    }
+    this._polyCellCache.set(key, out);
+    return out;
+  }
   // Render free-shaped reclamations: finished areas as smooth permanent land, and
   // in-progress areas as the same shape rising from the sea with works buoys.
   _syncReclaimAreas(state) {
@@ -2430,7 +2458,12 @@ export class Scene3D {
     const markCells = (cells, mask) => { for (const [x, y] of (cells || [])) if (x >= 0 && y >= 0 && x < N && y < N) { if (!mask[y][x] && mask === this.reclaimedMask && this._riverFillMask && this._riverFillMask[y] && this._riverFillMask[y][x]) this._riverFillDirty = true; mask[y][x] = true; const g = this.natureCells?.get(x + ',' + y); if (g) g.visible = false; } };
     for (const a of (state.reclaimedAreas || [])) {                 // finished -> permanent buildable land
       const m = this._reclaimLandMesh(a.poly); m.position.y = RECLAIM_TOP_Y; grp.add(m);
+      // `a.cells` only holds cells whose CENTRE fell inside the drawn loop, but the
+      // land mesh is the loop itself — so a fringe of cells sat visibly under the new
+      // ground while still counting as sea: paint dropped to the seabed (invisible)
+      // and nothing could be built there. Claim every cell the shape actually covers.
       markCells(a.cells, this.reclaimedMask);
+      markCells(this._cellsUnderPoly(a.poly), this.reclaimedMask);
     }
     for (const a of (state.reclaimAreas || [])) {                   // rising
       const prog = Math.max(0, Math.min(1, 1 - a.left / Math.max(1, a.total)));
@@ -2925,6 +2958,9 @@ export class Scene3D {
     if (!this.state) return;
     if (!this.state.surfaces) this.state.surfaces = {};
     const id = `${x},${y}`;
+    // Painting open water used to silently make a tile down at the seabed, which the
+    // sea then hid — so the brush looked like it had holes in it. Only paint ground.
+    if (type && type !== 'clear' && !this.isLand(x, y) && !(this.reclaimedMask && this.reclaimedMask[y] && this.reclaimedMask[y][x])) return;
     if (!type || type === 'clear') {
       delete this.state.surfaces[id];
       const m = this.surfaceTiles && this.surfaceTiles.get(id);

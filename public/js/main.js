@@ -1913,9 +1913,15 @@ async function openBrowser() {
 
 async function visitWorld(id) {
   showGameShell(false);
-  toast('Loading nation…');
+  // Building the visited world takes a while (the whole island is re-laid out). Hold
+  // the loading overlay up for it — without one the player was left dragging a
+  // half-built map that ignored them, which read as the visit being broken.
+  showLoading('Loading their nation…');
+  await nextPaint();
   try {
     const world = await api.loadWorld(id);
+    setLoadingMsg('Building their Singapore…');
+    await nextPaint();
     // snapshot the buildable catalogue: the visited world's landmarks/community defs
     // register into BUILDINGS while visiting, and are rolled back on leave — so a
     // visit can't pollute (or overwrite entries in) YOUR build menu.
@@ -1929,8 +1935,10 @@ async function visitWorld(id) {
     $('visit-name').textContent = `${world.name} (by ${world.owner})`;
     $('visit-banner').classList.remove('hidden');
     setSpeed(0);
+    hideLoading();
     toast('👁️ Visiting — press ▶ to watch it run. Building is disabled.');
   } catch (err) {
+    hideLoading();
     toast('Could not load: ' + err.message);
     showMenu();
   }

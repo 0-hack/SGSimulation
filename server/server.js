@@ -2,7 +2,7 @@
 // Serves the static game client and exposes a small REST API for saving,
 // loading, browsing, and visiting other players' worlds.
 import express from 'express';
-import { randomUUID, randomBytes, createHash } from 'crypto';
+import { randomUUID, randomBytes, createHash, timingSafeEqual } from 'crypto';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { writeFileSync } from 'fs';
@@ -20,6 +20,34 @@ app.use(express.json({ limit: '8mb' })); // city states can get large
 const hash = (s) => createHash('sha256').update(String(s)).digest('hex');
 const newToken = () => randomBytes(24).toString('hex');
 
+// Compare a presented token against the stored hash WITHOUT leaking how much of it
+// matched through timing. (A 192-bit token makes guessing hopeless anyway, but a
+// plain !== on the digest is the kind of thing that rots into a real leak later.)
+function tokenMatches(presented, storedHash) {
+  if (!presented || !storedHash) return false;
+  const a = Buffer.from(hash(presented), 'utf8');
+  const b = Buffer.from(String(storedHash), 'utf8');
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+// Throttle world mutations per client so a stolen/guessed-at endpoint can't be
+// hammered: a token can't be brute-forced at 30 tries a minute, and one client
+// can't spam-create worlds. In-memory and best-effort — this is a game server, not
+// a bank, but it turns "unbounded" into "bounded".
+const RL_WINDOW = 60_000, RL_MAX = 30;
+const rlHits = new Map();
+function rateLimit(req, res, next) {
+  const ip = req.ip || req.socket?.remoteAddress || 'unknown';
+  const now = Date.now();
+  let hits = rlHits.get(ip);
+  if (!hits) { hits = []; rlHits.set(ip, hits); }
+  while (hits.length && now - hits[0] > RL_WINDOW) hits.shift();
+  if (hits.length >= RL_MAX) return res.status(429).json({ error: 'Too many requests — slow down.' });
+  hits.push(now);
+  if (rlHits.size > 5000) for (const [k, v] of rlHits) if (!v.length || now - v[v.length - 1] > RL_WINDOW) rlHits.delete(k);
+  next();
+}
+
 function clampName(s, fallback) {
   const v = (typeof s === 'string' ? s : '').trim().slice(0, 60);
   return v || fallback;
@@ -35,7 +63,7 @@ function validState(state) {
 const api = express.Router();
 
 // Create a new world. Returns the world id + a secret edit token.
-api.post('/worlds', (req, res) => {
+api.post('/worlds', rateLimit, (req, res) => {
   const { name, owner, state, isPublic } = req.body || {};
   if (!validState(state)) return res.status(400).json({ error: 'Invalid game state.' });
 
@@ -53,12 +81,12 @@ api.post('/worlds', (req, res) => {
 });
 
 // Update an existing world. Requires the matching edit token.
-api.put('/worlds/:id', (req, res) => {
+api.put('/worlds/:id', rateLimit, (req, res) => {
   const row = dbApi.getRaw(req.params.id);
   if (!row) return res.status(404).json({ error: 'World not found.' });
 
   const token = req.get('x-world-token') || req.body?.token;
-  if (!token || hash(token) !== row.token) {
+  if (!tokenMatches(token, row.token)) {
     return res.status(403).json({ error: 'Invalid edit token for this world.' });
   }
   const { name, owner, state, isPublic } = req.body || {};
@@ -90,11 +118,11 @@ api.get('/worlds/:id', (req, res) => {
 });
 
 // Delete a world (requires edit token).
-api.delete('/worlds/:id', (req, res) => {
+api.delete('/worlds/:id', rateLimit, (req, res) => {
   const row = dbApi.getRaw(req.params.id);
   if (!row) return res.status(404).json({ error: 'World not found.' });
   const token = req.get('x-world-token') || req.body?.token;
-  if (!token || hash(token) !== row.token) {
+  if (!tokenMatches(token, row.token)) {
     return res.status(403).json({ error: 'Invalid edit token for this world.' });
   }
   dbApi.delete(req.params.id);
@@ -167,11 +195,11 @@ api.post('/builds/:id/download', (req, res) => {
 });
 
 // Delete a community build (requires the token returned when it was published).
-api.delete('/builds/:id', (req, res) => {
+api.delete('/builds/:id', rateLimit, (req, res) => {
   const row = buildsApi.getRaw(req.params.id);
   if (!row) return res.status(404).json({ error: 'Build not found.' });
   const token = req.get('x-build-token') || req.body?.token;
-  if (!token || hash(token) !== row.token) return res.status(403).json({ error: 'Invalid token.' });
+  if (!tokenMatches(token, row.token)) return res.status(403).json({ error: 'Invalid token.' });
   buildsApi.delete(req.params.id);
   res.json({ ok: true });
 });

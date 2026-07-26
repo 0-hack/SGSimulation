@@ -1978,7 +1978,7 @@ export class Scene3D {
       }
       // paint mode: a drag fills cells (no camera orbit). Paint the first cell now.
       if (this.paintMode && this.onPaint && !this._panDrag && this._pointers.size === 1) {
-        this._painting = true; this._paintSeen = new Set(); this._paintAt(pos(e));
+        this._painting = true; this._paintSeen = new Set(); this._paintPrev = null; this._paintAt(pos(e));
       }
       // demolish mode: a DRAG traces a freehand stroke that marks the roads under it
       // (like drawing a road, in reverse). A plain TAP still falls through to toggle a
@@ -2075,7 +2075,7 @@ export class Scene3D {
         return;
       }
       if (this._painting) { // finish a paint drag; a plain tap already painted on pointerdown
-        this._painting = false; this._paintSeen = null;
+        this._painting = false; this._paintSeen = null; this._paintPrev = null;
         this._pointers.delete(e.pointerId);
         if (this._pointers.size < 2) { this._lastPinch = 0; this._lastMid = null; }
         if (this._pointers.size === 0) this._panDrag = false;
@@ -2330,29 +2330,40 @@ export class Scene3D {
       mm.renderOrder = 7; this._demoHoverGroup.add(mm);
     }
   }
-  // Paint the cell under screen point p (once per cell per drag).
-  _paintAt(p) {
-    const cell = this._raycastCell(p); if (!cell || !this.onPaint) return;
-    // Brush: sweep a round patch of cells along the drag so reclamation feels
-    // like drawing new coastline freehand, not filling one tile at a time.
+  // One brush stamp centred on a cell (round patch; each cell painted once a stroke).
+  _paintStamp(cx, cy) {
     const r = this.paintRadius || 0;
-    if (r <= 0) {
-      const id = cell.x + ',' + cell.y;
-      if (this._paintSeen && this._paintSeen.has(id)) return;
-      if (this._paintSeen) this._paintSeen.add(id);
-      this.onPaint(cell.x, cell.y);
-      return;
-    }
+    const mark = (x, y) => {
+      if (x < 0 || y < 0) return;
+      const id = x + ',' + y;
+      if (this._paintSeen) { if (this._paintSeen.has(id)) return; this._paintSeen.add(id); }
+      this.onPaint(x, y);                                       // onPaint guards sea/validity itself
+    };
+    if (r <= 0) { mark(cx, cy); return; }
     const R = Math.ceil(r);
     for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) {
-      if (dx * dx + dy * dy > r * r + 0.01) continue;          // round brush
-      const x = cell.x + dx, y = cell.y + dy;
-      if (x < 0 || y < 0) continue;
-      const id = x + ',' + y;
-      if (this._paintSeen && this._paintSeen.has(id)) continue;
-      if (this._paintSeen) this._paintSeen.add(id);
-      this.onPaint(x, y);                                       // onPaint guards sea/validity itself
+      if (dx * dx + dy * dy > r * r + 0.01) continue;           // round brush
+      mark(cx + dx, cy + dy);
     }
+  }
+  // Paint under screen point p. A drag only delivers pointer samples every so often,
+  // and on a heavy scene they can be many cells apart — stamping just the current
+  // cell left visible gaps between the blobs ("painting across doesn't cover"). Join
+  // this sample to the previous one so a stroke lays a continuous band however fast
+  // the finger moves.
+  _paintAt(p) {
+    const cell = this._raycastCell(p); if (!cell || !this.onPaint) return;
+    const prev = this._paintPrev;
+    if (prev && (prev.x !== cell.x || prev.y !== cell.y)) {
+      const dx = cell.x - prev.x, dy = cell.y - prev.y;
+      const dist = Math.hypot(dx, dy);
+      // step well under the brush width so consecutive stamps overlap
+      const step = Math.max(0.5, (this.paintRadius || 0) * 0.7);
+      const n = Math.min(512, Math.ceil(dist / step));
+      for (let i = 1; i < n; i++) this._paintStamp(Math.round(prev.x + dx * (i / n)), Math.round(prev.y + dy * (i / n)));
+    }
+    this._paintStamp(cell.x, cell.y);
+    this._paintPrev = { x: cell.x, y: cell.y };
   }
   isLand(x, y) {
     const reclaimed = !!(this.reclaimedMask && this.reclaimedMask[y] && this.reclaimedMask[y][x]);
@@ -4713,7 +4724,7 @@ export class Scene3D {
   setRoadMode(on) { this.roadMode = on; if (!on) this.clearRoadPreview(); }
   // Paint mode (land reclamation): drag across the map to apply onPaint to each
   // cell instead of orbiting the camera.
-  setPaintMode(on, onPaint, radius) { this.paintMode = !!on; this.onPaint = onPaint || null; this.paintRadius = on ? (radius || 0) : 0; if (!on) { this._painting = false; this._paintSeen = null; this._hideHoverTile(); this._updatePaintBrush(null, 0); } }
+  setPaintMode(on, onPaint, radius) { this.paintMode = !!on; this.onPaint = onPaint || null; this.paintRadius = on ? (radius || 0) : 0; if (!on) { this._painting = false; this._paintSeen = null; this._paintPrev = null; this._hideHoverTile(); this._updatePaintBrush(null, 0); } }
   // Draw mode: drag across the map to trace a route (road/railway). On release,
   // onStroke([{x,z}...]) is called. `opts` sets the live-preview look.
   setDrawMode(on, onStroke, opts) { this.drawMode = !!on; this.onStroke = onStroke || null; this._drawType = (opts && opts.type) || 'road'; this._drawElevated = !!(opts && opts.elevated); this._drawRail = !!(opts && opts.rail); this._drawAir = !!(opts && opts.air); this._drawArea = !!(opts && opts.area); if (!on) { this._drawing = false; this._stroke = null; this.clearRoadPreview(); } }

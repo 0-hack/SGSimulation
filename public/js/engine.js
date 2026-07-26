@@ -154,14 +154,81 @@ function seed1965(state) {
 // store it SPARSELY (just the filled cells). On a 640 grid the dense array would be
 // ~2.7 MB of "null,"; sparse it is a few KB. Pack before saving, unpack on load.
 // ---------------------------------------------------------------------------
+// The seeded 1966 road network is ~25k edges / 14k nodes — about 3.6 MB of JSON,
+// IDENTICAL for every player, and it was being written into every cloud save (and
+// re-uploaded by every autosync). That alone pushed a save past the 1 MB body limit
+// a typical reverse proxy allows, so saving failed with a 413 before it ever reached
+// the server. Seeded roads are dropped on save and re-injected on load; only what the
+// player actually drew is stored. If the player has edited the seeded network (erased
+// or re-spliced part of it) the base no longer matches and the roads are stored in
+// full — but compactly encoded, which keeps even that case well under the limit.
+function baseRoadsIntact(roads) {
+  const nB = ROADS_LIVE.nodes.length, eB = ROADS_LIVE.edges.length;
+  if (!roads || !roads.seeded1966) return false;
+  if (!Array.isArray(roads.nodes) || !Array.isArray(roads.edges)) return false;
+  if (roads.nodes.length < nB || roads.edges.length < eB) return false;
+  // spot-check the seeded span (first, last and a sample) — cheap but catches any
+  // erase/splice that shifted or rewrote it
+  for (let k = 0; k <= 40; k++) {
+    const i = Math.min(eB - 1, Math.round((k / 40) * (eB - 1)));
+    const e = roads.edges[i], b = ROADS_LIVE.edges[i];
+    if (!e || !e.traced || e.a !== b[0] || e.b !== b[1]) return false;
+  }
+  return true;
+}
+const r2 = (v) => Math.round((v || 0) * 100) / 100;
+const r1 = (v) => Math.round((v || 0) * 10) / 10;   // 0.1 world unit — far finer than a lane
+function packRoads(roads) {
+  if (!roads || !Array.isArray(roads.nodes) || !Array.isArray(roads.edges)) return roads;
+  const intact = baseRoadsIntact(roads);
+  const nFrom = intact ? ROADS_LIVE.nodes.length : 0;
+  const eFrom = intact ? ROADS_LIVE.edges.length : 0;
+  const nodes = [];
+  for (let i = nFrom; i < roads.nodes.length; i++) { const n = roads.nodes[i] || {}; nodes.push(n.y ? [r1(n.x), r1(n.z), r2(n.y)] : [r1(n.x), r1(n.z)]); }
+  const types = [], typeIx = new Map();          // road types are a tiny set — store them once
+  const edges = [];
+  for (let i = eFrom; i < roads.edges.length; i++) {
+    const e = roads.edges[i] || {};
+    const t = e.type || 'road';
+    let ti = typeIx.get(t); if (ti === undefined) { ti = types.length; types.push(t); typeIx.set(t, ti); }
+    const flags = (e.elevated ? 1 : 0) | (e.oneway ? 2 : 0) | (e.dirt ? 4 : 0) | (e.traced ? 8 : 0) | (e.demolish ? 16 : 0);
+    const row = [e.a, e.b, ti, e.lanes || 0, flags, e.roadClass || 0, e.ctrl ? [r1(e.ctrl.x), r1(e.ctrl.z)] : 0];
+    while (row.length > 2 && !row[row.length - 1]) row.pop();   // drop trailing defaults
+    edges.push(row);
+  }
+  return { __packed: 1, base1966: intact ? 1 : 0, types, nodes, edges, islands: roads.islands || [] };
+}
+function unpackRoads(state) {
+  const p = state && state.roads;
+  if (!p || !p.__packed) return;
+  const roads = { nodes: [], edges: [], islands: p.islands || [] };
+  if (p.base1966) injectTracedRoads(roads);            // re-seed the shared 1966 network
+  for (const n of (p.nodes || [])) roads.nodes.push({ x: n[0], z: n[1], y: n[2] || 0 });
+  const types = p.types || ['road'];
+  for (const e of (p.edges || [])) {
+    const f = e[4] | 0;
+    const r = { a: e[0], b: e[1], ctrl: e[6] ? { x: e[6][0], z: e[6][1] } : null, type: types[e[2] || 0] || 'road', lanes: e[3] || 2,
+      elevated: !!(f & 1), oneway: !!(f & 2), dirt: !!(f & 4), traced: !!(f & 8) };
+    if (f & 16) r.demolish = true;
+    if (e[5]) r.roadClass = e[5];
+    roads.edges.push(r);
+  }
+  if (p.base1966) roads.seeded1966 = true;
+  state.roads = roads;
+}
+
 export function packState(state) {
   if (!state || !Array.isArray(state.grid)) return state;
   const g = state.grid, cells = [];
   for (let y = 0; y < g.length; y++) { const row = g[y]; if (!row) continue; for (let x = 0; x < row.length; x++) if (row[x]) cells.push([x, y, row[x]]); }
-  return { ...state, grid: { __sparse: true, w: (g[0] && g[0].length) || GRID_SIZE, h: g.length, cells } };
+  const out = { ...state, grid: { __sparse: true, w: (g[0] && g[0].length) || GRID_SIZE, h: g.length, cells } };
+  if (state.roads) out.roads = packRoads(state.roads);
+  return out;
 }
 export function unpackState(state) {
-  if (!state || !state.grid || !state.grid.__sparse) return state;
+  if (!state) return state;
+  unpackRoads(state);
+  if (!state.grid || !state.grid.__sparse) return state;
   const sp = state.grid, grid = Array.from({ length: sp.h }, () => Array(sp.w).fill(null));
   for (const [x, y, c] of (sp.cells || [])) if (y >= 0 && y < sp.h && x >= 0 && x < sp.w) grid[y][x] = c;
   state.grid = grid;

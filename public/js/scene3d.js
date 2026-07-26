@@ -795,7 +795,12 @@ export class Scene3D {
     return h;
   }
   // Elevation at the centre of grid cell (cx,cy) — for placing trees & buildings.
-  terrainHeight(cx, cy) { return this._terrainHN((cx + 0.5) / N, (cy + 0.5) / N); }
+  terrainHeight(cx, cy) {
+    const h = this._terrainHN((cx + 0.5) / N, (cy + 0.5) / N);
+    // reclaimed cells stand on the fill slab, not the seabed / lake bed beneath it
+    if (this.reclaimedMask && this.reclaimedMask[cy] && this.reclaimedMask[cy][cx]) return Math.max(h, RECLAIM_TOP_Y);
+    return h;
+  }
 
   // Build the central-catchment hill surface: a displaced grid over the reserve
   // disk, cel-shaded and tinted by elevation (forest green → olive → bare tan).
@@ -2333,8 +2338,19 @@ export class Scene3D {
     }
   }
   isLand(x, y) {
-    const base = (this.land[y] && this.land[y][x]) || (this.reclaimedMask && this.reclaimedMask[y] && this.reclaimedMask[y][x]);
-    return !!(base && !(this.reserveMask && this.reserveMask[y][x]) && !(this.riverMask && this.riverMask[y][x]) && !(this.airportMask && this.airportMask[y][x]) && !(this.heritageMask && this.heritageMask[y][x]));
+    const reclaimed = !!(this.reclaimedMask && this.reclaimedMask[y] && this.reclaimedMask[y][x]);
+    const base = reclaimed || (this.land[y] && this.land[y][x]);
+    if (!base) return false;
+    // a FILLED-IN water body (river channel or reservoir) is ordinary land now — the
+    // reserve/river masks must stop blocking it, or the new ground stays unusable
+    if (!reclaimed && ((this.reserveMask && this.reserveMask[y][x]) || (this.riverMask && this.riverMask[y][x]))) return false;
+    return !(this.airportMask && this.airportMask[y][x]) && !(this.heritageMask && this.heritageMask[y][x]);
+  }
+  // Ground level a surface tile / building should sit on: the rendered terrain, or the
+  // top of the reclaimed slab where the player has filled water in.
+  _groundY(gx, gy, wx, wz) {
+    const y = this._meshTriY(wx, wz);
+    return (this.reclaimedMask && this.reclaimedMask[gy] && this.reclaimedMask[gy][gx]) ? Math.max(y, RECLAIM_TOP_Y) : y;
   }
   // Can grid cell (x,y) be reclaimed? True only for OPEN SINGAPORE SEA — i.e.
   // not already (or being) reclaimed, not Singapore land, not protected water,
@@ -2877,7 +2893,7 @@ export class Scene3D {
     const geo = new THREE.PlaneGeometry(TILE, TILE, SEG, SEG);
     geo.rotateX(-Math.PI / 2);                               // lay flat in the xz-plane
     const pos = geo.attributes.position;
-    for (let i = 0; i < pos.count; i++) pos.setY(i, this._meshTriY(c.x + pos.getX(i), c.z + pos.getZ(i)) + 0.08);
+    for (let i = 0; i < pos.count; i++) pos.setY(i, this._groundY(x, y, c.x + pos.getX(i), c.z + pos.getZ(i)) + 0.08);
     pos.needsUpdate = true; geo.computeVertexNormals();
     const m = new THREE.Mesh(geo, mat(info.color, { polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }, 0.06));
     m.position.set(c.x, 0, c.z); m.receiveShadow = true;

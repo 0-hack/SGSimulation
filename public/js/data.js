@@ -342,7 +342,7 @@ export const BUILDINGS = {
     name: 'Traffic Light', cat: 'roads', icon: '🚦', color: '#cf6f5a', prop: true,
     cost: 3, upkeep: 0.1, year: 1965, homes: 0, jobs: 0,
     power: -1, water: 0, pollution: 0, happiness: 1, safety: 4,
-    desc: 'A compact 1965 three-aspect signal you can drop FREELY at any junction or crossing kerb (not grid-locked, so it can sit right at the roadside). Smoother, safer traffic.',
+    desc: 'A compact three-aspect signal you can drop FREELY at any junction or crossing kerb (not grid-locked, so it can sit right at the roadside). Smoother, safer traffic.',
   },
 
   // ---- Heritage: 1950s–60s central-area landmarks (Raffles, Chinatown, the civic
@@ -357,7 +357,7 @@ export const BUILDINGS = {
   fullerton: {
     name: 'Fullerton Building', cat: 'heritage', icon: '🏛️', color: '#c7c3b6', year: 1928,
     cost: 48, upkeep: 1.4, homes: 0, jobs: 180, power: -8, water: -5, pollution: 0, happiness: 7, income: 4,
-    desc: 'The 1928 General Post Office — a monumental Doric colonnade at the river mouth. Civic grandeur and a working landmark.',
+    desc: 'The General Post Office — a monumental Doric colonnade at the river mouth. Civic grandeur and a working landmark.',
   },
   victoria_theatre: {
     name: 'Victoria Theatre', cat: 'heritage', icon: '🎭', color: '#e9e2d2', year: 1905,
@@ -385,12 +385,12 @@ export const BUILDINGS = {
   bank_of_china: {
     name: 'Bank of China Building', cat: 'heritage', icon: '🏦', color: '#bfc4bd', year: 1954,
     cost: 62, upkeep: 2.0, homes: 0, jobs: 340, power: -13, water: -6, pollution: 0, happiness: 5, income: 9,
-    desc: 'The 1954 tower on Battery Road — Raffles Place’s tallest for two decades and the country’s first centrally air-conditioned building. A modernist slab of banking halls and offices.',
+    desc: 'The tower on Battery Road — Raffles Place’s tallest for decades, and among the first anywhere in the country to be centrally air-conditioned. A modernist slab of banking halls and offices.',
   },
   asia_insurance: {
     name: 'Asia Insurance Building', cat: 'heritage', icon: '🏢', color: '#dcd3bd', year: 1955,
     cost: 58, upkeep: 1.9, homes: 0, jobs: 300, power: -12, water: -5, pollution: 0, happiness: 5, income: 8,
-    desc: 'The 18-storey Art Deco tower on Finlayson Green (1955) — at 270 ft the tallest building in all Singapore until 1971, crowned by its stepped lantern.',
+    desc: 'The 18-storey Art Deco tower on Finlayson Green — at 270 ft the tallest building in all Singapore for years afterwards, crowned by its stepped lantern.',
   },
   finlayson_house: {
     name: 'Finlayson House', cat: 'heritage', icon: '🏢', color: '#d0ccc0', year: 1953,
@@ -400,7 +400,7 @@ export const BUILDINGS = {
   ocean_building: {
     name: 'Ocean Building', cat: 'heritage', icon: '🏢', color: '#e0dccb', year: 1924,
     cost: 46, upkeep: 1.6, homes: 0, jobs: 220, power: -8, water: -5, pollution: 0, happiness: 6, income: 6,
-    desc: 'The stately second Ocean Building (1924) on Collyer Quay — a waterfront landmark of trading offices, famed for its Prince’s Restaurant.',
+    desc: 'The stately second Ocean Building on Collyer Quay — a waterfront landmark of trading offices, famed for its Prince’s Restaurant.',
   },
   maritime_building: {
     name: 'Maritime Building', cat: 'heritage', icon: '🏢', color: '#cfc9ba', year: 1923,
@@ -410,7 +410,7 @@ export const BUILDINGS = {
   tanjong_pagar_station: {
     name: 'Tanjong Pagar Railway Station', cat: 'heritage', icon: '🚉', color: '#efe9da', year: 1932,
     cost: 44, upkeep: 1.4, homes: 0, jobs: 150, power: -7, water: -5, pollution: 1, happiness: 8, income: 4,
-    desc: 'The grand Art Deco southern terminus of the Malayan Railway (1932) at Keppel Road — a cream stripped-classical frontage of tall arches crowned by four marble statues of the Malayan economy (agriculture, commerce, transport, industry).',
+    desc: 'The grand Art Deco southern terminus of the Malayan Railway at Keppel Road — a cream stripped-classical frontage of tall arches crowned by four marble statues of the Malayan economy (agriculture, commerce, transport, industry).',
   },
 
   mall: {

@@ -2374,11 +2374,19 @@ export class Scene3D {
     if (!reclaimed && ((this.reserveMask && this.reserveMask[y][x]) || (this.riverMask && this.riverMask[y][x]))) return false;
     return !(this.airportMask && this.airportMask[y][x]) && !(this.heritageMask && this.heritageMask[y][x]);
   }
+  // Is this cell standing on reclaimed ground? Checks the mask AND the finished
+  // reclaim shapes, because the two can disagree: the mask is (re)marked by the
+  // per-tick area sync, so a cell can sit visibly under new land while the mask has
+  // yet to catch up — paint there dropped to the seabed and vanished.
+  _onReclaimed(gx, gy) {
+    if (this.reclaimedMask && this.reclaimedMask[gy] && this.reclaimedMask[gy][gx]) return true;
+    return !!(this._reclaimCover && this._reclaimCover.has(gx + ',' + gy));
+  }
   // Ground level a surface tile / building should sit on: the rendered terrain, or the
   // top of the reclaimed slab where the player has filled water in.
   _groundY(gx, gy, wx, wz) {
     const y = this._meshTriY(wx, wz);
-    return (this.reclaimedMask && this.reclaimedMask[gy] && this.reclaimedMask[gy][gx]) ? Math.max(y, RECLAIM_TOP_Y) : y;
+    return this._onReclaimed(gx, gy) ? Math.max(y, RECLAIM_TOP_Y) : y;
   }
   // Can grid cell (x,y) be reclaimed? True only for OPEN SINGAPORE SEA — i.e.
   // not already (or being) reclaimed, not Singapore land, not protected water,
@@ -2467,6 +2475,13 @@ export class Scene3D {
     if (this._reclaimAreaGroup) this.scene.remove(this._reclaimAreaGroup);
     const grp = new THREE.Group(); this.scene.add(grp); this._reclaimAreaGroup = grp;
     const markCells = (cells, mask) => { for (const [x, y] of (cells || [])) if (x >= 0 && y >= 0 && x < N && y < N) { if (!mask[y][x] && mask === this.reclaimedMask && this._riverFillMask && this._riverFillMask[y] && this._riverFillMask[y][x]) this._riverFillDirty = true; mask[y][x] = true; const g = this.natureCells?.get(x + ',' + y); if (g) g.visible = false; } };
+    // every cell standing on FINISHED reclaimed ground, however the mask is doing
+    this._reclaimCover = new Set();
+    for (const a of (state.reclaimedAreas || [])) {
+      for (const [x, y] of (a.cells || [])) this._reclaimCover.add(x + ',' + y);
+      for (const [x, y] of this._cellsUnderPoly(a.poly)) this._reclaimCover.add(x + ',' + y);
+    }
+    for (const [id] of (this.reclaimSlabs || new Map())) this._reclaimCover.add(id);   // per-cell reclamations
     for (const a of (state.reclaimedAreas || [])) {                 // finished -> permanent buildable land
       const m = this._reclaimLandMesh(a.poly); m.position.y = RECLAIM_TOP_Y; grp.add(m);
       // `a.cells` only holds cells whose CENTRE fell inside the drawn loop, but the
@@ -2499,7 +2514,9 @@ export class Scene3D {
     const sg = new THREE.BufferGeometry(); sg.setAttribute('position', new THREE.Float32BufferAttribute(v, 3)); sg.setIndex(idx); sg.computeVertexNormals();
     grp.add(new THREE.Mesh(sg, toon(0xb9a06f, { side: THREE.DoubleSide })));
     const loop = poly.map(([x, z]) => new THREE.Vector3(x, 0, z)); loop.push(loop[0]);
-    this._addRibbon(grp, loop, 1.4, 0xded2a6, 0.07);                 // sandy beach edge
+    // sandy beach edge — kept well BELOW the surface-paint plane (drape + 0.08), or the
+    // two fight for depth along the rim and the sand wins in patches
+    this._addRibbon(grp, loop, 1.4, 0xded2a6, 0.02);
     return grp;
   }
   _addReclaimBuoys(group, poly) {
@@ -2971,7 +2988,7 @@ export class Scene3D {
     const id = `${x},${y}`;
     // Painting open water used to silently make a tile down at the seabed, which the
     // sea then hid — so the brush looked like it had holes in it. Only paint ground.
-    if (type && type !== 'clear' && !this.isLand(x, y) && !(this.reclaimedMask && this.reclaimedMask[y] && this.reclaimedMask[y][x])) return;
+    if (type && type !== 'clear' && !this.isLand(x, y) && !this._onReclaimed(x, y)) return;
     if (!type || type === 'clear') {
       delete this.state.surfaces[id];
       const m = this.surfaceTiles && this.surfaceTiles.get(id);

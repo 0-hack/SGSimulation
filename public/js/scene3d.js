@@ -2482,6 +2482,19 @@ export class Scene3D {
       for (const [x, y] of this._cellsUnderPoly(a.poly)) this._reclaimCover.add(x + ',' + y);
     }
     for (const [id] of (this.reclaimSlabs || new Map())) this._reclaimCover.add(id);   // per-cell reclamations
+    // Any painted tile drawn BEFORE we knew this ground was reclaimed was draped at
+    // seabed height and is buried under the fill. Now that the cover is known, redraw
+    // those tiles so old paint lifts onto the new land instead of staying invisible.
+    const sig = this._reclaimCover.size;
+    if (sig !== this._reclaimCoverSig) {
+      this._reclaimCoverSig = sig;
+      const surf = (state && state.surfaces) || {};
+      for (const id of this._reclaimCover) {
+        if (!surf[id] || !this.surfaceTiles || !this.surfaceTiles.has(id)) continue;
+        const [x, y] = id.split(',').map(Number);
+        this._renderSurfaceCell(x, y, surf[id]);
+      }
+    }
     for (const a of (state.reclaimedAreas || [])) {                 // finished -> permanent buildable land
       const m = this._reclaimLandMesh(a.poly); m.position.y = RECLAIM_TOP_Y; grp.add(m);
       // `a.cells` only holds cells whose CENTRE fell inside the drawn loop, but the

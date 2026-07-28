@@ -161,7 +161,9 @@ const G = {
 // ===========================================================================
 // Boot
 // ===========================================================================
-const BUILD = '2026-06-16 · guided-projects v36' + (SANDBOX ? ' · 🧪 SANDBOX' : '');
+// Bumped on every deploy — the menu prints it, so "is the new build actually live?"
+// is a question you can answer by looking instead of guessing.
+const BUILD = 'v38 · paint-cover + menu-overlay' + (SANDBOX ? ' · 🧪 SANDBOX' : '');
 function boot() {
   console.log('%cSG build: ' + BUILD, 'font-weight:bold;color:#11a39c');
   const vEl = document.querySelector('.version'); if (vEl) vEl.textContent = 'build ' + BUILD;
@@ -1788,8 +1790,14 @@ function renderDecisions() {
   // This runs every FRAME, and the render loop keeps going after the player exits to
   // the main menu — so a still-pending briefing was re-drawn on top of the homepage.
   // Only ever show it while the game itself is on screen.
-  const inGame = !$('game')?.classList.contains('hidden');
-  if (!inGame || !G.state) { if (!panel.classList.contains('hidden')) { panel.classList.add('hidden'); panel.innerHTML = ''; panel.dataset.sig = ''; } return; }
+  const onMenu = !$('menu')?.classList.contains('hidden');
+  const inGame = !$('game')?.classList.contains('hidden') && !onMenu;
+  if (!inGame || !G.state) {
+    panel.classList.add('hidden'); panel.style.display = 'none';   // style too: never rely on one hook alone
+    if (panel.innerHTML) { panel.innerHTML = ''; panel.dataset.sig = ''; }
+    return;
+  }
+  panel.style.display = '';
   const q = (G.state && G.state.pendingDecisions) || [];
   // announce each briefing once as it appears: play its FX + a gentle toast (the
   // panel no longer steals the screen, so the toast tells the player to look right)
